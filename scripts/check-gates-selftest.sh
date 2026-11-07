@@ -1182,6 +1182,28 @@ block_wire_roundtrip_fires() {
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/exceptions
 }
 
+# --- 35. tool-coverage-fires ----------------------------------------------------------
+# issue #29: TestToolCoverage (internal/mcpserver/coverage_test.go) walks every MCP
+# tool handler to the Bus methods it calls and checks every bus struct member those
+# methods reach against busMembers. Docker-free. A bus member nobody classified, a
+# Bus call the table does not list, and a stale table entry must each turn the named
+# subtest red. (ReceiveInput, not PeekInput: no tool calls Peek, so PeekInput is
+# never collected.)
+block_tool_coverage_fires() {
+	mutate_unit_block tool-bus-member-unlisted internal/bus/sessions.go \
+		'type ReceiveInput struct {' \
+		$'type ReceiveInput struct {\n\tExtra string' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/members
+	mutate_unit_block tool-call-unlisted internal/mcpserver/server.go \
+		'h, err := b.Health(ctx)' \
+		$'h, err := b.Health(ctx)\n\t\t\t\t_, _ = b.Status(ctx)' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/calls
+	mutate_unit_block tool-member-entry-stale internal/mcpserver/coverage_test.go \
+		'"ReceiveInput": {' \
+		'"ReceiveInput": {"Nope": "used",' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/members
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1216,6 +1238,7 @@ block_eviction_message_floor_removed
 block_agent_status_rules_fire
 block_m10_deps_rule_fires
 block_wire_roundtrip_fires
+block_tool_coverage_fires
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"
