@@ -1474,6 +1474,7 @@ type ResetCredentialParams struct {
 
 // AdminResetParams defines parameters for AdminReset.
 type AdminResetParams struct {
+	// Scope data keeps identities and keys; everything removes them too; default: data
 	Scope *AdminResetParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
 
 	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
@@ -1497,6 +1498,7 @@ type DoneScopeParams struct {
 
 // RotateSigningKeyParams defines parameters for RotateSigningKey.
 type RotateSigningKeyParams struct {
+	// RevokePrevious Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; default false
 	RevokePrevious *bool `form:"revoke_previous,omitempty" json:"revoke_previous,omitempty"`
 
 	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
@@ -1532,8 +1534,11 @@ type SetACLParams struct {
 
 // HistoryParams defines parameters for History.
 type HistoryParams struct {
+	// Before Return messages with a sequence number below this one; alone, the newest messages below it
 	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
-	After  *int64 `form:"after,omitempty" json:"after,omitempty"`
+
+	// After Return messages with a sequence number above this one, oldest first
+	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 
 	// Count At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
 	Count *int `form:"count,omitempty" json:"count,omitempty"`
@@ -1593,7 +1598,9 @@ type EditMemoryParams struct {
 // SearchParams defines parameters for Search.
 type SearchParams struct {
 	// Q At most 1024 code points.
-	Q    *string           `form:"q,omitempty" json:"q,omitempty"`
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+
+	// Mode text, semantic or both; default: both where the server has an embedding provider, else text
 	Mode *SearchParamsMode `form:"mode,omitempty" json:"mode,omitempty"`
 
 	// Channel At most 128 bytes (the server counts bytes).
@@ -1601,9 +1608,15 @@ type SearchParams struct {
 
 	// Sender At most 128 bytes (the server counts bytes).
 	Sender *string `form:"sender,omitempty" json:"sender,omitempty"`
-	Since  *int64  `form:"since,omitempty" json:"since,omitempty"`
-	Until  *int64  `form:"until,omitempty" json:"until,omitempty"`
-	Thread *int64  `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Since Only messages created at or after this time, in milliseconds since the Unix epoch
+	Since *int64 `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Only messages created at or before this time, in milliseconds since the Unix epoch
+	Until *int64 `form:"until,omitempty" json:"until,omitempty"`
+
+	// Thread Only the message with this sequence number and the replies to it
+	Thread *int64 `form:"thread,omitempty" json:"thread,omitempty"`
 
 	// Tags At most 10 items.
 	Tags *[]string `form:"tags,omitempty" json:"tags,omitempty"`
@@ -1626,6 +1639,7 @@ type CloseSessionParams struct {
 
 // PeekParams defines parameters for Peek.
 type PeekParams struct {
+	// IncludeOwn Whether messages sent by the session itself count; default false
 	IncludeOwn *bool `form:"include_own,omitempty" json:"include_own,omitempty"`
 }
 
@@ -1637,11 +1651,14 @@ type SetAgentStatusParams struct {
 
 // WatchParams defines parameters for Watch.
 type WatchParams struct {
+	// After Wake only for messages with a sequence number above this one (and above the session's cursor); default 0
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 
 	// Timeout Seconds to wait; fractional allowed; 0 or absent means the server cap. At most 240 seconds, the largest value of watch_max_seconds; above the configured watch_max_seconds the server waits at most that long.
-	Timeout    *float64 `form:"timeout,omitempty" json:"timeout,omitempty"`
-	IncludeOwn *bool    `form:"include_own,omitempty" json:"include_own,omitempty"`
+	Timeout *float64 `form:"timeout,omitempty" json:"timeout,omitempty"`
+
+	// IncludeOwn Whether messages sent by the session itself count; default false
+	IncludeOwn *bool `form:"include_own,omitempty" json:"include_own,omitempty"`
 }
 
 // UnsubscribeTagsParams defines parameters for UnsubscribeTags.
@@ -1811,311 +1828,507 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 // The interface specification for the client above.
 type ClientInterface interface {
 
-	// WellKnown performs a GET /.well-known/agentmesh (the `WellKnown` operationId) request.
+	// WellKnown The agentmesh well-known document: where to discover the API
+	//
+	// Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
 	WellKnown(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AuthorizationServerMetadata performs a GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId) request.
+	// AuthorizationServerMetadata OAuth 2.0 authorization server metadata (RFC 8414)
+	//
+	// Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
 	AuthorizationServerMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// OpenidConfiguration performs a GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId) request.
+	// OpenidConfiguration OpenID Connect discovery document for this server
+	//
+	// Corresponds with GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId).
 	OpenidConfiguration(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListBridges performs a GET /v1/admin/bridges (the `ListBridges` operationId) request.
+	// ListBridges List bridges
+	//
+	// Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
 	ListBridges(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateBridgeWithBody performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateBridgeWithBody Bridge a channel to a new private Slack channel
 	//
 	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 	CreateBridgeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateBridge performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// CreateBridge Bridge a channel to a new private Slack channel
 	//
 	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 	CreateBridge(ctx context.Context, body CreateBridgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RemoveBridge performs a DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId) request.
+	// RemoveBridge Remove a channel's bridge, archiving its Slack channel
+	//
+	// Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
 	RemoveBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetBridge performs a GET /v1/admin/bridges/{channel} (the `GetBridge` operationId) request.
+	// GetBridge Read a channel's bridge
+	//
+	// Corresponds with GET /v1/admin/bridges/{channel} (the `GetBridge` operationId).
 	GetBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateAgentIdentityWithBody performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateAgentIdentityWithBody Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
 	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 	CreateAgentIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateAgentIdentity performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// CreateAgentIdentity Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
 	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 	CreateAgentIdentity(ctx context.Context, body CreateAgentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateIdentityByEmailWithBody performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateIdentityByEmailWithBody Create a human identity for an email address
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 	CreateIdentityByEmailWithBody(ctx context.Context, params *CreateIdentityByEmailParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateIdentityByEmail performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request.
+	// CreateIdentityByEmail Create a human identity for an email address
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 	CreateIdentityByEmail(ctx context.Context, params *CreateIdentityByEmailParams, body CreateIdentityByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ResetCredential performs a POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId) request.
+	// ResetCredential Remove an identity's registered keys
+	//
+	// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 	ResetCredential(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AdminReset performs a POST /v1/admin/reset (the `AdminReset` operationId) request.
+	// AdminReset Delete everything in the store (an administrator's reset)
+	//
+	// Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 	AdminReset(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListScopes performs a GET /v1/admin/scopes (the `ListScopes` operationId) request.
+	// ListScopes List scopes
+	//
+	// Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
 	ListScopes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateScopeWithBody performs a POST /v1/admin/scopes (the `CreateScope` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateScopeWithBody Create a scope
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 	CreateScopeWithBody(ctx context.Context, params *CreateScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateScope performs a POST /v1/admin/scopes (the `CreateScope` operationId) request.
+	// CreateScope Create a scope
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 	CreateScope(ctx context.Context, params *CreateScopeParams, body CreateScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetScope performs a GET /v1/admin/scopes/{scope} (the `GetScope` operationId) request.
+	// GetScope Read a scope
+	//
+	// Corresponds with GET /v1/admin/scopes/{scope} (the `GetScope` operationId).
 	GetScope(ctx context.Context, scope ScopeParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DoneScopeWithBody performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request,
-	// with any type of body and a specified content type.
+	// DoneScopeWithBody Retire a scope, with or without its bridge
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 	DoneScopeWithBody(ctx context.Context, scope ScopeParam, params *DoneScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DoneScope performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request.
+	// DoneScope Retire a scope, with or without its bridge
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 	DoneScope(ctx context.Context, scope ScopeParam, params *DoneScopeParams, body DoneScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListSigningKeys performs a GET /v1/admin/signing-keys (the `ListSigningKeys` operationId) request.
+	// ListSigningKeys List the server's token signing keys
 	//
 	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
+	//
+	// Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 	ListSigningKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RotateSigningKey performs a POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId) request.
+	// RotateSigningKey Rotate the active token signing key
 	//
 	// Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
+	//
+	// Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 	RotateSigningKey(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AdminStatus performs a GET /v1/admin/status (the `AdminStatus` operationId) request.
+	// AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog
+	//
+	// Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
 	AdminStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AdminUsage performs a GET /v1/admin/usage (the `AdminUsage` operationId) request.
+	// AdminUsage The database size, budget and capacity notice
 	//
 	// The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
+	//
+	// Corresponds with GET /v1/admin/usage (the `AdminUsage` operationId).
 	AdminUsage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListAgentStatuses performs a GET /v1/agent-statuses (the `ListAgentStatuses` operationId) request.
+	// ListAgentStatuses List every visible identity's stored status
 	//
 	// Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
+	//
+	// Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 	ListAgentStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Jwks performs a GET /v1/auth/jwks (the `Jwks` operationId) request.
+	// Jwks The public keys that verify the bearers this server issues
+	//
+	// Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
 	Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RegisterWithBody performs a POST /v1/auth/register (the `Register` operationId) request,
-	// with any type of body and a specified content type.
+	// RegisterWithBody Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
 	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/register (the `Register` operationId).
 	RegisterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Register performs a POST /v1/auth/register (the `Register` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// Register Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
 	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/auth/register (the `Register` operationId).
 	Register(ctx context.Context, body RegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// TokenWithBody performs a POST /v1/auth/token (the `Token` operationId) request,
-	// with any type of body and a specified content type.
+	// TokenWithBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
 	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/auth/token (the `Token` operationId).
 	TokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// TokenWithFormdataBody performs a POST /v1/auth/token (the `Token` operationId) request.
-	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	// TokenWithFormdataBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
 	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type.
+	//
+	// Corresponds with POST /v1/auth/token (the `Token` operationId).
 	TokenWithFormdataBody(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListChannels performs a GET /v1/channels (the `ListChannels` operationId) request.
+	// ListChannels List the channels the caller may see
+	//
+	// Corresponds with GET /v1/channels (the `ListChannels` operationId).
 	ListChannels(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateChannelWithBody performs a POST /v1/channels (the `CreateChannel` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateChannelWithBody Create a channel
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 	CreateChannelWithBody(ctx context.Context, params *CreateChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateChannel performs a POST /v1/channels (the `CreateChannel` operationId) request.
+	// CreateChannel Create a channel
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 	CreateChannel(ctx context.Context, params *CreateChannelParams, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteChannel performs a DELETE /v1/channels/{channel} (the `DeleteChannel` operationId) request.
+	// DeleteChannel Delete a channel
+	//
+	// Corresponds with DELETE /v1/channels/{channel} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, channel ChannelParam, params *DeleteChannelParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenameChannelWithBody performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request,
-	// with any type of body and a specified content type.
+	// RenameChannelWithBody Rename a channel
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 	RenameChannelWithBody(ctx context.Context, channel ChannelParam, params *RenameChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RenameChannel performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request.
+	// RenameChannel Rename a channel
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 	RenameChannel(ctx context.Context, channel ChannelParam, params *RenameChannelParams, body RenameChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetACL performs a GET /v1/channels/{channel}/acl (the `GetACL` operationId) request.
+	// GetACL Read a channel's access control list
+	//
+	// Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
 	GetACL(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetACLWithBody performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request,
-	// with any type of body and a specified content type.
+	// SetACLWithBody Replace a channel's access control list
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 	SetACLWithBody(ctx context.Context, channel ChannelParam, params *SetACLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetACL performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request.
+	// SetACL Replace a channel's access control list
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 	SetACL(ctx context.Context, channel ChannelParam, params *SetACLParams, body SetACLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// History performs a GET /v1/channels/{channel}/messages (the `History` operationId) request.
+	// History Read a window of a channel's messages
+	//
+	// Corresponds with GET /v1/channels/{channel}/messages (the `History` operationId).
 	History(ctx context.Context, channel ChannelParam, params *HistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SendMessageWithBody performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request,
-	// with any type of body and a specified content type.
+	// SendMessageWithBody Send a message to a channel
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 	SendMessageWithBody(ctx context.Context, channel ChannelParam, params *SendMessageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SendMessage performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request.
+	// SendMessage Send a message to a channel
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 	SendMessage(ctx context.Context, channel ChannelParam, params *SendMessageParams, body SendMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Unsubscribe performs a DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId) request.
+	// Unsubscribe Remove the caller's subscription to a channel
+	//
+	// Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
 	Unsubscribe(ctx context.Context, channel ChannelParam, params *UnsubscribeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SubscribeWithBody performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request,
-	// with any type of body and a specified content type.
+	// SubscribeWithBody Subscribe the caller to a channel
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 	SubscribeWithBody(ctx context.Context, channel ChannelParam, params *SubscribeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Subscribe performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request.
+	// Subscribe Subscribe the caller to a channel
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 	Subscribe(ctx context.Context, channel ChannelParam, params *SubscribeParams, body SubscribeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTasks performs a GET /v1/channels/{channel}/tasks (the `ListTasks` operationId) request.
+	// ListTasks List a channel's tasks, optionally filtered by status or owner
+	//
+	// Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
 	ListTasks(ctx context.Context, channel ChannelParam, params *ListTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTaskWithBody performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateTaskWithBody Create a task on a channel's task list
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 	CreateTaskWithBody(ctx context.Context, channel ChannelParam, params *CreateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateTask performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request.
+	// CreateTask Create a task on a channel's task list
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 	CreateTask(ctx context.Context, channel ChannelParam, params *CreateTaskParams, body CreateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Discover performs a GET /v1/discover (the `Discover` operationId) request.
+	// Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
+	//
+	// Corresponds with GET /v1/discover (the `Discover` operationId).
 	Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Health performs a GET /v1/health (the `Health` operationId) request.
+	// Health The health document as the caller's tier sees it
+	//
+	// Corresponds with GET /v1/health (the `Health` operationId).
 	Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListIdentities performs a GET /v1/identities (the `ListIdentities` operationId) request.
+	// ListIdentities List identities that have a live session
+	//
+	// Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 	ListIdentities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AgentStatusHistory performs a GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId) request.
+	// AgentStatusHistory List one identity's stored statuses, oldest first
 	//
 	// One identity's status revisions, oldest first, at most status_history_count.
+	//
+	// Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 	AgentStatusHistory(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// DeleteMemory performs a DELETE /v1/memories/{id} (the `DeleteMemory` operationId) request.
+	// DeleteMemory Delete a memory
+	//
+	// Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
 	DeleteMemory(ctx context.Context, id IdParam, params *DeleteMemoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetMemory performs a GET /v1/memories/{id} (the `GetMemory` operationId) request.
+	// GetMemory Read a memory's live revision
+	//
+	// Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 	GetMemory(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListMemoryRevisions performs a GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId) request.
+	// ListMemoryRevisions List a memory's revisions
+	//
+	// Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 	ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EditMemoryWithBody performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request,
-	// with any type of body and a specified content type.
+	// EditMemoryWithBody Write a new revision of a memory
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 	EditMemoryWithBody(ctx context.Context, id IdParam, params *EditMemoryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// EditMemory performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request.
+	// EditMemory Write a new revision of a memory
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 	EditMemory(ctx context.Context, id IdParam, params *EditMemoryParams, body EditMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Search performs a GET /v1/search (the `Search` operationId) request.
+	// Search Search the messages of the channels the caller may read
+	//
+	// Corresponds with GET /v1/search (the `Search` operationId).
 	Search(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// OpenSessionWithBody performs a POST /v1/sessions (the `OpenSession` operationId) request,
-	// with any type of body and a specified content type.
+	// OpenSessionWithBody Open a session for the caller's identity, resuming by token or offering cursors
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 	OpenSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// OpenSession performs a POST /v1/sessions (the `OpenSession` operationId) request.
+	// OpenSession Open a session for the caller's identity, resuming by token or offering cursors
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 	OpenSession(ctx context.Context, body OpenSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CloseSession performs a DELETE /v1/sessions/{session} (the `CloseSession` operationId) request.
+	// CloseSession Close a session, freeing its display name
+	//
+	// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 	CloseSession(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Peek performs a GET /v1/sessions/{session}/peek (the `Peek` operationId) request.
+	// Peek Count what receive would deliver without delivering it
 	//
 	// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
+	//
+	// Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 	Peek(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReceiveWithBody performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request,
-	// with any type of body and a specified content type.
+	// ReceiveWithBody Receive the next batch of messages for a session, acknowledging the previous one
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 	ReceiveWithBody(ctx context.Context, session SessionParam, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Receive performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request.
+	// Receive Receive the next batch of messages for a session, acknowledging the previous one
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 	Receive(ctx context.Context, session SessionParam, body ReceiveJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetAgentStatusWithBody performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request,
-	// with any type of body and a specified content type.
+	// SetAgentStatusWithBody Set the calling agent's status line from one of its live sessions
 	//
 	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 	SetAgentStatusWithBody(ctx context.Context, session SessionParam, params *SetAgentStatusParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SetAgentStatus performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request.
-	// Takes a body of the `application/json` content type.
+	// SetAgentStatus Set the calling agent's status line from one of its live sessions
 	//
 	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 	SetAgentStatus(ctx context.Context, session SessionParam, params *SetAgentStatusParams, body SetAgentStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Watch performs a GET /v1/sessions/{session}/watch (the `Watch` operationId) request.
+	// Watch Long-poll until the session has something to receive or the timeout passes
+	//
+	// Corresponds with GET /v1/sessions/{session}/watch (the `Watch` operationId).
 	Watch(ctx context.Context, session SessionParam, params *WatchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UnsubscribeTags performs a DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId) request.
+	// UnsubscribeTags Remove a tag subscription: one AND set of tag patterns
+	//
+	// Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
 	UnsubscribeTags(ctx context.Context, params *UnsubscribeTagsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListTagSubscriptions performs a GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId) request.
+	// ListTagSubscriptions List the caller's tag subscriptions
+	//
+	// Corresponds with GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId).
 	ListTagSubscriptions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SubscribeTagsWithBody performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request,
-	// with any type of body and a specified content type.
+	// SubscribeTagsWithBody Add a tag subscription: one AND set of tag patterns
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 	SubscribeTagsWithBody(ctx context.Context, params *SubscribeTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// SubscribeTags performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request.
+	// SubscribeTags Add a tag subscription: one AND set of tag patterns
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 	SubscribeTags(ctx context.Context, params *SubscribeTagsParams, body SubscribeTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetTask performs a GET /v1/tasks/{id} (the `GetTask` operationId) request.
+	// GetTask Read a task
+	//
+	// Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
 	GetTask(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateTaskWithBody performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request,
-	// with any type of body and a specified content type.
+	// UpdateTaskWithBody Update a task: absent fields stay unchanged
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 	UpdateTaskWithBody(ctx context.Context, id IdParam, params *UpdateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UpdateTask performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request.
+	// UpdateTask Update a task: absent fields stay unchanged
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 	UpdateTask(ctx context.Context, id IdParam, params *UpdateTaskParams, body UpdateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimTaskWithBody performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request,
-	// with any type of body and a specified content type.
+	// ClaimTaskWithBody Claim a task for the caller, optionally with a lease
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTaskWithBody(ctx context.Context, id IdParam, params *ClaimTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ClaimTask performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request.
+	// ClaimTask Claim a task for the caller, optionally with a lease
+	//
 	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTask(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseTask performs a POST /v1/tasks/{id}/release (the `ReleaseTask` operationId) request.
+	// ReleaseTask Release a task the caller owns
+	//
+	// Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 	ReleaseTask(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
-// WellKnown performs a GET /.well-known/agentmesh (the `WellKnown` operationId) request.
+// WellKnown The agentmesh well-known document: where to discover the API
+//
+// Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
 func (c *Client) WellKnown(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewWellKnownRequest(c.Server)
 	if err != nil {
@@ -2128,7 +2341,9 @@ func (c *Client) WellKnown(ctx context.Context, reqEditors ...RequestEditorFn) (
 	return c.Client.Do(req)
 }
 
-// AuthorizationServerMetadata performs a GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId) request.
+// AuthorizationServerMetadata OAuth 2.0 authorization server metadata (RFC 8414)
+//
+// Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
 func (c *Client) AuthorizationServerMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizationServerMetadataRequest(c.Server)
 	if err != nil {
@@ -2141,7 +2356,9 @@ func (c *Client) AuthorizationServerMetadata(ctx context.Context, reqEditors ...
 	return c.Client.Do(req)
 }
 
-// OpenidConfiguration performs a GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId) request.
+// OpenidConfiguration OpenID Connect discovery document for this server
+//
+// Corresponds with GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId).
 func (c *Client) OpenidConfiguration(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewOpenidConfigurationRequest(c.Server)
 	if err != nil {
@@ -2154,7 +2371,9 @@ func (c *Client) OpenidConfiguration(ctx context.Context, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-// ListBridges performs a GET /v1/admin/bridges (the `ListBridges` operationId) request.
+// ListBridges List bridges
+//
+// Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
 func (c *Client) ListBridges(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListBridgesRequest(c.Server)
 	if err != nil {
@@ -2167,10 +2386,13 @@ func (c *Client) ListBridges(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
-// CreateBridgeWithBody performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request,
-// with any type of body and a specified content type.
+// CreateBridgeWithBody Bridge a channel to a new private Slack channel
 //
 // Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 func (c *Client) CreateBridgeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateBridgeRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -2183,10 +2405,13 @@ func (c *Client) CreateBridgeWithBody(ctx context.Context, contentType string, b
 	return c.Client.Do(req)
 }
 
-// CreateBridge performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request.
-// Takes a body of the `application/json` content type.
+// CreateBridge Bridge a channel to a new private Slack channel
 //
 // Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 func (c *Client) CreateBridge(ctx context.Context, body CreateBridgeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateBridgeRequest(c.Server, body)
 	if err != nil {
@@ -2199,7 +2424,9 @@ func (c *Client) CreateBridge(ctx context.Context, body CreateBridgeJSONRequestB
 	return c.Client.Do(req)
 }
 
-// RemoveBridge performs a DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId) request.
+// RemoveBridge Remove a channel's bridge, archiving its Slack channel
+//
+// Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
 func (c *Client) RemoveBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemoveBridgeRequest(c.Server, channel)
 	if err != nil {
@@ -2212,7 +2439,9 @@ func (c *Client) RemoveBridge(ctx context.Context, channel ChannelParam, reqEdit
 	return c.Client.Do(req)
 }
 
-// GetBridge performs a GET /v1/admin/bridges/{channel} (the `GetBridge` operationId) request.
+// GetBridge Read a channel's bridge
+//
+// Corresponds with GET /v1/admin/bridges/{channel} (the `GetBridge` operationId).
 func (c *Client) GetBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetBridgeRequest(c.Server, channel)
 	if err != nil {
@@ -2225,10 +2454,13 @@ func (c *Client) GetBridge(ctx context.Context, channel ChannelParam, reqEditors
 	return c.Client.Do(req)
 }
 
-// CreateAgentIdentityWithBody performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request,
-// with any type of body and a specified content type.
+// CreateAgentIdentityWithBody Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
 // Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 func (c *Client) CreateAgentIdentityWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateAgentIdentityRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -2241,10 +2473,13 @@ func (c *Client) CreateAgentIdentityWithBody(ctx context.Context, contentType st
 	return c.Client.Do(req)
 }
 
-// CreateAgentIdentity performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request.
-// Takes a body of the `application/json` content type.
+// CreateAgentIdentity Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
 // Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 func (c *Client) CreateAgentIdentity(ctx context.Context, body CreateAgentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateAgentIdentityRequest(c.Server, body)
 	if err != nil {
@@ -2257,8 +2492,11 @@ func (c *Client) CreateAgentIdentity(ctx context.Context, body CreateAgentIdenti
 	return c.Client.Do(req)
 }
 
-// CreateIdentityByEmailWithBody performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request,
-// with any type of body and a specified content type.
+// CreateIdentityByEmailWithBody Create a human identity for an email address
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 func (c *Client) CreateIdentityByEmailWithBody(ctx context.Context, params *CreateIdentityByEmailParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateIdentityByEmailRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -2271,8 +2509,11 @@ func (c *Client) CreateIdentityByEmailWithBody(ctx context.Context, params *Crea
 	return c.Client.Do(req)
 }
 
-// CreateIdentityByEmail performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request.
+// CreateIdentityByEmail Create a human identity for an email address
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 func (c *Client) CreateIdentityByEmail(ctx context.Context, params *CreateIdentityByEmailParams, body CreateIdentityByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateIdentityByEmailRequest(c.Server, params, body)
 	if err != nil {
@@ -2285,7 +2526,9 @@ func (c *Client) CreateIdentityByEmail(ctx context.Context, params *CreateIdenti
 	return c.Client.Do(req)
 }
 
-// ResetCredential performs a POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId) request.
+// ResetCredential Remove an identity's registered keys
+//
+// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 func (c *Client) ResetCredential(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewResetCredentialRequest(c.Server, identity, params)
 	if err != nil {
@@ -2298,7 +2541,9 @@ func (c *Client) ResetCredential(ctx context.Context, identity string, params *R
 	return c.Client.Do(req)
 }
 
-// AdminReset performs a POST /v1/admin/reset (the `AdminReset` operationId) request.
+// AdminReset Delete everything in the store (an administrator's reset)
+//
+// Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 func (c *Client) AdminReset(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminResetRequest(c.Server, params)
 	if err != nil {
@@ -2311,7 +2556,9 @@ func (c *Client) AdminReset(ctx context.Context, params *AdminResetParams, reqEd
 	return c.Client.Do(req)
 }
 
-// ListScopes performs a GET /v1/admin/scopes (the `ListScopes` operationId) request.
+// ListScopes List scopes
+//
+// Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
 func (c *Client) ListScopes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListScopesRequest(c.Server)
 	if err != nil {
@@ -2324,8 +2571,11 @@ func (c *Client) ListScopes(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
-// CreateScopeWithBody performs a POST /v1/admin/scopes (the `CreateScope` operationId) request,
-// with any type of body and a specified content type.
+// CreateScopeWithBody Create a scope
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 func (c *Client) CreateScopeWithBody(ctx context.Context, params *CreateScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateScopeRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -2338,8 +2588,11 @@ func (c *Client) CreateScopeWithBody(ctx context.Context, params *CreateScopePar
 	return c.Client.Do(req)
 }
 
-// CreateScope performs a POST /v1/admin/scopes (the `CreateScope` operationId) request.
+// CreateScope Create a scope
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 func (c *Client) CreateScope(ctx context.Context, params *CreateScopeParams, body CreateScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateScopeRequest(c.Server, params, body)
 	if err != nil {
@@ -2352,7 +2605,9 @@ func (c *Client) CreateScope(ctx context.Context, params *CreateScopeParams, bod
 	return c.Client.Do(req)
 }
 
-// GetScope performs a GET /v1/admin/scopes/{scope} (the `GetScope` operationId) request.
+// GetScope Read a scope
+//
+// Corresponds with GET /v1/admin/scopes/{scope} (the `GetScope` operationId).
 func (c *Client) GetScope(ctx context.Context, scope ScopeParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetScopeRequest(c.Server, scope)
 	if err != nil {
@@ -2365,8 +2620,11 @@ func (c *Client) GetScope(ctx context.Context, scope ScopeParam, reqEditors ...R
 	return c.Client.Do(req)
 }
 
-// DoneScopeWithBody performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request,
-// with any type of body and a specified content type.
+// DoneScopeWithBody Retire a scope, with or without its bridge
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 func (c *Client) DoneScopeWithBody(ctx context.Context, scope ScopeParam, params *DoneScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDoneScopeRequestWithBody(c.Server, scope, params, contentType, body)
 	if err != nil {
@@ -2379,8 +2637,11 @@ func (c *Client) DoneScopeWithBody(ctx context.Context, scope ScopeParam, params
 	return c.Client.Do(req)
 }
 
-// DoneScope performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request.
+// DoneScope Retire a scope, with or without its bridge
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 func (c *Client) DoneScope(ctx context.Context, scope ScopeParam, params *DoneScopeParams, body DoneScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDoneScopeRequest(c.Server, scope, params, body)
 	if err != nil {
@@ -2393,9 +2654,11 @@ func (c *Client) DoneScope(ctx context.Context, scope ScopeParam, params *DoneSc
 	return c.Client.Do(req)
 }
 
-// ListSigningKeys performs a GET /v1/admin/signing-keys (the `ListSigningKeys` operationId) request.
+// ListSigningKeys List the server's token signing keys
 //
 // The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
+//
+// Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 func (c *Client) ListSigningKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListSigningKeysRequest(c.Server)
 	if err != nil {
@@ -2408,9 +2671,11 @@ func (c *Client) ListSigningKeys(ctx context.Context, reqEditors ...RequestEdito
 	return c.Client.Do(req)
 }
 
-// RotateSigningKey performs a POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId) request.
+// RotateSigningKey Rotate the active token signing key
 //
 // Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
+//
+// Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 func (c *Client) RotateSigningKey(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRotateSigningKeyRequest(c.Server, params)
 	if err != nil {
@@ -2423,7 +2688,9 @@ func (c *Client) RotateSigningKey(ctx context.Context, params *RotateSigningKeyP
 	return c.Client.Do(req)
 }
 
-// AdminStatus performs a GET /v1/admin/status (the `AdminStatus` operationId) request.
+// AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog
+//
+// Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
 func (c *Client) AdminStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminStatusRequest(c.Server)
 	if err != nil {
@@ -2436,9 +2703,11 @@ func (c *Client) AdminStatus(ctx context.Context, reqEditors ...RequestEditorFn)
 	return c.Client.Do(req)
 }
 
-// AdminUsage performs a GET /v1/admin/usage (the `AdminUsage` operationId) request.
+// AdminUsage The database size, budget and capacity notice
 //
 // The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
+//
+// Corresponds with GET /v1/admin/usage (the `AdminUsage` operationId).
 func (c *Client) AdminUsage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminUsageRequest(c.Server)
 	if err != nil {
@@ -2451,9 +2720,11 @@ func (c *Client) AdminUsage(ctx context.Context, reqEditors ...RequestEditorFn) 
 	return c.Client.Do(req)
 }
 
-// ListAgentStatuses performs a GET /v1/agent-statuses (the `ListAgentStatuses` operationId) request.
+// ListAgentStatuses List every visible identity's stored status
 //
 // Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
+//
+// Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 func (c *Client) ListAgentStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListAgentStatusesRequest(c.Server)
 	if err != nil {
@@ -2466,7 +2737,9 @@ func (c *Client) ListAgentStatuses(ctx context.Context, reqEditors ...RequestEdi
 	return c.Client.Do(req)
 }
 
-// Jwks performs a GET /v1/auth/jwks (the `Jwks` operationId) request.
+// Jwks The public keys that verify the bearers this server issues
+//
+// Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
 func (c *Client) Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewJwksRequest(c.Server)
 	if err != nil {
@@ -2479,10 +2752,13 @@ func (c *Client) Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http
 	return c.Client.Do(req)
 }
 
-// RegisterWithBody performs a POST /v1/auth/register (the `Register` operationId) request,
-// with any type of body and a specified content type.
+// RegisterWithBody Register an identity's public key, with an enrollment token where registration is by enrollment
 //
 // Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/register (the `Register` operationId).
 func (c *Client) RegisterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -2495,10 +2771,13 @@ func (c *Client) RegisterWithBody(ctx context.Context, contentType string, body 
 	return c.Client.Do(req)
 }
 
-// Register performs a POST /v1/auth/register (the `Register` operationId) request.
-// Takes a body of the `application/json` content type.
+// Register Register an identity's public key, with an enrollment token where registration is by enrollment
 //
 // Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/auth/register (the `Register` operationId).
 func (c *Client) Register(ctx context.Context, body RegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRegisterRequest(c.Server, body)
 	if err != nil {
@@ -2511,10 +2790,13 @@ func (c *Client) Register(ctx context.Context, body RegisterJSONRequestBody, req
 	return c.Client.Do(req)
 }
 
-// TokenWithBody performs a POST /v1/auth/token (the `Token` operationId) request,
-// with any type of body and a specified content type.
+// TokenWithBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
 // RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/auth/token (the `Token` operationId).
 func (c *Client) TokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewTokenRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -2527,10 +2809,13 @@ func (c *Client) TokenWithBody(ctx context.Context, contentType string, body io.
 	return c.Client.Do(req)
 }
 
-// TokenWithFormdataBody performs a POST /v1/auth/token (the `Token` operationId) request.
-// Takes a body of the `application/x-www-form-urlencoded` content type.
+// TokenWithFormdataBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
 // RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type.
+//
+// Corresponds with POST /v1/auth/token (the `Token` operationId).
 func (c *Client) TokenWithFormdataBody(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewTokenRequestWithFormdataBody(c.Server, body)
 	if err != nil {
@@ -2543,7 +2828,9 @@ func (c *Client) TokenWithFormdataBody(ctx context.Context, body TokenFormdataRe
 	return c.Client.Do(req)
 }
 
-// ListChannels performs a GET /v1/channels (the `ListChannels` operationId) request.
+// ListChannels List the channels the caller may see
+//
+// Corresponds with GET /v1/channels (the `ListChannels` operationId).
 func (c *Client) ListChannels(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListChannelsRequest(c.Server)
 	if err != nil {
@@ -2556,8 +2843,11 @@ func (c *Client) ListChannels(ctx context.Context, reqEditors ...RequestEditorFn
 	return c.Client.Do(req)
 }
 
-// CreateChannelWithBody performs a POST /v1/channels (the `CreateChannel` operationId) request,
-// with any type of body and a specified content type.
+// CreateChannelWithBody Create a channel
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 func (c *Client) CreateChannelWithBody(ctx context.Context, params *CreateChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateChannelRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -2570,8 +2860,11 @@ func (c *Client) CreateChannelWithBody(ctx context.Context, params *CreateChanne
 	return c.Client.Do(req)
 }
 
-// CreateChannel performs a POST /v1/channels (the `CreateChannel` operationId) request.
+// CreateChannel Create a channel
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 func (c *Client) CreateChannel(ctx context.Context, params *CreateChannelParams, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateChannelRequest(c.Server, params, body)
 	if err != nil {
@@ -2584,7 +2877,9 @@ func (c *Client) CreateChannel(ctx context.Context, params *CreateChannelParams,
 	return c.Client.Do(req)
 }
 
-// DeleteChannel performs a DELETE /v1/channels/{channel} (the `DeleteChannel` operationId) request.
+// DeleteChannel Delete a channel
+//
+// Corresponds with DELETE /v1/channels/{channel} (the `DeleteChannel` operationId).
 func (c *Client) DeleteChannel(ctx context.Context, channel ChannelParam, params *DeleteChannelParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteChannelRequest(c.Server, channel, params)
 	if err != nil {
@@ -2597,8 +2892,11 @@ func (c *Client) DeleteChannel(ctx context.Context, channel ChannelParam, params
 	return c.Client.Do(req)
 }
 
-// RenameChannelWithBody performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request,
-// with any type of body and a specified content type.
+// RenameChannelWithBody Rename a channel
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 func (c *Client) RenameChannelWithBody(ctx context.Context, channel ChannelParam, params *RenameChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenameChannelRequestWithBody(c.Server, channel, params, contentType, body)
 	if err != nil {
@@ -2611,8 +2909,11 @@ func (c *Client) RenameChannelWithBody(ctx context.Context, channel ChannelParam
 	return c.Client.Do(req)
 }
 
-// RenameChannel performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request.
+// RenameChannel Rename a channel
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 func (c *Client) RenameChannel(ctx context.Context, channel ChannelParam, params *RenameChannelParams, body RenameChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenameChannelRequest(c.Server, channel, params, body)
 	if err != nil {
@@ -2625,7 +2926,9 @@ func (c *Client) RenameChannel(ctx context.Context, channel ChannelParam, params
 	return c.Client.Do(req)
 }
 
-// GetACL performs a GET /v1/channels/{channel}/acl (the `GetACL` operationId) request.
+// GetACL Read a channel's access control list
+//
+// Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
 func (c *Client) GetACL(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetACLRequest(c.Server, channel)
 	if err != nil {
@@ -2638,8 +2941,11 @@ func (c *Client) GetACL(ctx context.Context, channel ChannelParam, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// SetACLWithBody performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request,
-// with any type of body and a specified content type.
+// SetACLWithBody Replace a channel's access control list
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 func (c *Client) SetACLWithBody(ctx context.Context, channel ChannelParam, params *SetACLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetACLRequestWithBody(c.Server, channel, params, contentType, body)
 	if err != nil {
@@ -2652,8 +2958,11 @@ func (c *Client) SetACLWithBody(ctx context.Context, channel ChannelParam, param
 	return c.Client.Do(req)
 }
 
-// SetACL performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request.
+// SetACL Replace a channel's access control list
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 func (c *Client) SetACL(ctx context.Context, channel ChannelParam, params *SetACLParams, body SetACLJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetACLRequest(c.Server, channel, params, body)
 	if err != nil {
@@ -2666,7 +2975,9 @@ func (c *Client) SetACL(ctx context.Context, channel ChannelParam, params *SetAC
 	return c.Client.Do(req)
 }
 
-// History performs a GET /v1/channels/{channel}/messages (the `History` operationId) request.
+// History Read a window of a channel's messages
+//
+// Corresponds with GET /v1/channels/{channel}/messages (the `History` operationId).
 func (c *Client) History(ctx context.Context, channel ChannelParam, params *HistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHistoryRequest(c.Server, channel, params)
 	if err != nil {
@@ -2679,8 +2990,11 @@ func (c *Client) History(ctx context.Context, channel ChannelParam, params *Hist
 	return c.Client.Do(req)
 }
 
-// SendMessageWithBody performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request,
-// with any type of body and a specified content type.
+// SendMessageWithBody Send a message to a channel
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 func (c *Client) SendMessageWithBody(ctx context.Context, channel ChannelParam, params *SendMessageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSendMessageRequestWithBody(c.Server, channel, params, contentType, body)
 	if err != nil {
@@ -2693,8 +3007,11 @@ func (c *Client) SendMessageWithBody(ctx context.Context, channel ChannelParam, 
 	return c.Client.Do(req)
 }
 
-// SendMessage performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request.
+// SendMessage Send a message to a channel
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 func (c *Client) SendMessage(ctx context.Context, channel ChannelParam, params *SendMessageParams, body SendMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSendMessageRequest(c.Server, channel, params, body)
 	if err != nil {
@@ -2707,7 +3024,9 @@ func (c *Client) SendMessage(ctx context.Context, channel ChannelParam, params *
 	return c.Client.Do(req)
 }
 
-// Unsubscribe performs a DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId) request.
+// Unsubscribe Remove the caller's subscription to a channel
+//
+// Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
 func (c *Client) Unsubscribe(ctx context.Context, channel ChannelParam, params *UnsubscribeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUnsubscribeRequest(c.Server, channel, params)
 	if err != nil {
@@ -2720,8 +3039,11 @@ func (c *Client) Unsubscribe(ctx context.Context, channel ChannelParam, params *
 	return c.Client.Do(req)
 }
 
-// SubscribeWithBody performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request,
-// with any type of body and a specified content type.
+// SubscribeWithBody Subscribe the caller to a channel
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 func (c *Client) SubscribeWithBody(ctx context.Context, channel ChannelParam, params *SubscribeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubscribeRequestWithBody(c.Server, channel, params, contentType, body)
 	if err != nil {
@@ -2734,8 +3056,11 @@ func (c *Client) SubscribeWithBody(ctx context.Context, channel ChannelParam, pa
 	return c.Client.Do(req)
 }
 
-// Subscribe performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request.
+// Subscribe Subscribe the caller to a channel
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 func (c *Client) Subscribe(ctx context.Context, channel ChannelParam, params *SubscribeParams, body SubscribeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubscribeRequest(c.Server, channel, params, body)
 	if err != nil {
@@ -2748,7 +3073,9 @@ func (c *Client) Subscribe(ctx context.Context, channel ChannelParam, params *Su
 	return c.Client.Do(req)
 }
 
-// ListTasks performs a GET /v1/channels/{channel}/tasks (the `ListTasks` operationId) request.
+// ListTasks List a channel's tasks, optionally filtered by status or owner
+//
+// Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
 func (c *Client) ListTasks(ctx context.Context, channel ChannelParam, params *ListTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTasksRequest(c.Server, channel, params)
 	if err != nil {
@@ -2761,8 +3088,11 @@ func (c *Client) ListTasks(ctx context.Context, channel ChannelParam, params *Li
 	return c.Client.Do(req)
 }
 
-// CreateTaskWithBody performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request,
-// with any type of body and a specified content type.
+// CreateTaskWithBody Create a task on a channel's task list
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 func (c *Client) CreateTaskWithBody(ctx context.Context, channel ChannelParam, params *CreateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTaskRequestWithBody(c.Server, channel, params, contentType, body)
 	if err != nil {
@@ -2775,8 +3105,11 @@ func (c *Client) CreateTaskWithBody(ctx context.Context, channel ChannelParam, p
 	return c.Client.Do(req)
 }
 
-// CreateTask performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request.
+// CreateTask Create a task on a channel's task list
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 func (c *Client) CreateTask(ctx context.Context, channel ChannelParam, params *CreateTaskParams, body CreateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateTaskRequest(c.Server, channel, params, body)
 	if err != nil {
@@ -2789,7 +3122,9 @@ func (c *Client) CreateTask(ctx context.Context, channel ChannelParam, params *C
 	return c.Client.Do(req)
 }
 
-// Discover performs a GET /v1/discover (the `Discover` operationId) request.
+// Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
+//
+// Corresponds with GET /v1/discover (the `Discover` operationId).
 func (c *Client) Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDiscoverRequest(c.Server)
 	if err != nil {
@@ -2802,7 +3137,9 @@ func (c *Client) Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*
 	return c.Client.Do(req)
 }
 
-// Health performs a GET /v1/health (the `Health` operationId) request.
+// Health The health document as the caller's tier sees it
+//
+// Corresponds with GET /v1/health (the `Health` operationId).
 func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHealthRequest(c.Server)
 	if err != nil {
@@ -2815,7 +3152,9 @@ func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*ht
 	return c.Client.Do(req)
 }
 
-// ListIdentities performs a GET /v1/identities (the `ListIdentities` operationId) request.
+// ListIdentities List identities that have a live session
+//
+// Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 func (c *Client) ListIdentities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListIdentitiesRequest(c.Server)
 	if err != nil {
@@ -2828,9 +3167,11 @@ func (c *Client) ListIdentities(ctx context.Context, reqEditors ...RequestEditor
 	return c.Client.Do(req)
 }
 
-// AgentStatusHistory performs a GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId) request.
+// AgentStatusHistory List one identity's stored statuses, oldest first
 //
 // One identity's status revisions, oldest first, at most status_history_count.
+//
+// Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 func (c *Client) AgentStatusHistory(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAgentStatusHistoryRequest(c.Server, identity)
 	if err != nil {
@@ -2843,7 +3184,9 @@ func (c *Client) AgentStatusHistory(ctx context.Context, identity string, reqEdi
 	return c.Client.Do(req)
 }
 
-// DeleteMemory performs a DELETE /v1/memories/{id} (the `DeleteMemory` operationId) request.
+// DeleteMemory Delete a memory
+//
+// Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
 func (c *Client) DeleteMemory(ctx context.Context, id IdParam, params *DeleteMemoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteMemoryRequest(c.Server, id, params)
 	if err != nil {
@@ -2856,7 +3199,9 @@ func (c *Client) DeleteMemory(ctx context.Context, id IdParam, params *DeleteMem
 	return c.Client.Do(req)
 }
 
-// GetMemory performs a GET /v1/memories/{id} (the `GetMemory` operationId) request.
+// GetMemory Read a memory's live revision
+//
+// Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 func (c *Client) GetMemory(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetMemoryRequest(c.Server, id)
 	if err != nil {
@@ -2869,7 +3214,9 @@ func (c *Client) GetMemory(ctx context.Context, id IdParam, reqEditors ...Reques
 	return c.Client.Do(req)
 }
 
-// ListMemoryRevisions performs a GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId) request.
+// ListMemoryRevisions List a memory's revisions
+//
+// Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 func (c *Client) ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListMemoryRevisionsRequest(c.Server, id)
 	if err != nil {
@@ -2882,8 +3229,11 @@ func (c *Client) ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors
 	return c.Client.Do(req)
 }
 
-// EditMemoryWithBody performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request,
-// with any type of body and a specified content type.
+// EditMemoryWithBody Write a new revision of a memory
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 func (c *Client) EditMemoryWithBody(ctx context.Context, id IdParam, params *EditMemoryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEditMemoryRequestWithBody(c.Server, id, params, contentType, body)
 	if err != nil {
@@ -2896,8 +3246,11 @@ func (c *Client) EditMemoryWithBody(ctx context.Context, id IdParam, params *Edi
 	return c.Client.Do(req)
 }
 
-// EditMemory performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request.
+// EditMemory Write a new revision of a memory
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 func (c *Client) EditMemory(ctx context.Context, id IdParam, params *EditMemoryParams, body EditMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEditMemoryRequest(c.Server, id, params, body)
 	if err != nil {
@@ -2910,7 +3263,9 @@ func (c *Client) EditMemory(ctx context.Context, id IdParam, params *EditMemoryP
 	return c.Client.Do(req)
 }
 
-// Search performs a GET /v1/search (the `Search` operationId) request.
+// Search Search the messages of the channels the caller may read
+//
+// Corresponds with GET /v1/search (the `Search` operationId).
 func (c *Client) Search(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSearchRequest(c.Server, params)
 	if err != nil {
@@ -2923,8 +3278,11 @@ func (c *Client) Search(ctx context.Context, params *SearchParams, reqEditors ..
 	return c.Client.Do(req)
 }
 
-// OpenSessionWithBody performs a POST /v1/sessions (the `OpenSession` operationId) request,
-// with any type of body and a specified content type.
+// OpenSessionWithBody Open a session for the caller's identity, resuming by token or offering cursors
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 func (c *Client) OpenSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewOpenSessionRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -2937,8 +3295,11 @@ func (c *Client) OpenSessionWithBody(ctx context.Context, contentType string, bo
 	return c.Client.Do(req)
 }
 
-// OpenSession performs a POST /v1/sessions (the `OpenSession` operationId) request.
+// OpenSession Open a session for the caller's identity, resuming by token or offering cursors
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 func (c *Client) OpenSession(ctx context.Context, body OpenSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewOpenSessionRequest(c.Server, body)
 	if err != nil {
@@ -2951,7 +3312,9 @@ func (c *Client) OpenSession(ctx context.Context, body OpenSessionJSONRequestBod
 	return c.Client.Do(req)
 }
 
-// CloseSession performs a DELETE /v1/sessions/{session} (the `CloseSession` operationId) request.
+// CloseSession Close a session, freeing its display name
+//
+// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 func (c *Client) CloseSession(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCloseSessionRequest(c.Server, session, params)
 	if err != nil {
@@ -2964,9 +3327,11 @@ func (c *Client) CloseSession(ctx context.Context, session SessionParam, params 
 	return c.Client.Do(req)
 }
 
-// Peek performs a GET /v1/sessions/{session}/peek (the `Peek` operationId) request.
+// Peek Count what receive would deliver without delivering it
 //
 // Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
+//
+// Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 func (c *Client) Peek(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPeekRequest(c.Server, session, params)
 	if err != nil {
@@ -2979,8 +3344,11 @@ func (c *Client) Peek(ctx context.Context, session SessionParam, params *PeekPar
 	return c.Client.Do(req)
 }
 
-// ReceiveWithBody performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request,
-// with any type of body and a specified content type.
+// ReceiveWithBody Receive the next batch of messages for a session, acknowledging the previous one
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 func (c *Client) ReceiveWithBody(ctx context.Context, session SessionParam, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReceiveRequestWithBody(c.Server, session, contentType, body)
 	if err != nil {
@@ -2993,8 +3361,11 @@ func (c *Client) ReceiveWithBody(ctx context.Context, session SessionParam, cont
 	return c.Client.Do(req)
 }
 
-// Receive performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request.
+// Receive Receive the next batch of messages for a session, acknowledging the previous one
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 func (c *Client) Receive(ctx context.Context, session SessionParam, body ReceiveJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReceiveRequest(c.Server, session, body)
 	if err != nil {
@@ -3007,10 +3378,13 @@ func (c *Client) Receive(ctx context.Context, session SessionParam, body Receive
 	return c.Client.Do(req)
 }
 
-// SetAgentStatusWithBody performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request,
-// with any type of body and a specified content type.
+// SetAgentStatusWithBody Set the calling agent's status line from one of its live sessions
 //
 // Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 func (c *Client) SetAgentStatusWithBody(ctx context.Context, session SessionParam, params *SetAgentStatusParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetAgentStatusRequestWithBody(c.Server, session, params, contentType, body)
 	if err != nil {
@@ -3023,10 +3397,13 @@ func (c *Client) SetAgentStatusWithBody(ctx context.Context, session SessionPara
 	return c.Client.Do(req)
 }
 
-// SetAgentStatus performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request.
-// Takes a body of the `application/json` content type.
+// SetAgentStatus Set the calling agent's status line from one of its live sessions
 //
 // Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 func (c *Client) SetAgentStatus(ctx context.Context, session SessionParam, params *SetAgentStatusParams, body SetAgentStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSetAgentStatusRequest(c.Server, session, params, body)
 	if err != nil {
@@ -3039,7 +3416,9 @@ func (c *Client) SetAgentStatus(ctx context.Context, session SessionParam, param
 	return c.Client.Do(req)
 }
 
-// Watch performs a GET /v1/sessions/{session}/watch (the `Watch` operationId) request.
+// Watch Long-poll until the session has something to receive or the timeout passes
+//
+// Corresponds with GET /v1/sessions/{session}/watch (the `Watch` operationId).
 func (c *Client) Watch(ctx context.Context, session SessionParam, params *WatchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewWatchRequest(c.Server, session, params)
 	if err != nil {
@@ -3052,7 +3431,9 @@ func (c *Client) Watch(ctx context.Context, session SessionParam, params *WatchP
 	return c.Client.Do(req)
 }
 
-// UnsubscribeTags performs a DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId) request.
+// UnsubscribeTags Remove a tag subscription: one AND set of tag patterns
+//
+// Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
 func (c *Client) UnsubscribeTags(ctx context.Context, params *UnsubscribeTagsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUnsubscribeTagsRequest(c.Server, params)
 	if err != nil {
@@ -3065,7 +3446,9 @@ func (c *Client) UnsubscribeTags(ctx context.Context, params *UnsubscribeTagsPar
 	return c.Client.Do(req)
 }
 
-// ListTagSubscriptions performs a GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId) request.
+// ListTagSubscriptions List the caller's tag subscriptions
+//
+// Corresponds with GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId).
 func (c *Client) ListTagSubscriptions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTagSubscriptionsRequest(c.Server)
 	if err != nil {
@@ -3078,8 +3461,11 @@ func (c *Client) ListTagSubscriptions(ctx context.Context, reqEditors ...Request
 	return c.Client.Do(req)
 }
 
-// SubscribeTagsWithBody performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request,
-// with any type of body and a specified content type.
+// SubscribeTagsWithBody Add a tag subscription: one AND set of tag patterns
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 func (c *Client) SubscribeTagsWithBody(ctx context.Context, params *SubscribeTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubscribeTagsRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
@@ -3092,8 +3478,11 @@ func (c *Client) SubscribeTagsWithBody(ctx context.Context, params *SubscribeTag
 	return c.Client.Do(req)
 }
 
-// SubscribeTags performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request.
+// SubscribeTags Add a tag subscription: one AND set of tag patterns
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 func (c *Client) SubscribeTags(ctx context.Context, params *SubscribeTagsParams, body SubscribeTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSubscribeTagsRequest(c.Server, params, body)
 	if err != nil {
@@ -3106,7 +3495,9 @@ func (c *Client) SubscribeTags(ctx context.Context, params *SubscribeTagsParams,
 	return c.Client.Do(req)
 }
 
-// GetTask performs a GET /v1/tasks/{id} (the `GetTask` operationId) request.
+// GetTask Read a task
+//
+// Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
 func (c *Client) GetTask(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTaskRequest(c.Server, id)
 	if err != nil {
@@ -3119,8 +3510,11 @@ func (c *Client) GetTask(ctx context.Context, id IdParam, reqEditors ...RequestE
 	return c.Client.Do(req)
 }
 
-// UpdateTaskWithBody performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request,
-// with any type of body and a specified content type.
+// UpdateTaskWithBody Update a task: absent fields stay unchanged
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 func (c *Client) UpdateTaskWithBody(ctx context.Context, id IdParam, params *UpdateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateTaskRequestWithBody(c.Server, id, params, contentType, body)
 	if err != nil {
@@ -3133,8 +3527,11 @@ func (c *Client) UpdateTaskWithBody(ctx context.Context, id IdParam, params *Upd
 	return c.Client.Do(req)
 }
 
-// UpdateTask performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request.
+// UpdateTask Update a task: absent fields stay unchanged
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 func (c *Client) UpdateTask(ctx context.Context, id IdParam, params *UpdateTaskParams, body UpdateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateTaskRequest(c.Server, id, params, body)
 	if err != nil {
@@ -3147,8 +3544,11 @@ func (c *Client) UpdateTask(ctx context.Context, id IdParam, params *UpdateTaskP
 	return c.Client.Do(req)
 }
 
-// ClaimTaskWithBody performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request,
-// with any type of body and a specified content type.
+// ClaimTaskWithBody Claim a task for the caller, optionally with a lease
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 func (c *Client) ClaimTaskWithBody(ctx context.Context, id IdParam, params *ClaimTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimTaskRequestWithBody(c.Server, id, params, contentType, body)
 	if err != nil {
@@ -3161,8 +3561,11 @@ func (c *Client) ClaimTaskWithBody(ctx context.Context, id IdParam, params *Clai
 	return c.Client.Do(req)
 }
 
-// ClaimTask performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request.
+// ClaimTask Claim a task for the caller, optionally with a lease
+//
 // Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 func (c *Client) ClaimTask(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewClaimTaskRequest(c.Server, id, params, body)
 	if err != nil {
@@ -3175,7 +3578,9 @@ func (c *Client) ClaimTask(ctx context.Context, id IdParam, params *ClaimTaskPar
 	return c.Client.Do(req)
 }
 
-// ReleaseTask performs a POST /v1/tasks/{id}/release (the `ReleaseTask` operationId) request.
+// ReleaseTask Release a task the caller owns
+//
+// Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 func (c *Client) ReleaseTask(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewReleaseTaskRequest(c.Server, id, params)
 	if err != nil {
@@ -5987,421 +6392,575 @@ func WithBaseURL(baseURL string) ClientOption {
 // ClientWithResponsesInterface is the interface specification for the client with responses above.
 type ClientWithResponsesInterface interface {
 
-	// WellKnownWithResponse performs a GET /.well-known/agentmesh (the `WellKnown` operationId) request.
+	// WellKnownWithResponse The agentmesh well-known document: where to discover the API
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
 	WellKnownWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*WellKnownResponse, error)
 
-	// AuthorizationServerMetadataWithResponse performs a GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId) request.
+	// AuthorizationServerMetadataWithResponse OAuth 2.0 authorization server metadata (RFC 8414)
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
 	AuthorizationServerMetadataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthorizationServerMetadataResponse, error)
 
-	// OpenidConfigurationWithResponse performs a GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId) request.
+	// OpenidConfigurationWithResponse OpenID Connect discovery document for this server
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId).
 	OpenidConfigurationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OpenidConfigurationResponse, error)
 
-	// ListBridgesWithResponse performs a GET /v1/admin/bridges (the `ListBridges` operationId) request.
+	// ListBridgesWithResponse List bridges
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
 	ListBridgesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBridgesResponse, error)
 
-	// CreateBridgeWithBodyWithResponse performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateBridgeWithBodyWithResponse Bridge a channel to a new private Slack channel
 	//
 	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 	CreateBridgeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBridgeResponse, error)
 
-	// CreateBridgeWithResponse performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// CreateBridgeWithResponse Bridge a channel to a new private Slack channel
 	//
 	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 	CreateBridgeWithResponse(ctx context.Context, body CreateBridgeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBridgeResponse, error)
 
-	// RemoveBridgeWithResponse performs a DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId) request.
+	// RemoveBridgeWithResponse Remove a channel's bridge, archiving its Slack channel
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
 	RemoveBridgeWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*RemoveBridgeResponse, error)
 
-	// GetBridgeWithResponse performs a GET /v1/admin/bridges/{channel} (the `GetBridge` operationId) request.
+	// GetBridgeWithResponse Read a channel's bridge
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/bridges/{channel} (the `GetBridge` operationId).
 	GetBridgeWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*GetBridgeResponse, error)
 
-	// CreateAgentIdentityWithBodyWithResponse performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateAgentIdentityWithBodyWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
 	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 	CreateAgentIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAgentIdentityResponse, error)
 
-	// CreateAgentIdentityWithResponse performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// CreateAgentIdentityWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
 	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 	CreateAgentIdentityWithResponse(ctx context.Context, body CreateAgentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAgentIdentityResponse, error)
 
-	// CreateIdentityByEmailWithBodyWithResponse performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateIdentityByEmailWithBodyWithResponse Create a human identity for an email address
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 	CreateIdentityByEmailWithBodyWithResponse(ctx context.Context, params *CreateIdentityByEmailParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIdentityByEmailResponse, error)
 
-	// CreateIdentityByEmailWithResponse performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request.
+	// CreateIdentityByEmailWithResponse Create a human identity for an email address
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 	CreateIdentityByEmailWithResponse(ctx context.Context, params *CreateIdentityByEmailParams, body CreateIdentityByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIdentityByEmailResponse, error)
 
-	// ResetCredentialWithResponse performs a POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId) request.
+	// ResetCredentialWithResponse Remove an identity's registered keys
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 	ResetCredentialWithResponse(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*ResetCredentialResponse, error)
 
-	// AdminResetWithResponse performs a POST /v1/admin/reset (the `AdminReset` operationId) request.
+	// AdminResetWithResponse Delete everything in the store (an administrator's reset)
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 	AdminResetWithResponse(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*AdminResetResponse, error)
 
-	// ListScopesWithResponse performs a GET /v1/admin/scopes (the `ListScopes` operationId) request.
+	// ListScopesWithResponse List scopes
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
 	ListScopesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScopesResponse, error)
 
-	// CreateScopeWithBodyWithResponse performs a POST /v1/admin/scopes (the `CreateScope` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateScopeWithBodyWithResponse Create a scope
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 	CreateScopeWithBodyWithResponse(ctx context.Context, params *CreateScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScopeResponse, error)
 
-	// CreateScopeWithResponse performs a POST /v1/admin/scopes (the `CreateScope` operationId) request.
+	// CreateScopeWithResponse Create a scope
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 	CreateScopeWithResponse(ctx context.Context, params *CreateScopeParams, body CreateScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScopeResponse, error)
 
-	// GetScopeWithResponse performs a GET /v1/admin/scopes/{scope} (the `GetScope` operationId) request.
+	// GetScopeWithResponse Read a scope
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/scopes/{scope} (the `GetScope` operationId).
 	GetScopeWithResponse(ctx context.Context, scope ScopeParam, reqEditors ...RequestEditorFn) (*GetScopeResponse, error)
 
-	// DoneScopeWithBodyWithResponse performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request,
-	// with any type of body and a specified content type.
+	// DoneScopeWithBodyWithResponse Retire a scope, with or without its bridge
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 	DoneScopeWithBodyWithResponse(ctx context.Context, scope ScopeParam, params *DoneScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DoneScopeResponse, error)
 
-	// DoneScopeWithResponse performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request.
+	// DoneScopeWithResponse Retire a scope, with or without its bridge
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 	DoneScopeWithResponse(ctx context.Context, scope ScopeParam, params *DoneScopeParams, body DoneScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*DoneScopeResponse, error)
 
-	// ListSigningKeysWithResponse performs a GET /v1/admin/signing-keys (the `ListSigningKeys` operationId) request.
+	// ListSigningKeysWithResponse List the server's token signing keys
 	//
 	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 	ListSigningKeysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSigningKeysResponse, error)
 
-	// RotateSigningKeyWithResponse performs a POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId) request.
+	// RotateSigningKeyWithResponse Rotate the active token signing key
 	//
 	// Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 	RotateSigningKeyWithResponse(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*RotateSigningKeyResponse, error)
 
-	// AdminStatusWithResponse performs a GET /v1/admin/status (the `AdminStatus` operationId) request.
+	// AdminStatusWithResponse The administrator's view of the server: sessions, channels, notices and the embedding backlog
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
 	AdminStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminStatusResponse, error)
 
-	// AdminUsageWithResponse performs a GET /v1/admin/usage (the `AdminUsage` operationId) request.
+	// AdminUsageWithResponse The database size, budget and capacity notice
 	//
 	// The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/admin/usage (the `AdminUsage` operationId).
 	AdminUsageWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminUsageResponse, error)
 
-	// ListAgentStatusesWithResponse performs a GET /v1/agent-statuses (the `ListAgentStatuses` operationId) request.
+	// ListAgentStatusesWithResponse List every visible identity's stored status
 	//
 	// Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 	ListAgentStatusesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentStatusesResponse, error)
 
-	// JwksWithResponse performs a GET /v1/auth/jwks (the `Jwks` operationId) request.
+	// JwksWithResponse The public keys that verify the bearers this server issues
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
 	JwksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JwksResponse, error)
 
-	// RegisterWithBodyWithResponse performs a POST /v1/auth/register (the `Register` operationId) request,
-	// with any type of body and a specified content type.
+	// RegisterWithBodyWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
 	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/register (the `Register` operationId).
 	RegisterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterResponse, error)
 
-	// RegisterWithResponse performs a POST /v1/auth/register (the `Register` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// RegisterWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
 	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/register (the `Register` operationId).
 	RegisterWithResponse(ctx context.Context, body RegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterResponse, error)
 
-	// TokenWithBodyWithResponse performs a POST /v1/auth/token (the `Token` operationId) request,
-	// with any type of body and a specified content type.
+	// TokenWithBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
 	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/token (the `Token` operationId).
 	TokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TokenResponse, error)
 
-	// TokenWithFormdataBodyWithResponse performs a POST /v1/auth/token (the `Token` operationId) request.
-	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	// TokenWithFormdataBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
 	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+	//
+	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/auth/token (the `Token` operationId).
 	TokenWithFormdataBodyWithResponse(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenResponse, error)
 
-	// ListChannelsWithResponse performs a GET /v1/channels (the `ListChannels` operationId) request.
+	// ListChannelsWithResponse List the channels the caller may see
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/channels (the `ListChannels` operationId).
 	ListChannelsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListChannelsResponse, error)
 
-	// CreateChannelWithBodyWithResponse performs a POST /v1/channels (the `CreateChannel` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateChannelWithBodyWithResponse Create a channel
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 	CreateChannelWithBodyWithResponse(ctx context.Context, params *CreateChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error)
 
-	// CreateChannelWithResponse performs a POST /v1/channels (the `CreateChannel` operationId) request.
+	// CreateChannelWithResponse Create a channel
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 	CreateChannelWithResponse(ctx context.Context, params *CreateChannelParams, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error)
 
-	// DeleteChannelWithResponse performs a DELETE /v1/channels/{channel} (the `DeleteChannel` operationId) request.
+	// DeleteChannelWithResponse Delete a channel
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/channels/{channel} (the `DeleteChannel` operationId).
 	DeleteChannelWithResponse(ctx context.Context, channel ChannelParam, params *DeleteChannelParams, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error)
 
-	// RenameChannelWithBodyWithResponse performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request,
-	// with any type of body and a specified content type.
+	// RenameChannelWithBodyWithResponse Rename a channel
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 	RenameChannelWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *RenameChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameChannelResponse, error)
 
-	// RenameChannelWithResponse performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request.
+	// RenameChannelWithResponse Rename a channel
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 	RenameChannelWithResponse(ctx context.Context, channel ChannelParam, params *RenameChannelParams, body RenameChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameChannelResponse, error)
 
-	// GetACLWithResponse performs a GET /v1/channels/{channel}/acl (the `GetACL` operationId) request.
+	// GetACLWithResponse Read a channel's access control list
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
 	GetACLWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*GetACLResponse, error)
 
-	// SetACLWithBodyWithResponse performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request,
-	// with any type of body and a specified content type.
+	// SetACLWithBodyWithResponse Replace a channel's access control list
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 	SetACLWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SetACLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetACLResponse, error)
 
-	// SetACLWithResponse performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request.
+	// SetACLWithResponse Replace a channel's access control list
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 	SetACLWithResponse(ctx context.Context, channel ChannelParam, params *SetACLParams, body SetACLJSONRequestBody, reqEditors ...RequestEditorFn) (*SetACLResponse, error)
 
-	// HistoryWithResponse performs a GET /v1/channels/{channel}/messages (the `History` operationId) request.
+	// HistoryWithResponse Read a window of a channel's messages
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/channels/{channel}/messages (the `History` operationId).
 	HistoryWithResponse(ctx context.Context, channel ChannelParam, params *HistoryParams, reqEditors ...RequestEditorFn) (*HistoryResponse, error)
 
-	// SendMessageWithBodyWithResponse performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request,
-	// with any type of body and a specified content type.
+	// SendMessageWithBodyWithResponse Send a message to a channel
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 	SendMessageWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SendMessageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendMessageResponse, error)
 
-	// SendMessageWithResponse performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request.
+	// SendMessageWithResponse Send a message to a channel
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 	SendMessageWithResponse(ctx context.Context, channel ChannelParam, params *SendMessageParams, body SendMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*SendMessageResponse, error)
 
-	// UnsubscribeWithResponse performs a DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId) request.
+	// UnsubscribeWithResponse Remove the caller's subscription to a channel
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
 	UnsubscribeWithResponse(ctx context.Context, channel ChannelParam, params *UnsubscribeParams, reqEditors ...RequestEditorFn) (*UnsubscribeResponse, error)
 
-	// SubscribeWithBodyWithResponse performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request,
-	// with any type of body and a specified content type.
+	// SubscribeWithBodyWithResponse Subscribe the caller to a channel
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 	SubscribeWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SubscribeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubscribeResponse, error)
 
-	// SubscribeWithResponse performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request.
+	// SubscribeWithResponse Subscribe the caller to a channel
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 	SubscribeWithResponse(ctx context.Context, channel ChannelParam, params *SubscribeParams, body SubscribeJSONRequestBody, reqEditors ...RequestEditorFn) (*SubscribeResponse, error)
 
-	// ListTasksWithResponse performs a GET /v1/channels/{channel}/tasks (the `ListTasks` operationId) request.
+	// ListTasksWithResponse List a channel's tasks, optionally filtered by status or owner
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
 	ListTasksWithResponse(ctx context.Context, channel ChannelParam, params *ListTasksParams, reqEditors ...RequestEditorFn) (*ListTasksResponse, error)
 
-	// CreateTaskWithBodyWithResponse performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request,
-	// with any type of body and a specified content type.
+	// CreateTaskWithBodyWithResponse Create a task on a channel's task list
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 	CreateTaskWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *CreateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTaskResponse, error)
 
-	// CreateTaskWithResponse performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request.
+	// CreateTaskWithResponse Create a task on a channel's task list
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 	CreateTaskWithResponse(ctx context.Context, channel ChannelParam, params *CreateTaskParams, body CreateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTaskResponse, error)
 
-	// DiscoverWithResponse performs a GET /v1/discover (the `Discover` operationId) request.
+	// DiscoverWithResponse The liveness probe: API versions, server and protocol version, capabilities and auth methods
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/discover (the `Discover` operationId).
 	DiscoverWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DiscoverResponse, error)
 
-	// HealthWithResponse performs a GET /v1/health (the `Health` operationId) request.
+	// HealthWithResponse The health document as the caller's tier sees it
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/health (the `Health` operationId).
 	HealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthResponse, error)
 
-	// ListIdentitiesWithResponse performs a GET /v1/identities (the `ListIdentities` operationId) request.
+	// ListIdentitiesWithResponse List identities that have a live session
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 	ListIdentitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListIdentitiesResponse, error)
 
-	// AgentStatusHistoryWithResponse performs a GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId) request.
+	// AgentStatusHistoryWithResponse List one identity's stored statuses, oldest first
 	//
 	// One identity's status revisions, oldest first, at most status_history_count.
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 	AgentStatusHistoryWithResponse(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*AgentStatusHistoryResponse, error)
 
-	// DeleteMemoryWithResponse performs a DELETE /v1/memories/{id} (the `DeleteMemory` operationId) request.
+	// DeleteMemoryWithResponse Delete a memory
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
 	DeleteMemoryWithResponse(ctx context.Context, id IdParam, params *DeleteMemoryParams, reqEditors ...RequestEditorFn) (*DeleteMemoryResponse, error)
 
-	// GetMemoryWithResponse performs a GET /v1/memories/{id} (the `GetMemory` operationId) request.
+	// GetMemoryWithResponse Read a memory's live revision
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 	GetMemoryWithResponse(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*GetMemoryResponse, error)
 
-	// ListMemoryRevisionsWithResponse performs a GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId) request.
+	// ListMemoryRevisionsWithResponse List a memory's revisions
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 	ListMemoryRevisionsWithResponse(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*ListMemoryRevisionsResponse, error)
 
-	// EditMemoryWithBodyWithResponse performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request,
-	// with any type of body and a specified content type.
+	// EditMemoryWithBodyWithResponse Write a new revision of a memory
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 	EditMemoryWithBodyWithResponse(ctx context.Context, id IdParam, params *EditMemoryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EditMemoryResponse, error)
 
-	// EditMemoryWithResponse performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request.
+	// EditMemoryWithResponse Write a new revision of a memory
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 	EditMemoryWithResponse(ctx context.Context, id IdParam, params *EditMemoryParams, body EditMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*EditMemoryResponse, error)
 
-	// SearchWithResponse performs a GET /v1/search (the `Search` operationId) request.
+	// SearchWithResponse Search the messages of the channels the caller may read
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/search (the `Search` operationId).
 	SearchWithResponse(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*SearchResponse, error)
 
-	// OpenSessionWithBodyWithResponse performs a POST /v1/sessions (the `OpenSession` operationId) request,
-	// with any type of body and a specified content type.
+	// OpenSessionWithBodyWithResponse Open a session for the caller's identity, resuming by token or offering cursors
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 	OpenSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*OpenSessionResponse, error)
 
-	// OpenSessionWithResponse performs a POST /v1/sessions (the `OpenSession` operationId) request.
+	// OpenSessionWithResponse Open a session for the caller's identity, resuming by token or offering cursors
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 	OpenSessionWithResponse(ctx context.Context, body OpenSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*OpenSessionResponse, error)
 
-	// CloseSessionWithResponse performs a DELETE /v1/sessions/{session} (the `CloseSession` operationId) request.
+	// CloseSessionWithResponse Close a session, freeing its display name
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 	CloseSessionWithResponse(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*CloseSessionResponse, error)
 
-	// PeekWithResponse performs a GET /v1/sessions/{session}/peek (the `Peek` operationId) request.
+	// PeekWithResponse Count what receive would deliver without delivering it
 	//
 	// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 	PeekWithResponse(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*PeekResponse, error)
 
-	// ReceiveWithBodyWithResponse performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request,
-	// with any type of body and a specified content type.
+	// ReceiveWithBodyWithResponse Receive the next batch of messages for a session, acknowledging the previous one
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 	ReceiveWithBodyWithResponse(ctx context.Context, session SessionParam, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReceiveResponse, error)
 
-	// ReceiveWithResponse performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request.
+	// ReceiveWithResponse Receive the next batch of messages for a session, acknowledging the previous one
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 	ReceiveWithResponse(ctx context.Context, session SessionParam, body ReceiveJSONRequestBody, reqEditors ...RequestEditorFn) (*ReceiveResponse, error)
 
-	// SetAgentStatusWithBodyWithResponse performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request,
-	// with any type of body and a specified content type.
+	// SetAgentStatusWithBodyWithResponse Set the calling agent's status line from one of its live sessions
 	//
 	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 	SetAgentStatusWithBodyWithResponse(ctx context.Context, session SessionParam, params *SetAgentStatusParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAgentStatusResponse, error)
 
-	// SetAgentStatusWithResponse performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	// SetAgentStatusWithResponse Set the calling agent's status line from one of its live sessions
 	//
 	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 	SetAgentStatusWithResponse(ctx context.Context, session SessionParam, params *SetAgentStatusParams, body SetAgentStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAgentStatusResponse, error)
 
-	// WatchWithResponse performs a GET /v1/sessions/{session}/watch (the `Watch` operationId) request.
+	// WatchWithResponse Long-poll until the session has something to receive or the timeout passes
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/sessions/{session}/watch (the `Watch` operationId).
 	WatchWithResponse(ctx context.Context, session SessionParam, params *WatchParams, reqEditors ...RequestEditorFn) (*WatchResponse, error)
 
-	// UnsubscribeTagsWithResponse performs a DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId) request.
+	// UnsubscribeTagsWithResponse Remove a tag subscription: one AND set of tag patterns
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
 	UnsubscribeTagsWithResponse(ctx context.Context, params *UnsubscribeTagsParams, reqEditors ...RequestEditorFn) (*UnsubscribeTagsResponse, error)
 
-	// ListTagSubscriptionsWithResponse performs a GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId) request.
+	// ListTagSubscriptionsWithResponse List the caller's tag subscriptions
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId).
 	ListTagSubscriptionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListTagSubscriptionsResponse, error)
 
-	// SubscribeTagsWithBodyWithResponse performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request,
-	// with any type of body and a specified content type.
+	// SubscribeTagsWithBodyWithResponse Add a tag subscription: one AND set of tag patterns
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 	SubscribeTagsWithBodyWithResponse(ctx context.Context, params *SubscribeTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubscribeTagsResponse, error)
 
-	// SubscribeTagsWithResponse performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request.
+	// SubscribeTagsWithResponse Add a tag subscription: one AND set of tag patterns
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 	SubscribeTagsWithResponse(ctx context.Context, params *SubscribeTagsParams, body SubscribeTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubscribeTagsResponse, error)
 
-	// GetTaskWithResponse performs a GET /v1/tasks/{id} (the `GetTask` operationId) request.
+	// GetTaskWithResponse Read a task
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
 	GetTaskWithResponse(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*GetTaskResponse, error)
 
-	// UpdateTaskWithBodyWithResponse performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request,
-	// with any type of body and a specified content type.
+	// UpdateTaskWithBodyWithResponse Update a task: absent fields stay unchanged
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 	UpdateTaskWithBodyWithResponse(ctx context.Context, id IdParam, params *UpdateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateTaskResponse, error)
 
-	// UpdateTaskWithResponse performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request.
+	// UpdateTaskWithResponse Update a task: absent fields stay unchanged
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 	UpdateTaskWithResponse(ctx context.Context, id IdParam, params *UpdateTaskParams, body UpdateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateTaskResponse, error)
 
-	// ClaimTaskWithBodyWithResponse performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request,
-	// with any type of body and a specified content type.
+	// ClaimTaskWithBodyWithResponse Claim a task for the caller, optionally with a lease
 	//
-	// Returns a wrapper object for the known response body format(s).
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTaskWithBodyWithResponse(ctx context.Context, id IdParam, params *ClaimTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimTaskResponse, error)
 
-	// ClaimTaskWithResponse performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request.
+	// ClaimTaskWithResponse Claim a task for the caller, optionally with a lease
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTaskWithResponse(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTaskResponse, error)
 
-	// ReleaseTaskWithResponse performs a POST /v1/tasks/{id}/release (the `ReleaseTask` operationId) request.
+	// ReleaseTaskWithResponse Release a task the caller owns
 	//
 	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 	ReleaseTaskWithResponse(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*ReleaseTaskResponse, error)
 }
 
@@ -11339,9 +11898,11 @@ func (r ReleaseTaskResponse) ContentType() string {
 	return ""
 }
 
-// WellKnownWithResponse performs a GET /.well-known/agentmesh (the `WellKnown` operationId) request.
+// WellKnownWithResponse The agentmesh well-known document: where to discover the API
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
 func (c *ClientWithResponses) WellKnownWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*WellKnownResponse, error) {
 	rsp, err := c.WellKnown(ctx, reqEditors...)
 	if err != nil {
@@ -11350,9 +11911,11 @@ func (c *ClientWithResponses) WellKnownWithResponse(ctx context.Context, reqEdit
 	return ParseWellKnownResponse(rsp)
 }
 
-// AuthorizationServerMetadataWithResponse performs a GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId) request.
+// AuthorizationServerMetadataWithResponse OAuth 2.0 authorization server metadata (RFC 8414)
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
 func (c *ClientWithResponses) AuthorizationServerMetadataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthorizationServerMetadataResponse, error) {
 	rsp, err := c.AuthorizationServerMetadata(ctx, reqEditors...)
 	if err != nil {
@@ -11361,9 +11924,11 @@ func (c *ClientWithResponses) AuthorizationServerMetadataWithResponse(ctx contex
 	return ParseAuthorizationServerMetadataResponse(rsp)
 }
 
-// OpenidConfigurationWithResponse performs a GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId) request.
+// OpenidConfigurationWithResponse OpenID Connect discovery document for this server
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId).
 func (c *ClientWithResponses) OpenidConfigurationWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OpenidConfigurationResponse, error) {
 	rsp, err := c.OpenidConfiguration(ctx, reqEditors...)
 	if err != nil {
@@ -11372,9 +11937,11 @@ func (c *ClientWithResponses) OpenidConfigurationWithResponse(ctx context.Contex
 	return ParseOpenidConfigurationResponse(rsp)
 }
 
-// ListBridgesWithResponse performs a GET /v1/admin/bridges (the `ListBridges` operationId) request.
+// ListBridgesWithResponse List bridges
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
 func (c *ClientWithResponses) ListBridgesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBridgesResponse, error) {
 	rsp, err := c.ListBridges(ctx, reqEditors...)
 	if err != nil {
@@ -11383,12 +11950,13 @@ func (c *ClientWithResponses) ListBridgesWithResponse(ctx context.Context, reqEd
 	return ParseListBridgesResponse(rsp)
 }
 
-// CreateBridgeWithBodyWithResponse performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request,
-// with any type of body and a specified content type.
+// CreateBridgeWithBodyWithResponse Bridge a channel to a new private Slack channel
 //
 // Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 func (c *ClientWithResponses) CreateBridgeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateBridgeResponse, error) {
 	rsp, err := c.CreateBridgeWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -11397,10 +11965,13 @@ func (c *ClientWithResponses) CreateBridgeWithBodyWithResponse(ctx context.Conte
 	return ParseCreateBridgeResponse(rsp)
 }
 
-// CreateBridgeWithResponse performs a POST /v1/admin/bridges (the `CreateBridge` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// CreateBridgeWithResponse Bridge a channel to a new private Slack channel
 //
 // Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/bridges (the `CreateBridge` operationId).
 func (c *ClientWithResponses) CreateBridgeWithResponse(ctx context.Context, body CreateBridgeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateBridgeResponse, error) {
 	rsp, err := c.CreateBridge(ctx, body, reqEditors...)
 	if err != nil {
@@ -11409,9 +11980,11 @@ func (c *ClientWithResponses) CreateBridgeWithResponse(ctx context.Context, body
 	return ParseCreateBridgeResponse(rsp)
 }
 
-// RemoveBridgeWithResponse performs a DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId) request.
+// RemoveBridgeWithResponse Remove a channel's bridge, archiving its Slack channel
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
 func (c *ClientWithResponses) RemoveBridgeWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*RemoveBridgeResponse, error) {
 	rsp, err := c.RemoveBridge(ctx, channel, reqEditors...)
 	if err != nil {
@@ -11420,9 +11993,11 @@ func (c *ClientWithResponses) RemoveBridgeWithResponse(ctx context.Context, chan
 	return ParseRemoveBridgeResponse(rsp)
 }
 
-// GetBridgeWithResponse performs a GET /v1/admin/bridges/{channel} (the `GetBridge` operationId) request.
+// GetBridgeWithResponse Read a channel's bridge
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/bridges/{channel} (the `GetBridge` operationId).
 func (c *ClientWithResponses) GetBridgeWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*GetBridgeResponse, error) {
 	rsp, err := c.GetBridge(ctx, channel, reqEditors...)
 	if err != nil {
@@ -11431,12 +12006,13 @@ func (c *ClientWithResponses) GetBridgeWithResponse(ctx context.Context, channel
 	return ParseGetBridgeResponse(rsp)
 }
 
-// CreateAgentIdentityWithBodyWithResponse performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request,
-// with any type of body and a specified content type.
+// CreateAgentIdentityWithBodyWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
 // Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 func (c *ClientWithResponses) CreateAgentIdentityWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAgentIdentityResponse, error) {
 	rsp, err := c.CreateAgentIdentityWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -11445,10 +12021,13 @@ func (c *ClientWithResponses) CreateAgentIdentityWithBodyWithResponse(ctx contex
 	return ParseCreateAgentIdentityResponse(rsp)
 }
 
-// CreateAgentIdentityWithResponse performs a POST /v1/admin/identities (the `CreateAgentIdentity` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// CreateAgentIdentityWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
 // Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/identities (the `CreateAgentIdentity` operationId).
 func (c *ClientWithResponses) CreateAgentIdentityWithResponse(ctx context.Context, body CreateAgentIdentityJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAgentIdentityResponse, error) {
 	rsp, err := c.CreateAgentIdentity(ctx, body, reqEditors...)
 	if err != nil {
@@ -11457,10 +12036,11 @@ func (c *ClientWithResponses) CreateAgentIdentityWithResponse(ctx context.Contex
 	return ParseCreateAgentIdentityResponse(rsp)
 }
 
-// CreateIdentityByEmailWithBodyWithResponse performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request,
-// with any type of body and a specified content type.
+// CreateIdentityByEmailWithBodyWithResponse Create a human identity for an email address
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 func (c *ClientWithResponses) CreateIdentityByEmailWithBodyWithResponse(ctx context.Context, params *CreateIdentityByEmailParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIdentityByEmailResponse, error) {
 	rsp, err := c.CreateIdentityByEmailWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11469,8 +12049,11 @@ func (c *ClientWithResponses) CreateIdentityByEmailWithBodyWithResponse(ctx cont
 	return ParseCreateIdentityByEmailResponse(rsp)
 }
 
-// CreateIdentityByEmailWithResponse performs a POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId) request.
+// CreateIdentityByEmailWithResponse Create a human identity for an email address
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 func (c *ClientWithResponses) CreateIdentityByEmailWithResponse(ctx context.Context, params *CreateIdentityByEmailParams, body CreateIdentityByEmailJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIdentityByEmailResponse, error) {
 	rsp, err := c.CreateIdentityByEmail(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -11479,9 +12062,11 @@ func (c *ClientWithResponses) CreateIdentityByEmailWithResponse(ctx context.Cont
 	return ParseCreateIdentityByEmailResponse(rsp)
 }
 
-// ResetCredentialWithResponse performs a POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId) request.
+// ResetCredentialWithResponse Remove an identity's registered keys
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 func (c *ClientWithResponses) ResetCredentialWithResponse(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*ResetCredentialResponse, error) {
 	rsp, err := c.ResetCredential(ctx, identity, params, reqEditors...)
 	if err != nil {
@@ -11490,9 +12075,11 @@ func (c *ClientWithResponses) ResetCredentialWithResponse(ctx context.Context, i
 	return ParseResetCredentialResponse(rsp)
 }
 
-// AdminResetWithResponse performs a POST /v1/admin/reset (the `AdminReset` operationId) request.
+// AdminResetWithResponse Delete everything in the store (an administrator's reset)
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 func (c *ClientWithResponses) AdminResetWithResponse(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*AdminResetResponse, error) {
 	rsp, err := c.AdminReset(ctx, params, reqEditors...)
 	if err != nil {
@@ -11501,9 +12088,11 @@ func (c *ClientWithResponses) AdminResetWithResponse(ctx context.Context, params
 	return ParseAdminResetResponse(rsp)
 }
 
-// ListScopesWithResponse performs a GET /v1/admin/scopes (the `ListScopes` operationId) request.
+// ListScopesWithResponse List scopes
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
 func (c *ClientWithResponses) ListScopesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScopesResponse, error) {
 	rsp, err := c.ListScopes(ctx, reqEditors...)
 	if err != nil {
@@ -11512,10 +12101,11 @@ func (c *ClientWithResponses) ListScopesWithResponse(ctx context.Context, reqEdi
 	return ParseListScopesResponse(rsp)
 }
 
-// CreateScopeWithBodyWithResponse performs a POST /v1/admin/scopes (the `CreateScope` operationId) request,
-// with any type of body and a specified content type.
+// CreateScopeWithBodyWithResponse Create a scope
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 func (c *ClientWithResponses) CreateScopeWithBodyWithResponse(ctx context.Context, params *CreateScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateScopeResponse, error) {
 	rsp, err := c.CreateScopeWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11524,8 +12114,11 @@ func (c *ClientWithResponses) CreateScopeWithBodyWithResponse(ctx context.Contex
 	return ParseCreateScopeResponse(rsp)
 }
 
-// CreateScopeWithResponse performs a POST /v1/admin/scopes (the `CreateScope` operationId) request.
+// CreateScopeWithResponse Create a scope
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 func (c *ClientWithResponses) CreateScopeWithResponse(ctx context.Context, params *CreateScopeParams, body CreateScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScopeResponse, error) {
 	rsp, err := c.CreateScope(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -11534,9 +12127,11 @@ func (c *ClientWithResponses) CreateScopeWithResponse(ctx context.Context, param
 	return ParseCreateScopeResponse(rsp)
 }
 
-// GetScopeWithResponse performs a GET /v1/admin/scopes/{scope} (the `GetScope` operationId) request.
+// GetScopeWithResponse Read a scope
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/scopes/{scope} (the `GetScope` operationId).
 func (c *ClientWithResponses) GetScopeWithResponse(ctx context.Context, scope ScopeParam, reqEditors ...RequestEditorFn) (*GetScopeResponse, error) {
 	rsp, err := c.GetScope(ctx, scope, reqEditors...)
 	if err != nil {
@@ -11545,10 +12140,11 @@ func (c *ClientWithResponses) GetScopeWithResponse(ctx context.Context, scope Sc
 	return ParseGetScopeResponse(rsp)
 }
 
-// DoneScopeWithBodyWithResponse performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request,
-// with any type of body and a specified content type.
+// DoneScopeWithBodyWithResponse Retire a scope, with or without its bridge
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 func (c *ClientWithResponses) DoneScopeWithBodyWithResponse(ctx context.Context, scope ScopeParam, params *DoneScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DoneScopeResponse, error) {
 	rsp, err := c.DoneScopeWithBody(ctx, scope, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11557,8 +12153,11 @@ func (c *ClientWithResponses) DoneScopeWithBodyWithResponse(ctx context.Context,
 	return ParseDoneScopeResponse(rsp)
 }
 
-// DoneScopeWithResponse performs a POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId) request.
+// DoneScopeWithResponse Retire a scope, with or without its bridge
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 func (c *ClientWithResponses) DoneScopeWithResponse(ctx context.Context, scope ScopeParam, params *DoneScopeParams, body DoneScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*DoneScopeResponse, error) {
 	rsp, err := c.DoneScope(ctx, scope, params, body, reqEditors...)
 	if err != nil {
@@ -11567,11 +12166,13 @@ func (c *ClientWithResponses) DoneScopeWithResponse(ctx context.Context, scope S
 	return ParseDoneScopeResponse(rsp)
 }
 
-// ListSigningKeysWithResponse performs a GET /v1/admin/signing-keys (the `ListSigningKeys` operationId) request.
+// ListSigningKeysWithResponse List the server's token signing keys
 //
 // The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 func (c *ClientWithResponses) ListSigningKeysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSigningKeysResponse, error) {
 	rsp, err := c.ListSigningKeys(ctx, reqEditors...)
 	if err != nil {
@@ -11580,11 +12181,13 @@ func (c *ClientWithResponses) ListSigningKeysWithResponse(ctx context.Context, r
 	return ParseListSigningKeysResponse(rsp)
 }
 
-// RotateSigningKeyWithResponse performs a POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId) request.
+// RotateSigningKeyWithResponse Rotate the active token signing key
 //
 // Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 func (c *ClientWithResponses) RotateSigningKeyWithResponse(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*RotateSigningKeyResponse, error) {
 	rsp, err := c.RotateSigningKey(ctx, params, reqEditors...)
 	if err != nil {
@@ -11593,9 +12196,11 @@ func (c *ClientWithResponses) RotateSigningKeyWithResponse(ctx context.Context, 
 	return ParseRotateSigningKeyResponse(rsp)
 }
 
-// AdminStatusWithResponse performs a GET /v1/admin/status (the `AdminStatus` operationId) request.
+// AdminStatusWithResponse The administrator's view of the server: sessions, channels, notices and the embedding backlog
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
 func (c *ClientWithResponses) AdminStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminStatusResponse, error) {
 	rsp, err := c.AdminStatus(ctx, reqEditors...)
 	if err != nil {
@@ -11604,11 +12209,13 @@ func (c *ClientWithResponses) AdminStatusWithResponse(ctx context.Context, reqEd
 	return ParseAdminStatusResponse(rsp)
 }
 
-// AdminUsageWithResponse performs a GET /v1/admin/usage (the `AdminUsage` operationId) request.
+// AdminUsageWithResponse The database size, budget and capacity notice
 //
 // The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/admin/usage (the `AdminUsage` operationId).
 func (c *ClientWithResponses) AdminUsageWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AdminUsageResponse, error) {
 	rsp, err := c.AdminUsage(ctx, reqEditors...)
 	if err != nil {
@@ -11617,11 +12224,13 @@ func (c *ClientWithResponses) AdminUsageWithResponse(ctx context.Context, reqEdi
 	return ParseAdminUsageResponse(rsp)
 }
 
-// ListAgentStatusesWithResponse performs a GET /v1/agent-statuses (the `ListAgentStatuses` operationId) request.
+// ListAgentStatusesWithResponse List every visible identity's stored status
 //
 // Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 func (c *ClientWithResponses) ListAgentStatusesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentStatusesResponse, error) {
 	rsp, err := c.ListAgentStatuses(ctx, reqEditors...)
 	if err != nil {
@@ -11630,9 +12239,11 @@ func (c *ClientWithResponses) ListAgentStatusesWithResponse(ctx context.Context,
 	return ParseListAgentStatusesResponse(rsp)
 }
 
-// JwksWithResponse performs a GET /v1/auth/jwks (the `Jwks` operationId) request.
+// JwksWithResponse The public keys that verify the bearers this server issues
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
 func (c *ClientWithResponses) JwksWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*JwksResponse, error) {
 	rsp, err := c.Jwks(ctx, reqEditors...)
 	if err != nil {
@@ -11641,12 +12252,13 @@ func (c *ClientWithResponses) JwksWithResponse(ctx context.Context, reqEditors .
 	return ParseJwksResponse(rsp)
 }
 
-// RegisterWithBodyWithResponse performs a POST /v1/auth/register (the `Register` operationId) request,
-// with any type of body and a specified content type.
+// RegisterWithBodyWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 //
 // Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/register (the `Register` operationId).
 func (c *ClientWithResponses) RegisterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterResponse, error) {
 	rsp, err := c.RegisterWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -11655,10 +12267,13 @@ func (c *ClientWithResponses) RegisterWithBodyWithResponse(ctx context.Context, 
 	return ParseRegisterResponse(rsp)
 }
 
-// RegisterWithResponse performs a POST /v1/auth/register (the `Register` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// RegisterWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 //
 // Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/register (the `Register` operationId).
 func (c *ClientWithResponses) RegisterWithResponse(ctx context.Context, body RegisterJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterResponse, error) {
 	rsp, err := c.Register(ctx, body, reqEditors...)
 	if err != nil {
@@ -11667,12 +12282,13 @@ func (c *ClientWithResponses) RegisterWithResponse(ctx context.Context, body Reg
 	return ParseRegisterResponse(rsp)
 }
 
-// TokenWithBodyWithResponse performs a POST /v1/auth/token (the `Token` operationId) request,
-// with any type of body and a specified content type.
+// TokenWithBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
 // RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/token (the `Token` operationId).
 func (c *ClientWithResponses) TokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TokenResponse, error) {
 	rsp, err := c.TokenWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -11681,10 +12297,13 @@ func (c *ClientWithResponses) TokenWithBodyWithResponse(ctx context.Context, con
 	return ParseTokenResponse(rsp)
 }
 
-// TokenWithFormdataBodyWithResponse performs a POST /v1/auth/token (the `Token` operationId) request.
-// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+// TokenWithFormdataBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
 // RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+//
+// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/auth/token (the `Token` operationId).
 func (c *ClientWithResponses) TokenWithFormdataBodyWithResponse(ctx context.Context, body TokenFormdataRequestBody, reqEditors ...RequestEditorFn) (*TokenResponse, error) {
 	rsp, err := c.TokenWithFormdataBody(ctx, body, reqEditors...)
 	if err != nil {
@@ -11693,9 +12312,11 @@ func (c *ClientWithResponses) TokenWithFormdataBodyWithResponse(ctx context.Cont
 	return ParseTokenResponse(rsp)
 }
 
-// ListChannelsWithResponse performs a GET /v1/channels (the `ListChannels` operationId) request.
+// ListChannelsWithResponse List the channels the caller may see
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/channels (the `ListChannels` operationId).
 func (c *ClientWithResponses) ListChannelsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListChannelsResponse, error) {
 	rsp, err := c.ListChannels(ctx, reqEditors...)
 	if err != nil {
@@ -11704,10 +12325,11 @@ func (c *ClientWithResponses) ListChannelsWithResponse(ctx context.Context, reqE
 	return ParseListChannelsResponse(rsp)
 }
 
-// CreateChannelWithBodyWithResponse performs a POST /v1/channels (the `CreateChannel` operationId) request,
-// with any type of body and a specified content type.
+// CreateChannelWithBodyWithResponse Create a channel
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 func (c *ClientWithResponses) CreateChannelWithBodyWithResponse(ctx context.Context, params *CreateChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error) {
 	rsp, err := c.CreateChannelWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11716,8 +12338,11 @@ func (c *ClientWithResponses) CreateChannelWithBodyWithResponse(ctx context.Cont
 	return ParseCreateChannelResponse(rsp)
 }
 
-// CreateChannelWithResponse performs a POST /v1/channels (the `CreateChannel` operationId) request.
+// CreateChannelWithResponse Create a channel
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 func (c *ClientWithResponses) CreateChannelWithResponse(ctx context.Context, params *CreateChannelParams, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error) {
 	rsp, err := c.CreateChannel(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -11726,9 +12351,11 @@ func (c *ClientWithResponses) CreateChannelWithResponse(ctx context.Context, par
 	return ParseCreateChannelResponse(rsp)
 }
 
-// DeleteChannelWithResponse performs a DELETE /v1/channels/{channel} (the `DeleteChannel` operationId) request.
+// DeleteChannelWithResponse Delete a channel
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/channels/{channel} (the `DeleteChannel` operationId).
 func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, channel ChannelParam, params *DeleteChannelParams, reqEditors ...RequestEditorFn) (*DeleteChannelResponse, error) {
 	rsp, err := c.DeleteChannel(ctx, channel, params, reqEditors...)
 	if err != nil {
@@ -11737,10 +12364,11 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, cha
 	return ParseDeleteChannelResponse(rsp)
 }
 
-// RenameChannelWithBodyWithResponse performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request,
-// with any type of body and a specified content type.
+// RenameChannelWithBodyWithResponse Rename a channel
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 func (c *ClientWithResponses) RenameChannelWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *RenameChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameChannelResponse, error) {
 	rsp, err := c.RenameChannelWithBody(ctx, channel, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11749,8 +12377,11 @@ func (c *ClientWithResponses) RenameChannelWithBodyWithResponse(ctx context.Cont
 	return ParseRenameChannelResponse(rsp)
 }
 
-// RenameChannelWithResponse performs a PATCH /v1/channels/{channel} (the `RenameChannel` operationId) request.
+// RenameChannelWithResponse Rename a channel
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 func (c *ClientWithResponses) RenameChannelWithResponse(ctx context.Context, channel ChannelParam, params *RenameChannelParams, body RenameChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*RenameChannelResponse, error) {
 	rsp, err := c.RenameChannel(ctx, channel, params, body, reqEditors...)
 	if err != nil {
@@ -11759,9 +12390,11 @@ func (c *ClientWithResponses) RenameChannelWithResponse(ctx context.Context, cha
 	return ParseRenameChannelResponse(rsp)
 }
 
-// GetACLWithResponse performs a GET /v1/channels/{channel}/acl (the `GetACL` operationId) request.
+// GetACLWithResponse Read a channel's access control list
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
 func (c *ClientWithResponses) GetACLWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*GetACLResponse, error) {
 	rsp, err := c.GetACL(ctx, channel, reqEditors...)
 	if err != nil {
@@ -11770,10 +12403,11 @@ func (c *ClientWithResponses) GetACLWithResponse(ctx context.Context, channel Ch
 	return ParseGetACLResponse(rsp)
 }
 
-// SetACLWithBodyWithResponse performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request,
-// with any type of body and a specified content type.
+// SetACLWithBodyWithResponse Replace a channel's access control list
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 func (c *ClientWithResponses) SetACLWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SetACLParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetACLResponse, error) {
 	rsp, err := c.SetACLWithBody(ctx, channel, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11782,8 +12416,11 @@ func (c *ClientWithResponses) SetACLWithBodyWithResponse(ctx context.Context, ch
 	return ParseSetACLResponse(rsp)
 }
 
-// SetACLWithResponse performs a PUT /v1/channels/{channel}/acl (the `SetACL` operationId) request.
+// SetACLWithResponse Replace a channel's access control list
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 func (c *ClientWithResponses) SetACLWithResponse(ctx context.Context, channel ChannelParam, params *SetACLParams, body SetACLJSONRequestBody, reqEditors ...RequestEditorFn) (*SetACLResponse, error) {
 	rsp, err := c.SetACL(ctx, channel, params, body, reqEditors...)
 	if err != nil {
@@ -11792,9 +12429,11 @@ func (c *ClientWithResponses) SetACLWithResponse(ctx context.Context, channel Ch
 	return ParseSetACLResponse(rsp)
 }
 
-// HistoryWithResponse performs a GET /v1/channels/{channel}/messages (the `History` operationId) request.
+// HistoryWithResponse Read a window of a channel's messages
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/channels/{channel}/messages (the `History` operationId).
 func (c *ClientWithResponses) HistoryWithResponse(ctx context.Context, channel ChannelParam, params *HistoryParams, reqEditors ...RequestEditorFn) (*HistoryResponse, error) {
 	rsp, err := c.History(ctx, channel, params, reqEditors...)
 	if err != nil {
@@ -11803,10 +12442,11 @@ func (c *ClientWithResponses) HistoryWithResponse(ctx context.Context, channel C
 	return ParseHistoryResponse(rsp)
 }
 
-// SendMessageWithBodyWithResponse performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request,
-// with any type of body and a specified content type.
+// SendMessageWithBodyWithResponse Send a message to a channel
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 func (c *ClientWithResponses) SendMessageWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SendMessageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendMessageResponse, error) {
 	rsp, err := c.SendMessageWithBody(ctx, channel, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11815,8 +12455,11 @@ func (c *ClientWithResponses) SendMessageWithBodyWithResponse(ctx context.Contex
 	return ParseSendMessageResponse(rsp)
 }
 
-// SendMessageWithResponse performs a POST /v1/channels/{channel}/messages (the `SendMessage` operationId) request.
+// SendMessageWithResponse Send a message to a channel
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 func (c *ClientWithResponses) SendMessageWithResponse(ctx context.Context, channel ChannelParam, params *SendMessageParams, body SendMessageJSONRequestBody, reqEditors ...RequestEditorFn) (*SendMessageResponse, error) {
 	rsp, err := c.SendMessage(ctx, channel, params, body, reqEditors...)
 	if err != nil {
@@ -11825,9 +12468,11 @@ func (c *ClientWithResponses) SendMessageWithResponse(ctx context.Context, chann
 	return ParseSendMessageResponse(rsp)
 }
 
-// UnsubscribeWithResponse performs a DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId) request.
+// UnsubscribeWithResponse Remove the caller's subscription to a channel
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
 func (c *ClientWithResponses) UnsubscribeWithResponse(ctx context.Context, channel ChannelParam, params *UnsubscribeParams, reqEditors ...RequestEditorFn) (*UnsubscribeResponse, error) {
 	rsp, err := c.Unsubscribe(ctx, channel, params, reqEditors...)
 	if err != nil {
@@ -11836,10 +12481,11 @@ func (c *ClientWithResponses) UnsubscribeWithResponse(ctx context.Context, chann
 	return ParseUnsubscribeResponse(rsp)
 }
 
-// SubscribeWithBodyWithResponse performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request,
-// with any type of body and a specified content type.
+// SubscribeWithBodyWithResponse Subscribe the caller to a channel
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 func (c *ClientWithResponses) SubscribeWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SubscribeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubscribeResponse, error) {
 	rsp, err := c.SubscribeWithBody(ctx, channel, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11848,8 +12494,11 @@ func (c *ClientWithResponses) SubscribeWithBodyWithResponse(ctx context.Context,
 	return ParseSubscribeResponse(rsp)
 }
 
-// SubscribeWithResponse performs a PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId) request.
+// SubscribeWithResponse Subscribe the caller to a channel
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 func (c *ClientWithResponses) SubscribeWithResponse(ctx context.Context, channel ChannelParam, params *SubscribeParams, body SubscribeJSONRequestBody, reqEditors ...RequestEditorFn) (*SubscribeResponse, error) {
 	rsp, err := c.Subscribe(ctx, channel, params, body, reqEditors...)
 	if err != nil {
@@ -11858,9 +12507,11 @@ func (c *ClientWithResponses) SubscribeWithResponse(ctx context.Context, channel
 	return ParseSubscribeResponse(rsp)
 }
 
-// ListTasksWithResponse performs a GET /v1/channels/{channel}/tasks (the `ListTasks` operationId) request.
+// ListTasksWithResponse List a channel's tasks, optionally filtered by status or owner
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
 func (c *ClientWithResponses) ListTasksWithResponse(ctx context.Context, channel ChannelParam, params *ListTasksParams, reqEditors ...RequestEditorFn) (*ListTasksResponse, error) {
 	rsp, err := c.ListTasks(ctx, channel, params, reqEditors...)
 	if err != nil {
@@ -11869,10 +12520,11 @@ func (c *ClientWithResponses) ListTasksWithResponse(ctx context.Context, channel
 	return ParseListTasksResponse(rsp)
 }
 
-// CreateTaskWithBodyWithResponse performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request,
-// with any type of body and a specified content type.
+// CreateTaskWithBodyWithResponse Create a task on a channel's task list
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 func (c *ClientWithResponses) CreateTaskWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *CreateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTaskResponse, error) {
 	rsp, err := c.CreateTaskWithBody(ctx, channel, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11881,8 +12533,11 @@ func (c *ClientWithResponses) CreateTaskWithBodyWithResponse(ctx context.Context
 	return ParseCreateTaskResponse(rsp)
 }
 
-// CreateTaskWithResponse performs a POST /v1/channels/{channel}/tasks (the `CreateTask` operationId) request.
+// CreateTaskWithResponse Create a task on a channel's task list
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 func (c *ClientWithResponses) CreateTaskWithResponse(ctx context.Context, channel ChannelParam, params *CreateTaskParams, body CreateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTaskResponse, error) {
 	rsp, err := c.CreateTask(ctx, channel, params, body, reqEditors...)
 	if err != nil {
@@ -11891,9 +12546,11 @@ func (c *ClientWithResponses) CreateTaskWithResponse(ctx context.Context, channe
 	return ParseCreateTaskResponse(rsp)
 }
 
-// DiscoverWithResponse performs a GET /v1/discover (the `Discover` operationId) request.
+// DiscoverWithResponse The liveness probe: API versions, server and protocol version, capabilities and auth methods
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/discover (the `Discover` operationId).
 func (c *ClientWithResponses) DiscoverWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DiscoverResponse, error) {
 	rsp, err := c.Discover(ctx, reqEditors...)
 	if err != nil {
@@ -11902,9 +12559,11 @@ func (c *ClientWithResponses) DiscoverWithResponse(ctx context.Context, reqEdito
 	return ParseDiscoverResponse(rsp)
 }
 
-// HealthWithResponse performs a GET /v1/health (the `Health` operationId) request.
+// HealthWithResponse The health document as the caller's tier sees it
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/health (the `Health` operationId).
 func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthResponse, error) {
 	rsp, err := c.Health(ctx, reqEditors...)
 	if err != nil {
@@ -11913,9 +12572,11 @@ func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors
 	return ParseHealthResponse(rsp)
 }
 
-// ListIdentitiesWithResponse performs a GET /v1/identities (the `ListIdentities` operationId) request.
+// ListIdentitiesWithResponse List identities that have a live session
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 func (c *ClientWithResponses) ListIdentitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListIdentitiesResponse, error) {
 	rsp, err := c.ListIdentities(ctx, reqEditors...)
 	if err != nil {
@@ -11924,11 +12585,13 @@ func (c *ClientWithResponses) ListIdentitiesWithResponse(ctx context.Context, re
 	return ParseListIdentitiesResponse(rsp)
 }
 
-// AgentStatusHistoryWithResponse performs a GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId) request.
+// AgentStatusHistoryWithResponse List one identity's stored statuses, oldest first
 //
 // One identity's status revisions, oldest first, at most status_history_count.
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 func (c *ClientWithResponses) AgentStatusHistoryWithResponse(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*AgentStatusHistoryResponse, error) {
 	rsp, err := c.AgentStatusHistory(ctx, identity, reqEditors...)
 	if err != nil {
@@ -11937,9 +12600,11 @@ func (c *ClientWithResponses) AgentStatusHistoryWithResponse(ctx context.Context
 	return ParseAgentStatusHistoryResponse(rsp)
 }
 
-// DeleteMemoryWithResponse performs a DELETE /v1/memories/{id} (the `DeleteMemory` operationId) request.
+// DeleteMemoryWithResponse Delete a memory
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
 func (c *ClientWithResponses) DeleteMemoryWithResponse(ctx context.Context, id IdParam, params *DeleteMemoryParams, reqEditors ...RequestEditorFn) (*DeleteMemoryResponse, error) {
 	rsp, err := c.DeleteMemory(ctx, id, params, reqEditors...)
 	if err != nil {
@@ -11948,9 +12613,11 @@ func (c *ClientWithResponses) DeleteMemoryWithResponse(ctx context.Context, id I
 	return ParseDeleteMemoryResponse(rsp)
 }
 
-// GetMemoryWithResponse performs a GET /v1/memories/{id} (the `GetMemory` operationId) request.
+// GetMemoryWithResponse Read a memory's live revision
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 func (c *ClientWithResponses) GetMemoryWithResponse(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*GetMemoryResponse, error) {
 	rsp, err := c.GetMemory(ctx, id, reqEditors...)
 	if err != nil {
@@ -11959,9 +12626,11 @@ func (c *ClientWithResponses) GetMemoryWithResponse(ctx context.Context, id IdPa
 	return ParseGetMemoryResponse(rsp)
 }
 
-// ListMemoryRevisionsWithResponse performs a GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId) request.
+// ListMemoryRevisionsWithResponse List a memory's revisions
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 func (c *ClientWithResponses) ListMemoryRevisionsWithResponse(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*ListMemoryRevisionsResponse, error) {
 	rsp, err := c.ListMemoryRevisions(ctx, id, reqEditors...)
 	if err != nil {
@@ -11970,10 +12639,11 @@ func (c *ClientWithResponses) ListMemoryRevisionsWithResponse(ctx context.Contex
 	return ParseListMemoryRevisionsResponse(rsp)
 }
 
-// EditMemoryWithBodyWithResponse performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request,
-// with any type of body and a specified content type.
+// EditMemoryWithBodyWithResponse Write a new revision of a memory
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 func (c *ClientWithResponses) EditMemoryWithBodyWithResponse(ctx context.Context, id IdParam, params *EditMemoryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EditMemoryResponse, error) {
 	rsp, err := c.EditMemoryWithBody(ctx, id, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -11982,8 +12652,11 @@ func (c *ClientWithResponses) EditMemoryWithBodyWithResponse(ctx context.Context
 	return ParseEditMemoryResponse(rsp)
 }
 
-// EditMemoryWithResponse performs a POST /v1/memories/{id}/revisions (the `EditMemory` operationId) request.
+// EditMemoryWithResponse Write a new revision of a memory
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 func (c *ClientWithResponses) EditMemoryWithResponse(ctx context.Context, id IdParam, params *EditMemoryParams, body EditMemoryJSONRequestBody, reqEditors ...RequestEditorFn) (*EditMemoryResponse, error) {
 	rsp, err := c.EditMemory(ctx, id, params, body, reqEditors...)
 	if err != nil {
@@ -11992,9 +12665,11 @@ func (c *ClientWithResponses) EditMemoryWithResponse(ctx context.Context, id IdP
 	return ParseEditMemoryResponse(rsp)
 }
 
-// SearchWithResponse performs a GET /v1/search (the `Search` operationId) request.
+// SearchWithResponse Search the messages of the channels the caller may read
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/search (the `Search` operationId).
 func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*SearchResponse, error) {
 	rsp, err := c.Search(ctx, params, reqEditors...)
 	if err != nil {
@@ -12003,10 +12678,11 @@ func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, params *Se
 	return ParseSearchResponse(rsp)
 }
 
-// OpenSessionWithBodyWithResponse performs a POST /v1/sessions (the `OpenSession` operationId) request,
-// with any type of body and a specified content type.
+// OpenSessionWithBodyWithResponse Open a session for the caller's identity, resuming by token or offering cursors
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 func (c *ClientWithResponses) OpenSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*OpenSessionResponse, error) {
 	rsp, err := c.OpenSessionWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
@@ -12015,8 +12691,11 @@ func (c *ClientWithResponses) OpenSessionWithBodyWithResponse(ctx context.Contex
 	return ParseOpenSessionResponse(rsp)
 }
 
-// OpenSessionWithResponse performs a POST /v1/sessions (the `OpenSession` operationId) request.
+// OpenSessionWithResponse Open a session for the caller's identity, resuming by token or offering cursors
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 func (c *ClientWithResponses) OpenSessionWithResponse(ctx context.Context, body OpenSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*OpenSessionResponse, error) {
 	rsp, err := c.OpenSession(ctx, body, reqEditors...)
 	if err != nil {
@@ -12025,9 +12704,11 @@ func (c *ClientWithResponses) OpenSessionWithResponse(ctx context.Context, body 
 	return ParseOpenSessionResponse(rsp)
 }
 
-// CloseSessionWithResponse performs a DELETE /v1/sessions/{session} (the `CloseSession` operationId) request.
+// CloseSessionWithResponse Close a session, freeing its display name
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 func (c *ClientWithResponses) CloseSessionWithResponse(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*CloseSessionResponse, error) {
 	rsp, err := c.CloseSession(ctx, session, params, reqEditors...)
 	if err != nil {
@@ -12036,11 +12717,13 @@ func (c *ClientWithResponses) CloseSessionWithResponse(ctx context.Context, sess
 	return ParseCloseSessionResponse(rsp)
 }
 
-// PeekWithResponse performs a GET /v1/sessions/{session}/peek (the `Peek` operationId) request.
+// PeekWithResponse Count what receive would deliver without delivering it
 //
 // Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 func (c *ClientWithResponses) PeekWithResponse(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*PeekResponse, error) {
 	rsp, err := c.Peek(ctx, session, params, reqEditors...)
 	if err != nil {
@@ -12049,10 +12732,11 @@ func (c *ClientWithResponses) PeekWithResponse(ctx context.Context, session Sess
 	return ParsePeekResponse(rsp)
 }
 
-// ReceiveWithBodyWithResponse performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request,
-// with any type of body and a specified content type.
+// ReceiveWithBodyWithResponse Receive the next batch of messages for a session, acknowledging the previous one
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 func (c *ClientWithResponses) ReceiveWithBodyWithResponse(ctx context.Context, session SessionParam, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReceiveResponse, error) {
 	rsp, err := c.ReceiveWithBody(ctx, session, contentType, body, reqEditors...)
 	if err != nil {
@@ -12061,8 +12745,11 @@ func (c *ClientWithResponses) ReceiveWithBodyWithResponse(ctx context.Context, s
 	return ParseReceiveResponse(rsp)
 }
 
-// ReceiveWithResponse performs a POST /v1/sessions/{session}/receive (the `Receive` operationId) request.
+// ReceiveWithResponse Receive the next batch of messages for a session, acknowledging the previous one
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 func (c *ClientWithResponses) ReceiveWithResponse(ctx context.Context, session SessionParam, body ReceiveJSONRequestBody, reqEditors ...RequestEditorFn) (*ReceiveResponse, error) {
 	rsp, err := c.Receive(ctx, session, body, reqEditors...)
 	if err != nil {
@@ -12071,12 +12758,13 @@ func (c *ClientWithResponses) ReceiveWithResponse(ctx context.Context, session S
 	return ParseReceiveResponse(rsp)
 }
 
-// SetAgentStatusWithBodyWithResponse performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request,
-// with any type of body and a specified content type.
+// SetAgentStatusWithBodyWithResponse Set the calling agent's status line from one of its live sessions
 //
 // Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 func (c *ClientWithResponses) SetAgentStatusWithBodyWithResponse(ctx context.Context, session SessionParam, params *SetAgentStatusParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAgentStatusResponse, error) {
 	rsp, err := c.SetAgentStatusWithBody(ctx, session, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -12085,10 +12773,13 @@ func (c *ClientWithResponses) SetAgentStatusWithBodyWithResponse(ctx context.Con
 	return ParseSetAgentStatusResponse(rsp)
 }
 
-// SetAgentStatusWithResponse performs a POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+// SetAgentStatusWithResponse Set the calling agent's status line from one of its live sessions
 //
 // Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/{session}/status (the `SetAgentStatus` operationId).
 func (c *ClientWithResponses) SetAgentStatusWithResponse(ctx context.Context, session SessionParam, params *SetAgentStatusParams, body SetAgentStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAgentStatusResponse, error) {
 	rsp, err := c.SetAgentStatus(ctx, session, params, body, reqEditors...)
 	if err != nil {
@@ -12097,9 +12788,11 @@ func (c *ClientWithResponses) SetAgentStatusWithResponse(ctx context.Context, se
 	return ParseSetAgentStatusResponse(rsp)
 }
 
-// WatchWithResponse performs a GET /v1/sessions/{session}/watch (the `Watch` operationId) request.
+// WatchWithResponse Long-poll until the session has something to receive or the timeout passes
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/sessions/{session}/watch (the `Watch` operationId).
 func (c *ClientWithResponses) WatchWithResponse(ctx context.Context, session SessionParam, params *WatchParams, reqEditors ...RequestEditorFn) (*WatchResponse, error) {
 	rsp, err := c.Watch(ctx, session, params, reqEditors...)
 	if err != nil {
@@ -12108,9 +12801,11 @@ func (c *ClientWithResponses) WatchWithResponse(ctx context.Context, session Ses
 	return ParseWatchResponse(rsp)
 }
 
-// UnsubscribeTagsWithResponse performs a DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId) request.
+// UnsubscribeTagsWithResponse Remove a tag subscription: one AND set of tag patterns
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
 func (c *ClientWithResponses) UnsubscribeTagsWithResponse(ctx context.Context, params *UnsubscribeTagsParams, reqEditors ...RequestEditorFn) (*UnsubscribeTagsResponse, error) {
 	rsp, err := c.UnsubscribeTags(ctx, params, reqEditors...)
 	if err != nil {
@@ -12119,9 +12814,11 @@ func (c *ClientWithResponses) UnsubscribeTagsWithResponse(ctx context.Context, p
 	return ParseUnsubscribeTagsResponse(rsp)
 }
 
-// ListTagSubscriptionsWithResponse performs a GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId) request.
+// ListTagSubscriptionsWithResponse List the caller's tag subscriptions
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId).
 func (c *ClientWithResponses) ListTagSubscriptionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListTagSubscriptionsResponse, error) {
 	rsp, err := c.ListTagSubscriptions(ctx, reqEditors...)
 	if err != nil {
@@ -12130,10 +12827,11 @@ func (c *ClientWithResponses) ListTagSubscriptionsWithResponse(ctx context.Conte
 	return ParseListTagSubscriptionsResponse(rsp)
 }
 
-// SubscribeTagsWithBodyWithResponse performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request,
-// with any type of body and a specified content type.
+// SubscribeTagsWithBodyWithResponse Add a tag subscription: one AND set of tag patterns
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 func (c *ClientWithResponses) SubscribeTagsWithBodyWithResponse(ctx context.Context, params *SubscribeTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubscribeTagsResponse, error) {
 	rsp, err := c.SubscribeTagsWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -12142,8 +12840,11 @@ func (c *ClientWithResponses) SubscribeTagsWithBodyWithResponse(ctx context.Cont
 	return ParseSubscribeTagsResponse(rsp)
 }
 
-// SubscribeTagsWithResponse performs a POST /v1/tag-subscriptions (the `SubscribeTags` operationId) request.
+// SubscribeTagsWithResponse Add a tag subscription: one AND set of tag patterns
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 func (c *ClientWithResponses) SubscribeTagsWithResponse(ctx context.Context, params *SubscribeTagsParams, body SubscribeTagsJSONRequestBody, reqEditors ...RequestEditorFn) (*SubscribeTagsResponse, error) {
 	rsp, err := c.SubscribeTags(ctx, params, body, reqEditors...)
 	if err != nil {
@@ -12152,9 +12853,11 @@ func (c *ClientWithResponses) SubscribeTagsWithResponse(ctx context.Context, par
 	return ParseSubscribeTagsResponse(rsp)
 }
 
-// GetTaskWithResponse performs a GET /v1/tasks/{id} (the `GetTask` operationId) request.
+// GetTaskWithResponse Read a task
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
 func (c *ClientWithResponses) GetTaskWithResponse(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*GetTaskResponse, error) {
 	rsp, err := c.GetTask(ctx, id, reqEditors...)
 	if err != nil {
@@ -12163,10 +12866,11 @@ func (c *ClientWithResponses) GetTaskWithResponse(ctx context.Context, id IdPara
 	return ParseGetTaskResponse(rsp)
 }
 
-// UpdateTaskWithBodyWithResponse performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request,
-// with any type of body and a specified content type.
+// UpdateTaskWithBodyWithResponse Update a task: absent fields stay unchanged
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 func (c *ClientWithResponses) UpdateTaskWithBodyWithResponse(ctx context.Context, id IdParam, params *UpdateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateTaskResponse, error) {
 	rsp, err := c.UpdateTaskWithBody(ctx, id, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -12175,8 +12879,11 @@ func (c *ClientWithResponses) UpdateTaskWithBodyWithResponse(ctx context.Context
 	return ParseUpdateTaskResponse(rsp)
 }
 
-// UpdateTaskWithResponse performs a PATCH /v1/tasks/{id} (the `UpdateTask` operationId) request.
+// UpdateTaskWithResponse Update a task: absent fields stay unchanged
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 func (c *ClientWithResponses) UpdateTaskWithResponse(ctx context.Context, id IdParam, params *UpdateTaskParams, body UpdateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateTaskResponse, error) {
 	rsp, err := c.UpdateTask(ctx, id, params, body, reqEditors...)
 	if err != nil {
@@ -12185,10 +12892,11 @@ func (c *ClientWithResponses) UpdateTaskWithResponse(ctx context.Context, id IdP
 	return ParseUpdateTaskResponse(rsp)
 }
 
-// ClaimTaskWithBodyWithResponse performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request,
-// with any type of body and a specified content type.
+// ClaimTaskWithBodyWithResponse Claim a task for the caller, optionally with a lease
 //
-// Returns a wrapper object for the known response body format(s).
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 func (c *ClientWithResponses) ClaimTaskWithBodyWithResponse(ctx context.Context, id IdParam, params *ClaimTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClaimTaskResponse, error) {
 	rsp, err := c.ClaimTaskWithBody(ctx, id, params, contentType, body, reqEditors...)
 	if err != nil {
@@ -12197,8 +12905,11 @@ func (c *ClientWithResponses) ClaimTaskWithBodyWithResponse(ctx context.Context,
 	return ParseClaimTaskResponse(rsp)
 }
 
-// ClaimTaskWithResponse performs a POST /v1/tasks/{id}/claim (the `ClaimTask` operationId) request.
+// ClaimTaskWithResponse Claim a task for the caller, optionally with a lease
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 func (c *ClientWithResponses) ClaimTaskWithResponse(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTaskResponse, error) {
 	rsp, err := c.ClaimTask(ctx, id, params, body, reqEditors...)
 	if err != nil {
@@ -12207,9 +12918,11 @@ func (c *ClientWithResponses) ClaimTaskWithResponse(ctx context.Context, id IdPa
 	return ParseClaimTaskResponse(rsp)
 }
 
-// ReleaseTaskWithResponse performs a POST /v1/tasks/{id}/release (the `ReleaseTask` operationId) request.
+// ReleaseTaskWithResponse Release a task the caller owns
 //
 // Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 func (c *ClientWithResponses) ReleaseTaskWithResponse(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*ReleaseTaskResponse, error) {
 	rsp, err := c.ReleaseTask(ctx, id, params, reqEditors...)
 	if err != nil {
@@ -16395,175 +17108,175 @@ func ParseReleaseTaskResponse(rsp *http.Response) (*ReleaseTaskResponse, error) 
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-
+	// WellKnown The agentmesh well-known document: where to discover the API
 	// (GET /.well-known/agentmesh)
 	WellKnown(w http.ResponseWriter, r *http.Request)
-
+	// AuthorizationServerMetadata OAuth 2.0 authorization server metadata (RFC 8414)
 	// (GET /.well-known/oauth-authorization-server)
 	AuthorizationServerMetadata(w http.ResponseWriter, r *http.Request)
-
+	// OpenidConfiguration OpenID Connect discovery document for this server
 	// (GET /.well-known/openid-configuration)
 	OpenidConfiguration(w http.ResponseWriter, r *http.Request)
-
+	// ListBridges List bridges
 	// (GET /v1/admin/bridges)
 	ListBridges(w http.ResponseWriter, r *http.Request)
-
+	// CreateBridge Bridge a channel to a new private Slack channel
 	// (POST /v1/admin/bridges)
 	CreateBridge(w http.ResponseWriter, r *http.Request)
-
+	// RemoveBridge Remove a channel's bridge, archiving its Slack channel
 	// (DELETE /v1/admin/bridges/{channel})
 	RemoveBridge(w http.ResponseWriter, r *http.Request, channel ChannelParam)
-
+	// GetBridge Read a channel's bridge
 	// (GET /v1/admin/bridges/{channel})
 	GetBridge(w http.ResponseWriter, r *http.Request, channel ChannelParam)
-
+	// CreateAgentIdentity Create an agent identity, optionally in a scope, with a one-time enrollment token
 	// (POST /v1/admin/identities)
 	CreateAgentIdentity(w http.ResponseWriter, r *http.Request)
-
+	// CreateIdentityByEmail Create a human identity for an email address
 	// (POST /v1/admin/identities/by-email)
 	CreateIdentityByEmail(w http.ResponseWriter, r *http.Request, params CreateIdentityByEmailParams)
-
+	// ResetCredential Remove an identity's registered keys
 	// (POST /v1/admin/identities/{identity}/reset-credential)
 	ResetCredential(w http.ResponseWriter, r *http.Request, identity string, params ResetCredentialParams)
-
+	// AdminReset Delete everything in the store (an administrator's reset)
 	// (POST /v1/admin/reset)
 	AdminReset(w http.ResponseWriter, r *http.Request, params AdminResetParams)
-
+	// ListScopes List scopes
 	// (GET /v1/admin/scopes)
 	ListScopes(w http.ResponseWriter, r *http.Request)
-
+	// CreateScope Create a scope
 	// (POST /v1/admin/scopes)
 	CreateScope(w http.ResponseWriter, r *http.Request, params CreateScopeParams)
-
+	// GetScope Read a scope
 	// (GET /v1/admin/scopes/{scope})
 	GetScope(w http.ResponseWriter, r *http.Request, scope ScopeParam)
-
+	// DoneScope Retire a scope, with or without its bridge
 	// (POST /v1/admin/scopes/{scope}/done)
 	DoneScope(w http.ResponseWriter, r *http.Request, scope ScopeParam, params DoneScopeParams)
-
+	// ListSigningKeys List the server's token signing keys
 	// (GET /v1/admin/signing-keys)
 	ListSigningKeys(w http.ResponseWriter, r *http.Request)
-
+	// RotateSigningKey Rotate the active token signing key
 	// (POST /v1/admin/signing-keys/rotate)
 	RotateSigningKey(w http.ResponseWriter, r *http.Request, params RotateSigningKeyParams)
-
+	// AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog
 	// (GET /v1/admin/status)
 	AdminStatus(w http.ResponseWriter, r *http.Request)
-
+	// AdminUsage The database size, budget and capacity notice
 	// (GET /v1/admin/usage)
 	AdminUsage(w http.ResponseWriter, r *http.Request)
-
+	// ListAgentStatuses List every visible identity's stored status
 	// (GET /v1/agent-statuses)
 	ListAgentStatuses(w http.ResponseWriter, r *http.Request)
-
+	// Jwks The public keys that verify the bearers this server issues
 	// (GET /v1/auth/jwks)
 	Jwks(w http.ResponseWriter, r *http.Request)
-
+	// Register Register an identity's public key, with an enrollment token where registration is by enrollment
 	// (POST /v1/auth/register)
 	Register(w http.ResponseWriter, r *http.Request)
-
+	// Token Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	// (POST /v1/auth/token)
 	Token(w http.ResponseWriter, r *http.Request)
-
+	// ListChannels List the channels the caller may see
 	// (GET /v1/channels)
 	ListChannels(w http.ResponseWriter, r *http.Request)
-
+	// CreateChannel Create a channel
 	// (POST /v1/channels)
 	CreateChannel(w http.ResponseWriter, r *http.Request, params CreateChannelParams)
-
+	// DeleteChannel Delete a channel
 	// (DELETE /v1/channels/{channel})
 	DeleteChannel(w http.ResponseWriter, r *http.Request, channel ChannelParam, params DeleteChannelParams)
-
+	// RenameChannel Rename a channel
 	// (PATCH /v1/channels/{channel})
 	RenameChannel(w http.ResponseWriter, r *http.Request, channel ChannelParam, params RenameChannelParams)
-
+	// GetACL Read a channel's access control list
 	// (GET /v1/channels/{channel}/acl)
 	GetACL(w http.ResponseWriter, r *http.Request, channel ChannelParam)
-
+	// SetACL Replace a channel's access control list
 	// (PUT /v1/channels/{channel}/acl)
 	SetACL(w http.ResponseWriter, r *http.Request, channel ChannelParam, params SetACLParams)
-
+	// History Read a window of a channel's messages
 	// (GET /v1/channels/{channel}/messages)
 	History(w http.ResponseWriter, r *http.Request, channel ChannelParam, params HistoryParams)
-
+	// SendMessage Send a message to a channel
 	// (POST /v1/channels/{channel}/messages)
 	SendMessage(w http.ResponseWriter, r *http.Request, channel ChannelParam, params SendMessageParams)
-
+	// Unsubscribe Remove the caller's subscription to a channel
 	// (DELETE /v1/channels/{channel}/subscription)
 	Unsubscribe(w http.ResponseWriter, r *http.Request, channel ChannelParam, params UnsubscribeParams)
-
+	// Subscribe Subscribe the caller to a channel
 	// (PUT /v1/channels/{channel}/subscription)
 	Subscribe(w http.ResponseWriter, r *http.Request, channel ChannelParam, params SubscribeParams)
-
+	// ListTasks List a channel's tasks, optionally filtered by status or owner
 	// (GET /v1/channels/{channel}/tasks)
 	ListTasks(w http.ResponseWriter, r *http.Request, channel ChannelParam, params ListTasksParams)
-
+	// CreateTask Create a task on a channel's task list
 	// (POST /v1/channels/{channel}/tasks)
 	CreateTask(w http.ResponseWriter, r *http.Request, channel ChannelParam, params CreateTaskParams)
-
+	// Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
 	// (GET /v1/discover)
 	Discover(w http.ResponseWriter, r *http.Request)
-
+	// Health The health document as the caller's tier sees it
 	// (GET /v1/health)
 	Health(w http.ResponseWriter, r *http.Request)
-
+	// ListIdentities List identities that have a live session
 	// (GET /v1/identities)
 	ListIdentities(w http.ResponseWriter, r *http.Request)
-
+	// AgentStatusHistory List one identity's stored statuses, oldest first
 	// (GET /v1/identities/{identity}/statuses)
 	AgentStatusHistory(w http.ResponseWriter, r *http.Request, identity string)
-
+	// DeleteMemory Delete a memory
 	// (DELETE /v1/memories/{id})
 	DeleteMemory(w http.ResponseWriter, r *http.Request, id IdParam, params DeleteMemoryParams)
-
+	// GetMemory Read a memory's live revision
 	// (GET /v1/memories/{id})
 	GetMemory(w http.ResponseWriter, r *http.Request, id IdParam)
-
+	// ListMemoryRevisions List a memory's revisions
 	// (GET /v1/memories/{id}/revisions)
 	ListMemoryRevisions(w http.ResponseWriter, r *http.Request, id IdParam)
-
+	// EditMemory Write a new revision of a memory
 	// (POST /v1/memories/{id}/revisions)
 	EditMemory(w http.ResponseWriter, r *http.Request, id IdParam, params EditMemoryParams)
-
+	// Search Search the messages of the channels the caller may read
 	// (GET /v1/search)
 	Search(w http.ResponseWriter, r *http.Request, params SearchParams)
-
+	// OpenSession Open a session for the caller's identity, resuming by token or offering cursors
 	// (POST /v1/sessions)
 	OpenSession(w http.ResponseWriter, r *http.Request)
-
+	// CloseSession Close a session, freeing its display name
 	// (DELETE /v1/sessions/{session})
 	CloseSession(w http.ResponseWriter, r *http.Request, session SessionParam, params CloseSessionParams)
-
+	// Peek Count what receive would deliver without delivering it
 	// (GET /v1/sessions/{session}/peek)
 	Peek(w http.ResponseWriter, r *http.Request, session SessionParam, params PeekParams)
-
+	// Receive Receive the next batch of messages for a session, acknowledging the previous one
 	// (POST /v1/sessions/{session}/receive)
 	Receive(w http.ResponseWriter, r *http.Request, session SessionParam)
-
+	// SetAgentStatus Set the calling agent's status line from one of its live sessions
 	// (POST /v1/sessions/{session}/status)
 	SetAgentStatus(w http.ResponseWriter, r *http.Request, session SessionParam, params SetAgentStatusParams)
-
+	// Watch Long-poll until the session has something to receive or the timeout passes
 	// (GET /v1/sessions/{session}/watch)
 	Watch(w http.ResponseWriter, r *http.Request, session SessionParam, params WatchParams)
-
+	// UnsubscribeTags Remove a tag subscription: one AND set of tag patterns
 	// (DELETE /v1/tag-subscriptions)
 	UnsubscribeTags(w http.ResponseWriter, r *http.Request, params UnsubscribeTagsParams)
-
+	// ListTagSubscriptions List the caller's tag subscriptions
 	// (GET /v1/tag-subscriptions)
 	ListTagSubscriptions(w http.ResponseWriter, r *http.Request)
-
+	// SubscribeTags Add a tag subscription: one AND set of tag patterns
 	// (POST /v1/tag-subscriptions)
 	SubscribeTags(w http.ResponseWriter, r *http.Request, params SubscribeTagsParams)
-
+	// GetTask Read a task
 	// (GET /v1/tasks/{id})
 	GetTask(w http.ResponseWriter, r *http.Request, id IdParam)
-
+	// UpdateTask Update a task: absent fields stay unchanged
 	// (PATCH /v1/tasks/{id})
 	UpdateTask(w http.ResponseWriter, r *http.Request, id IdParam, params UpdateTaskParams)
-
+	// ClaimTask Claim a task for the caller, optionally with a lease
 	// (POST /v1/tasks/{id}/claim)
 	ClaimTask(w http.ResponseWriter, r *http.Request, id IdParam, params ClaimTaskParams)
-
+	// ReleaseTask Release a task the caller owns
 	// (POST /v1/tasks/{id}/release)
 	ReleaseTask(w http.ResponseWriter, r *http.Request, id IdParam, params ReleaseTaskParams)
 }
@@ -26008,175 +26721,175 @@ func (response ReleaseTask503ApplicationProblemPlusJSONResponse) VisitReleaseTas
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-
+	// WellKnown The agentmesh well-known document: where to discover the API
 	// (GET /.well-known/agentmesh)
 	WellKnown(ctx context.Context, request WellKnownRequestObject) (WellKnownResponseObject, error)
-
+	// AuthorizationServerMetadata OAuth 2.0 authorization server metadata (RFC 8414)
 	// (GET /.well-known/oauth-authorization-server)
 	AuthorizationServerMetadata(ctx context.Context, request AuthorizationServerMetadataRequestObject) (AuthorizationServerMetadataResponseObject, error)
-
+	// OpenidConfiguration OpenID Connect discovery document for this server
 	// (GET /.well-known/openid-configuration)
 	OpenidConfiguration(ctx context.Context, request OpenidConfigurationRequestObject) (OpenidConfigurationResponseObject, error)
-
+	// ListBridges List bridges
 	// (GET /v1/admin/bridges)
 	ListBridges(ctx context.Context, request ListBridgesRequestObject) (ListBridgesResponseObject, error)
-
+	// CreateBridge Bridge a channel to a new private Slack channel
 	// (POST /v1/admin/bridges)
 	CreateBridge(ctx context.Context, request CreateBridgeRequestObject) (CreateBridgeResponseObject, error)
-
+	// RemoveBridge Remove a channel's bridge, archiving its Slack channel
 	// (DELETE /v1/admin/bridges/{channel})
 	RemoveBridge(ctx context.Context, request RemoveBridgeRequestObject) (RemoveBridgeResponseObject, error)
-
+	// GetBridge Read a channel's bridge
 	// (GET /v1/admin/bridges/{channel})
 	GetBridge(ctx context.Context, request GetBridgeRequestObject) (GetBridgeResponseObject, error)
-
+	// CreateAgentIdentity Create an agent identity, optionally in a scope, with a one-time enrollment token
 	// (POST /v1/admin/identities)
 	CreateAgentIdentity(ctx context.Context, request CreateAgentIdentityRequestObject) (CreateAgentIdentityResponseObject, error)
-
+	// CreateIdentityByEmail Create a human identity for an email address
 	// (POST /v1/admin/identities/by-email)
 	CreateIdentityByEmail(ctx context.Context, request CreateIdentityByEmailRequestObject) (CreateIdentityByEmailResponseObject, error)
-
+	// ResetCredential Remove an identity's registered keys
 	// (POST /v1/admin/identities/{identity}/reset-credential)
 	ResetCredential(ctx context.Context, request ResetCredentialRequestObject) (ResetCredentialResponseObject, error)
-
+	// AdminReset Delete everything in the store (an administrator's reset)
 	// (POST /v1/admin/reset)
 	AdminReset(ctx context.Context, request AdminResetRequestObject) (AdminResetResponseObject, error)
-
+	// ListScopes List scopes
 	// (GET /v1/admin/scopes)
 	ListScopes(ctx context.Context, request ListScopesRequestObject) (ListScopesResponseObject, error)
-
+	// CreateScope Create a scope
 	// (POST /v1/admin/scopes)
 	CreateScope(ctx context.Context, request CreateScopeRequestObject) (CreateScopeResponseObject, error)
-
+	// GetScope Read a scope
 	// (GET /v1/admin/scopes/{scope})
 	GetScope(ctx context.Context, request GetScopeRequestObject) (GetScopeResponseObject, error)
-
+	// DoneScope Retire a scope, with or without its bridge
 	// (POST /v1/admin/scopes/{scope}/done)
 	DoneScope(ctx context.Context, request DoneScopeRequestObject) (DoneScopeResponseObject, error)
-
+	// ListSigningKeys List the server's token signing keys
 	// (GET /v1/admin/signing-keys)
 	ListSigningKeys(ctx context.Context, request ListSigningKeysRequestObject) (ListSigningKeysResponseObject, error)
-
+	// RotateSigningKey Rotate the active token signing key
 	// (POST /v1/admin/signing-keys/rotate)
 	RotateSigningKey(ctx context.Context, request RotateSigningKeyRequestObject) (RotateSigningKeyResponseObject, error)
-
+	// AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog
 	// (GET /v1/admin/status)
 	AdminStatus(ctx context.Context, request AdminStatusRequestObject) (AdminStatusResponseObject, error)
-
+	// AdminUsage The database size, budget and capacity notice
 	// (GET /v1/admin/usage)
 	AdminUsage(ctx context.Context, request AdminUsageRequestObject) (AdminUsageResponseObject, error)
-
+	// ListAgentStatuses List every visible identity's stored status
 	// (GET /v1/agent-statuses)
 	ListAgentStatuses(ctx context.Context, request ListAgentStatusesRequestObject) (ListAgentStatusesResponseObject, error)
-
+	// Jwks The public keys that verify the bearers this server issues
 	// (GET /v1/auth/jwks)
 	Jwks(ctx context.Context, request JwksRequestObject) (JwksResponseObject, error)
-
+	// Register Register an identity's public key, with an enrollment token where registration is by enrollment
 	// (POST /v1/auth/register)
 	Register(ctx context.Context, request RegisterRequestObject) (RegisterResponseObject, error)
-
+	// Token Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	// (POST /v1/auth/token)
 	Token(ctx context.Context, request TokenRequestObject) (TokenResponseObject, error)
-
+	// ListChannels List the channels the caller may see
 	// (GET /v1/channels)
 	ListChannels(ctx context.Context, request ListChannelsRequestObject) (ListChannelsResponseObject, error)
-
+	// CreateChannel Create a channel
 	// (POST /v1/channels)
 	CreateChannel(ctx context.Context, request CreateChannelRequestObject) (CreateChannelResponseObject, error)
-
+	// DeleteChannel Delete a channel
 	// (DELETE /v1/channels/{channel})
 	DeleteChannel(ctx context.Context, request DeleteChannelRequestObject) (DeleteChannelResponseObject, error)
-
+	// RenameChannel Rename a channel
 	// (PATCH /v1/channels/{channel})
 	RenameChannel(ctx context.Context, request RenameChannelRequestObject) (RenameChannelResponseObject, error)
-
+	// GetACL Read a channel's access control list
 	// (GET /v1/channels/{channel}/acl)
 	GetACL(ctx context.Context, request GetACLRequestObject) (GetACLResponseObject, error)
-
+	// SetACL Replace a channel's access control list
 	// (PUT /v1/channels/{channel}/acl)
 	SetACL(ctx context.Context, request SetACLRequestObject) (SetACLResponseObject, error)
-
+	// History Read a window of a channel's messages
 	// (GET /v1/channels/{channel}/messages)
 	History(ctx context.Context, request HistoryRequestObject) (HistoryResponseObject, error)
-
+	// SendMessage Send a message to a channel
 	// (POST /v1/channels/{channel}/messages)
 	SendMessage(ctx context.Context, request SendMessageRequestObject) (SendMessageResponseObject, error)
-
+	// Unsubscribe Remove the caller's subscription to a channel
 	// (DELETE /v1/channels/{channel}/subscription)
 	Unsubscribe(ctx context.Context, request UnsubscribeRequestObject) (UnsubscribeResponseObject, error)
-
+	// Subscribe Subscribe the caller to a channel
 	// (PUT /v1/channels/{channel}/subscription)
 	Subscribe(ctx context.Context, request SubscribeRequestObject) (SubscribeResponseObject, error)
-
+	// ListTasks List a channel's tasks, optionally filtered by status or owner
 	// (GET /v1/channels/{channel}/tasks)
 	ListTasks(ctx context.Context, request ListTasksRequestObject) (ListTasksResponseObject, error)
-
+	// CreateTask Create a task on a channel's task list
 	// (POST /v1/channels/{channel}/tasks)
 	CreateTask(ctx context.Context, request CreateTaskRequestObject) (CreateTaskResponseObject, error)
-
+	// Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
 	// (GET /v1/discover)
 	Discover(ctx context.Context, request DiscoverRequestObject) (DiscoverResponseObject, error)
-
+	// Health The health document as the caller's tier sees it
 	// (GET /v1/health)
 	Health(ctx context.Context, request HealthRequestObject) (HealthResponseObject, error)
-
+	// ListIdentities List identities that have a live session
 	// (GET /v1/identities)
 	ListIdentities(ctx context.Context, request ListIdentitiesRequestObject) (ListIdentitiesResponseObject, error)
-
+	// AgentStatusHistory List one identity's stored statuses, oldest first
 	// (GET /v1/identities/{identity}/statuses)
 	AgentStatusHistory(ctx context.Context, request AgentStatusHistoryRequestObject) (AgentStatusHistoryResponseObject, error)
-
+	// DeleteMemory Delete a memory
 	// (DELETE /v1/memories/{id})
 	DeleteMemory(ctx context.Context, request DeleteMemoryRequestObject) (DeleteMemoryResponseObject, error)
-
+	// GetMemory Read a memory's live revision
 	// (GET /v1/memories/{id})
 	GetMemory(ctx context.Context, request GetMemoryRequestObject) (GetMemoryResponseObject, error)
-
+	// ListMemoryRevisions List a memory's revisions
 	// (GET /v1/memories/{id}/revisions)
 	ListMemoryRevisions(ctx context.Context, request ListMemoryRevisionsRequestObject) (ListMemoryRevisionsResponseObject, error)
-
+	// EditMemory Write a new revision of a memory
 	// (POST /v1/memories/{id}/revisions)
 	EditMemory(ctx context.Context, request EditMemoryRequestObject) (EditMemoryResponseObject, error)
-
+	// Search Search the messages of the channels the caller may read
 	// (GET /v1/search)
 	Search(ctx context.Context, request SearchRequestObject) (SearchResponseObject, error)
-
+	// OpenSession Open a session for the caller's identity, resuming by token or offering cursors
 	// (POST /v1/sessions)
 	OpenSession(ctx context.Context, request OpenSessionRequestObject) (OpenSessionResponseObject, error)
-
+	// CloseSession Close a session, freeing its display name
 	// (DELETE /v1/sessions/{session})
 	CloseSession(ctx context.Context, request CloseSessionRequestObject) (CloseSessionResponseObject, error)
-
+	// Peek Count what receive would deliver without delivering it
 	// (GET /v1/sessions/{session}/peek)
 	Peek(ctx context.Context, request PeekRequestObject) (PeekResponseObject, error)
-
+	// Receive Receive the next batch of messages for a session, acknowledging the previous one
 	// (POST /v1/sessions/{session}/receive)
 	Receive(ctx context.Context, request ReceiveRequestObject) (ReceiveResponseObject, error)
-
+	// SetAgentStatus Set the calling agent's status line from one of its live sessions
 	// (POST /v1/sessions/{session}/status)
 	SetAgentStatus(ctx context.Context, request SetAgentStatusRequestObject) (SetAgentStatusResponseObject, error)
-
+	// Watch Long-poll until the session has something to receive or the timeout passes
 	// (GET /v1/sessions/{session}/watch)
 	Watch(ctx context.Context, request WatchRequestObject) (WatchResponseObject, error)
-
+	// UnsubscribeTags Remove a tag subscription: one AND set of tag patterns
 	// (DELETE /v1/tag-subscriptions)
 	UnsubscribeTags(ctx context.Context, request UnsubscribeTagsRequestObject) (UnsubscribeTagsResponseObject, error)
-
+	// ListTagSubscriptions List the caller's tag subscriptions
 	// (GET /v1/tag-subscriptions)
 	ListTagSubscriptions(ctx context.Context, request ListTagSubscriptionsRequestObject) (ListTagSubscriptionsResponseObject, error)
-
+	// SubscribeTags Add a tag subscription: one AND set of tag patterns
 	// (POST /v1/tag-subscriptions)
 	SubscribeTags(ctx context.Context, request SubscribeTagsRequestObject) (SubscribeTagsResponseObject, error)
-
+	// GetTask Read a task
 	// (GET /v1/tasks/{id})
 	GetTask(ctx context.Context, request GetTaskRequestObject) (GetTaskResponseObject, error)
-
+	// UpdateTask Update a task: absent fields stay unchanged
 	// (PATCH /v1/tasks/{id})
 	UpdateTask(ctx context.Context, request UpdateTaskRequestObject) (UpdateTaskResponseObject, error)
-
+	// ClaimTask Claim a task for the caller, optionally with a lease
 	// (POST /v1/tasks/{id}/claim)
 	ClaimTask(ctx context.Context, request ClaimTaskRequestObject) (ClaimTaskResponseObject, error)
-
+	// ReleaseTask Release a task the caller owns
 	// (POST /v1/tasks/{id}/release)
 	ReleaseTask(ctx context.Context, request ReleaseTaskRequestObject) (ReleaseTaskResponseObject, error)
 }

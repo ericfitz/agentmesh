@@ -18,7 +18,7 @@ tags:
   - name: health
     description: "GET /v1/health"
   - name: sessions
-    description: "Open, close, receive, watch, peek and agent status"
+    description: "Open, close, receive, watch, peek, identities and agent status"
   - name: channels
     description: "Channels, ACLs, subscriptions and tag subscriptions"
   - name: messages
@@ -35,6 +35,7 @@ paths:
   /.well-known/agentmesh:
     get:
       operationId: wellKnown
+      summary: "The agentmesh well-known document: where to discover the API"
       tags: [discovery]
       security: []
       responses:
@@ -51,6 +52,7 @@ paths:
   /.well-known/oauth-authorization-server:
     get:
       operationId: authorizationServerMetadata
+      summary: "OAuth 2.0 authorization server metadata (RFC 8414)"
       tags: [discovery]
       security: []
       responses:
@@ -70,6 +72,7 @@ paths:
   /.well-known/openid-configuration:
     get:
       operationId: openidConfiguration
+      summary: "OpenID Connect discovery document for this server"
       tags: [discovery]
       security: []
       responses:
@@ -88,6 +91,7 @@ paths:
   /v1/discover:
     get:
       operationId: discover
+      summary: "The liveness probe: API versions, server and protocol version, capabilities and auth methods"
       tags: [discovery]
       security: []
       responses:
@@ -104,6 +108,7 @@ paths:
   /v1/health:
     get:
       operationId: health
+      summary: "The health document as the caller's tier sees it"
       tags: [health]
       security:
         - {}
@@ -128,8 +133,10 @@ paths:
   /v1/sessions:
     post:
       operationId: openSession
+      summary: "Open a session for the caller's identity, resuming by token or offering cursors"
       tags: [sessions]
       requestBody:
+        description: "The hint for a second session, the resume token of a session to resume and the cursors a client kept"
         required: true
         content:
           application/json:
@@ -161,6 +168,7 @@ paths:
   /v1/sessions/{session}:
     delete:
       operationId: closeSession
+      summary: "Close a session, freeing its display name"
       tags: [sessions]
       parameters:
         - $ref: "#/components/parameters/SessionParam"
@@ -185,10 +193,12 @@ paths:
   /v1/sessions/{session}/receive:
     post:
       operationId: receive
+      summary: "Receive the next batch of messages for a session, acknowledging the previous one"
       tags: [sessions]
       parameters:
         - $ref: "#/components/parameters/SessionParam"
       requestBody:
+        description: "The batch token to acknowledge, the batch size, the channels to read and whether to include the session's own messages"
         required: true
         content:
           application/json:
@@ -220,10 +230,12 @@ paths:
   /v1/sessions/{session}/watch:
     get:
       operationId: watch
+      summary: "Long-poll until the session has something to receive or the timeout passes"
       tags: [sessions]
       parameters:
         - $ref: "#/components/parameters/SessionParam"
         - name: after
+          description: "Wake only for messages with a sequence number above this one (and above the session's cursor); default 0"
           in: query
           required: false
           schema:
@@ -243,6 +255,7 @@ paths:
             minimum: 0
             maximum: 240
         - name: include_own
+          description: "Whether messages sent by the session itself count; default false"
           in: query
           required: false
           schema:
@@ -276,11 +289,13 @@ paths:
   /v1/sessions/{session}/peek:
     get:
       operationId: peek
+      summary: "Count what receive would deliver without delivering it"
       tags: [sessions]
       description: Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
       parameters:
         - $ref: "#/components/parameters/SessionParam"
         - name: include_own
+          description: "Whether messages sent by the session itself count; default false"
           in: query
           required: false
           schema:
@@ -310,6 +325,7 @@ paths:
   /v1/identities:
     get:
       operationId: listIdentities
+      summary: "List identities that have a live session"
       tags: [sessions]
       responses:
         "200":
@@ -333,6 +349,7 @@ paths:
   /v1/sessions/{session}/status:
     post:
       operationId: setAgentStatus
+      summary: "Set the calling agent's status line from one of its live sessions"
       tags: [sessions]
       description: >-
         Sets the calling agent's status from one of its live sessions. Only
@@ -341,6 +358,7 @@ paths:
         - $ref: "#/components/parameters/SessionParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The status tag, the one-line text and an optional problem"
         required: true
         content:
           application/json:
@@ -376,6 +394,7 @@ paths:
   /v1/agent-statuses:
     get:
       operationId: listAgentStatuses
+      summary: "List every visible identity's stored status"
       tags: [sessions]
       description: >-
         Every visible identity with a stored status, by identity. An entry
@@ -403,6 +422,7 @@ paths:
   /v1/identities/{identity}/statuses:
     get:
       operationId: agentStatusHistory
+      summary: "List one identity's stored statuses, oldest first"
       tags: [sessions]
       description: >-
         One identity's status revisions, oldest first, at most
@@ -440,6 +460,7 @@ paths:
   /v1/channels:
     get:
       operationId: listChannels
+      summary: "List the channels the caller may see"
       tags: [channels]
       responses:
         "200":
@@ -462,10 +483,12 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: createChannel
+      summary: "Create a channel"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The channel's name and kind, its ACL (absent: the configured default) and, for an administrator, its scope"
         required: true
         content:
           application/json:
@@ -497,6 +520,7 @@ paths:
   /v1/channels/{channel}:
     delete:
       operationId: deleteChannel
+      summary: "Delete a channel"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
@@ -520,11 +544,13 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     patch:
       operationId: renameChannel
+      summary: "Rename a channel"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The channel's new name"
         required: true
         content:
           application/json:
@@ -552,6 +578,7 @@ paths:
   /v1/channels/{channel}/acl:
     get:
       operationId: getACL
+      summary: "Read a channel's access control list"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
@@ -578,11 +605,13 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     put:
       operationId: setACL
+      summary: "Replace a channel's access control list"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The complete ACL that replaces the channel's; an agent that is not an administrator cannot remove a protected entry's permission"
         required: true
         content:
           application/json:
@@ -614,11 +643,13 @@ paths:
   /v1/channels/{channel}/subscription:
     put:
       operationId: subscribe
+      summary: "Subscribe the caller to a channel"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "Where the subscription starts: now (the default) or oldest"
         required: true
         content:
           application/json:
@@ -645,6 +676,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: unsubscribe
+      summary: "Remove the caller's subscription to a channel"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
@@ -669,6 +701,7 @@ paths:
   /v1/tag-subscriptions:
     get:
       operationId: listTagSubscriptions
+      summary: "List the caller's tag subscriptions"
       tags: [channels]
       responses:
         "200":
@@ -693,10 +726,12 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: subscribeTags
+      summary: "Add a tag subscription: one AND set of tag patterns"
       tags: [channels]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "One AND set of tag patterns"
         required: true
         content:
           application/json:
@@ -721,6 +756,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: unsubscribeTags
+      summary: "Remove a tag subscription: one AND set of tag patterns"
       tags: [channels]
       parameters:
         - name: pattern
@@ -758,11 +794,13 @@ paths:
   /v1/channels/{channel}/messages:
     post:
       operationId: sendMessage
+      summary: "Send a message to a channel"
       tags: [messages]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The message: content, with optional subject, type, tags, reply_to and metadata"
         required: true
         content:
           application/json:
@@ -799,10 +837,12 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: history
+      summary: "Read a window of a channel's messages"
       tags: [messages]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - name: before
+          description: "Return messages with a sequence number below this one; alone, the newest messages below it"
           in: query
           required: false
           schema:
@@ -811,6 +851,7 @@ paths:
             minimum: 0
             maximum: 9223372036854775807
         - name: after
+          description: "Return messages with a sequence number above this one, oldest first"
           in: query
           required: false
           schema:
@@ -877,6 +918,7 @@ paths:
   /v1/search:
     get:
       operationId: search
+      summary: "Search the messages of the channels the caller may read"
       tags: [messages]
       parameters:
         - name: q
@@ -887,6 +929,7 @@ paths:
             maxLength: 1024
           description: At most 1024 code points.
         - name: mode
+          description: "text, semantic or both; default: both where the server has an embedding provider, else text"
           in: query
           required: false
           schema:
@@ -907,6 +950,7 @@ paths:
             maxLength: 128
           description: At most 128 bytes (the server counts bytes).
         - name: since
+          description: "Only messages created at or after this time, in milliseconds since the Unix epoch"
           in: query
           required: false
           schema:
@@ -915,6 +959,7 @@ paths:
             minimum: 0
             maximum: 9223372036854775807
         - name: until
+          description: "Only messages created at or before this time, in milliseconds since the Unix epoch"
           in: query
           required: false
           schema:
@@ -923,6 +968,7 @@ paths:
             minimum: 0
             maximum: 9223372036854775807
         - name: thread
+          description: "Only the message with this sequence number and the replies to it"
           in: query
           required: false
           schema:
@@ -985,6 +1031,7 @@ paths:
   /v1/memories/{id}:
     get:
       operationId: getMemory
+      summary: "Read a memory's live revision"
       tags: [memories]
       parameters:
         - $ref: "#/components/parameters/IdParam"
@@ -1009,6 +1056,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: deleteMemory
+      summary: "Delete a memory"
       tags: [memories]
       parameters:
         - $ref: "#/components/parameters/IdParam"
@@ -1035,6 +1083,7 @@ paths:
   /v1/memories/{id}/revisions:
     get:
       operationId: listMemoryRevisions
+      summary: "List a memory's revisions"
       tags: [memories]
       parameters:
         - $ref: "#/components/parameters/IdParam"
@@ -1061,11 +1110,13 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: editMemory
+      summary: "Write a new revision of a memory"
       tags: [memories]
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The fields of the new revision (absent keeps the live value, empty clears it) and the revision the edit expects"
         required: true
         content:
           application/json:
@@ -1101,11 +1152,13 @@ paths:
   /v1/channels/{channel}/tasks:
     post:
       operationId: createTask
+      summary: "Create a task on a channel's task list"
       tags: [tasks]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The task's subject and description, its place in the list (parent, before or after a sibling), blockers and metadata"
         required: true
         content:
           application/json:
@@ -1140,6 +1193,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: listTasks
+      summary: "List a channel's tasks, optionally filtered by status or owner"
       tags: [tasks]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
@@ -1182,6 +1236,7 @@ paths:
   /v1/tasks/{id}:
     get:
       operationId: getTask
+      summary: "Read a task"
       tags: [tasks]
       parameters:
         - $ref: "#/components/parameters/IdParam"
@@ -1206,11 +1261,13 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     patch:
       operationId: updateTask
+      summary: "Update a task: absent fields stay unchanged"
       tags: [tasks]
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The fields to change (absent fields are unchanged), including status, owner, placement, blockers, lease and deletion"
         required: true
         content:
           application/json:
@@ -1246,11 +1303,13 @@ paths:
   /v1/tasks/{id}/claim:
     post:
       operationId: claimTask
+      summary: "Claim a task for the caller, optionally with a lease"
       tags: [tasks]
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The time the claim's lease lasts until (absent or 0: no lease)"
         required: true
         content:
           application/json:
@@ -1286,6 +1345,7 @@ paths:
   /v1/tasks/{id}/release:
     post:
       operationId: releaseTask
+      summary: "Release a task the caller owns"
       tags: [tasks]
       parameters:
         - $ref: "#/components/parameters/IdParam"
@@ -1318,6 +1378,7 @@ paths:
   /v1/admin/status:
     get:
       operationId: adminStatus
+      summary: "The administrator's view of the server: sessions, channels, notices and the embedding backlog"
       tags: [admin]
       responses:
         "200":
@@ -1339,6 +1400,7 @@ paths:
   /v1/admin/usage:
     get:
       operationId: adminUsage
+      summary: "The database size, budget and capacity notice"
       tags: [admin]
       description: >-
         The database size, the budget of the store's engine, the disk size and
@@ -1364,6 +1426,7 @@ paths:
   /v1/auth/token:
     post:
       operationId: token
+      summary: "Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)"
       tags: [auth]
       security: []
       description: >-
@@ -1373,6 +1436,7 @@ paths:
         RFC 8693 token exchange of a configured issuer's access token for a
         human bearer. Errors are RFC 6749 section 5.2 bodies.
       requestBody:
+        description: "A form-encoded token request: a client assertion (RFC 7523) or a subject token to exchange (RFC 8693)"
         required: true
         content:
           application/x-www-form-urlencoded:
@@ -1398,6 +1462,7 @@ paths:
   /v1/auth/jwks:
     get:
       operationId: jwks
+      summary: "The public keys that verify the bearers this server issues"
       tags: [auth]
       security: []
       responses:
@@ -1416,12 +1481,14 @@ paths:
   /v1/auth/register:
     post:
       operationId: register
+      summary: "Register an identity's public key, with an enrollment token where registration is by enrollment"
       tags: [auth]
       security: []
       description: >-
         Registers an identity's public key (trust on first use, or with an
         enrollment token; Decisions 20, 58, 72).
       requestBody:
+        description: "The identity, its public key as a JWK and, where registration is by enrollment, the enrollment token"
         required: true
         content:
           application/json:
@@ -1449,9 +1516,11 @@ paths:
   /v1/admin/reset:
     post:
       operationId: adminReset
+      summary: "Delete everything in the store (an administrator's reset)"
       tags: [admin]
       parameters:
         - name: scope
+          description: "data keeps identities and keys; everything removes them too; default: data"
           in: query
           required: false
           schema:
@@ -1477,6 +1546,7 @@ paths:
   /v1/admin/identities/{identity}/reset-credential:
     post:
       operationId: resetCredential
+      summary: "Remove an identity's registered keys"
       tags: [admin]
       parameters:
         - name: identity
@@ -1512,6 +1582,7 @@ paths:
   /v1/admin/signing-keys:
     get:
       operationId: listSigningKeys
+      summary: "List the server's token signing keys"
       tags: [admin]
       description: >-
         The server's token signing key set, the active key first. Public
@@ -1538,6 +1609,7 @@ paths:
   /v1/admin/signing-keys/rotate:
     post:
       operationId: rotateSigningKey
+      summary: "Rotate the active token signing key"
       tags: [admin]
       description: >-
         Asks the configured key provider for the next key and makes it the
@@ -1547,6 +1619,7 @@ paths:
         answers 409 conflict. Administrator only.
       parameters:
         - name: revoke_previous
+          description: "Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; default false"
           in: query
           required: false
           schema:
@@ -1575,10 +1648,12 @@ paths:
   /v1/admin/identities/by-email:
     post:
       operationId: createIdentityByEmail
+      summary: "Create a human identity for an email address"
       tags: [admin]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The email address the human identity is created for"
         required: true
         content:
           application/json:
@@ -1608,6 +1683,7 @@ paths:
   /v1/admin/identities:
     post:
       operationId: createAgentIdentity
+      summary: "Create an agent identity, optionally in a scope, with a one-time enrollment token"
       tags: [admin]
       description: >-
         Creates an agent identity, optionally in an open scope, and a one-time
@@ -1615,6 +1691,7 @@ paths:
         only. The token is never stored in clear and is not in an idempotency
         receipt, so the operation takes no idempotency key.
       requestBody:
+        description: "The agent identity's name and, optionally, its scope"
         required: true
         content:
           application/json:
@@ -1646,10 +1723,12 @@ paths:
   /v1/admin/scopes:
     post:
       operationId: createScope
+      summary: "Create a scope"
       tags: [admin]
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "The new scope's name"
         required: true
         content:
           application/json:
@@ -1678,6 +1757,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: listScopes
+      summary: "List scopes"
       tags: [admin]
       responses:
         "200":
@@ -1701,6 +1781,7 @@ paths:
       - $ref: "#/components/parameters/ScopeParam"
     get:
       operationId: getScope
+      summary: "Read a scope"
       tags: [admin]
       responses:
         "200":
@@ -1724,11 +1805,13 @@ paths:
   /v1/admin/scopes/{scope}/done:
     post:
       operationId: doneScope
+      summary: "Retire a scope, with or without its bridge"
       tags: [admin]
       parameters:
         - $ref: "#/components/parameters/ScopeParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
+        description: "How the scope is retired: with_bridge or normal"
         required: true
         content:
           application/json:
@@ -1760,12 +1843,14 @@ paths:
   /v1/admin/bridges:
     post:
       operationId: createBridge
+      summary: "Bridge a channel to a new private Slack channel"
       tags: [admin]
       description: >-
         Bridges a channel to a new private Slack channel. Unavailable (not
         retryable) with the text "the Slack bridge is not configured" when the
         server has no Slack bridge.
       requestBody:
+        description: "The channel to bridge and, optionally, the Slack channel's name"
         required: true
         content:
           application/json:
@@ -1798,6 +1883,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: listBridges
+      summary: "List bridges"
       tags: [admin]
       responses:
         "200":
@@ -1821,6 +1907,7 @@ paths:
       - $ref: "#/components/parameters/ChannelParam"
     get:
       operationId: getBridge
+      summary: "Read a channel's bridge"
       tags: [admin]
       responses:
         "200":
@@ -1843,6 +1930,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: removeBridge
+      summary: "Remove a channel's bridge, archiving its Slack channel"
       tags: [admin]
       responses:
         "204":
@@ -1902,6 +1990,7 @@ components:
       name: id
       in: path
       required: true
+      description: "The numeric id of the memory or task (memory_id or task_id in the responses)"
       schema:
         type: integer
         format: int64

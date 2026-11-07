@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -520,4 +522,63 @@ func TestJSONRequestBodiesAreClosed(t *testing.T) {
 	if checked < 15 {
 		t.Fatalf("checked only %d request bodies", checked)
 	}
+}
+
+// TestOperationShape is the Go check for "operationId, summary, security and
+// responses" on every operation (issue #32): a non-empty operationId and
+// summary, exactly one tag the top-level tags define, at least one 2xx
+// response and only three-digit response keys (no "default"). Security is
+// pinned by TestOperationTable; descriptions are the vacuum ruleset's job.
+func TestOperationShape(t *testing.T) {
+	doc := loadDoc(t)
+	tagNames := map[string]bool{}
+	for _, tag := range doc.Tags {
+		tagNames[tag.Name] = true
+	}
+	statusKey := regexp.MustCompile(`^[1-5][0-9]{2}$`)
+	var ids []string
+	byID := map[string]*openapi3.Operation{}
+	for path, item := range doc.Paths.Map() {
+		for method, op := range item.Operations() {
+			id := op.OperationID
+			if id == "" {
+				t.Errorf("%s %s: operationId is empty", method, path)
+				continue
+			}
+			ids = append(ids, id)
+			byID[id] = op
+		}
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		op := byID[id]
+		t.Run(lowerFirst(id), func(t *testing.T) {
+			if strings.TrimSpace(op.Summary) == "" {
+				t.Errorf("summary is empty")
+			}
+			if len(op.Tags) != 1 {
+				t.Errorf("tags = %v, want exactly one", op.Tags)
+			} else if !tagNames[op.Tags[0]] {
+				t.Errorf("tag %q is not defined in the top-level tags", op.Tags[0])
+			}
+			has2xx := false
+			for key := range op.Responses.Map() {
+				if !statusKey.MatchString(key) {
+					t.Errorf("response key %q is not a three-digit status", key)
+					continue
+				}
+				if key[0] == '2' {
+					has2xx = true
+				}
+			}
+			if !has2xx {
+				t.Errorf("no 2xx response")
+			}
+		})
+	}
+	t.Run("count", func(t *testing.T) {
+		if len(ids) != 57 {
+			t.Errorf("%d operations, want 57 (the number TestOperationTable pins)", len(ids))
+		}
+	})
 }
