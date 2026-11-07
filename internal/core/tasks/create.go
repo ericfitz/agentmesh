@@ -26,6 +26,9 @@ func (s Service) Create(ctx context.Context, identity string, in bus.TaskCreateI
 	if err := validateTaskSubject(in.Subject); err != nil {
 		return bus.Task{}, err
 	}
+	if err := checkBlockerCount("blocked_by", in.BlockedBy); err != nil {
+		return bus.Task{}, err
+	}
 	var (
 		out      bus.Task
 		fx       effects

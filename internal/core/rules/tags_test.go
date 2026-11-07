@@ -202,3 +202,15 @@ func patMax(s string) int {
 	}
 	return MaxTagLen
 }
+
+// The spec's one pattern cannot tie length to the exact-tag branch, so it
+// admits a 33-character exact tag that the core refuses: the spec is looser.
+func TestTagPatternSpecLooserThanCoreAt33(t *testing.T) {
+	s := strings.Repeat("a", MaxTagPatternLen)
+	if !regexp.MustCompile(TagPatternSpecPattern).MatchString(s) {
+		t.Fatal("spec pattern refuses a 33-character exact tag")
+	}
+	if _, err := NormalizeTagPatterns([]string{s}); err == nil {
+		t.Fatal("core admits a 33-character exact tag")
+	}
+}

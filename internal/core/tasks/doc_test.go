@@ -396,11 +396,32 @@ func TestTaskSubjectRunes(t *testing.T) {
 }
 
 func TestBlockersRawCount(t *testing.T) {
+	// 65 entries, only 63 distinct, all naming live tasks: only a count of
+	// the raw list refuses it, and only with the count's own message.
+	ts := make([]task, 0, MaxBlockers)
 	ids := make([]int64, MaxBlockers+1)
 	for i := range ids {
-		ids[i] = int64(i%(MaxBlockers-1)) + 1 // 65 entries, only 63 distinct
+		id := int64(i%(MaxBlockers-1)) + 1
+		ids[i] = id
+		if i < MaxBlockers-1 {
+			ts = append(ts, mk(id, 0, "V", "pending", ""))
+		}
 	}
-	big := mk(1000, 0, "V", "pending", "")
-	big.BlockedBy = ids
-	wantCode(t, validateTaskLinks([]task{big}, big), bus.CodeValidation)
+	const want = "accepts at most 64 tasks"
+	ts = append(ts, mk(1000, 0, "W", "pending", ""))
+	target := ts[len(ts)-1]
+	for field, p := range map[string]bus.TaskPatch{
+		"add_blocked_by":    {AddBlockedBy: ids},
+		"remove_blocked_by": {RemoveBlockedBy: ids},
+	} {
+		_, err := applyPatch(ts, target, p, "pat", 1, owners())
+		wantCode(t, err, bus.CodeValidation)
+		if err.Error() == "" || !strings.Contains(err.Error(), field+" "+want) {
+			t.Errorf("%s: message %q", field, err)
+		}
+	}
+	// 64 entries with duplicates pass.
+	if _, err := applyPatch(ts, target, bus.TaskPatch{AddBlockedBy: ids[:MaxBlockers]}, "pat", 1, owners()); err != nil {
+		t.Errorf("64 entries: %v", err)
+	}
 }

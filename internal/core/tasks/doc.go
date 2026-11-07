@@ -83,6 +83,15 @@ func validateTaskSubject(s string) error {
 	return nil
 }
 
+// checkBlockerCount refuses a list of more than MaxBlockers ids as sent,
+// before duplicates drop, so the count agrees with the spec's maxItems.
+func checkBlockerCount(field string, ids []int64) error {
+	if len(ids) > MaxBlockers {
+		return core.E(bus.CodeValidation, "%s accepts at most %d tasks", field, MaxBlockers)
+	}
+	return nil
+}
+
 // dedupeIDs returns ids with duplicates removed, order preserved.
 func dedupeIDs(ids []int64) []int64 {
 	if len(ids) == 0 {
@@ -271,8 +280,10 @@ func validateTaskLinks(ts []task, t task) error {
 			return core.E(bus.CodeValidation, "parent %d would create a cycle", t.Parent)
 		}
 	}
-	if len(t.BlockedBy) > MaxBlockers {
-		return core.E(bus.CodeValidation, "blocked_by accepts at most %d tasks", MaxBlockers)
+	// t.BlockedBy is the deduped list (the merged one on a patch); the lists
+	// as sent are counted raw by Create and applyPatch.
+	if err := checkBlockerCount("blocked_by", t.BlockedBy); err != nil {
+		return err
 	}
 	blockers := dedupeIDs(t.BlockedBy)
 	for _, bid := range blockers {

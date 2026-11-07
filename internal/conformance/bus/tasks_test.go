@@ -868,3 +868,35 @@ func TestTaskReleaseSetsNoMark(t *testing.T) {
 		}
 	})
 }
+
+func TestTaskBlockersRawCount(t *testing.T) {
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		h := newHarness(t, e, harnessOptions{})
+		ctx := context.Background()
+		pat := h.as("pat")
+		h.taskList("work", "pat")
+		var live []int64
+		for i := range tasks.MaxBlockers - 1 {
+			made := mustTask(t)(pat.Create(ctx, ab2bus.TaskCreateInput{Channel: "work", Subject: fmt.Sprintf("b%d", i)}))
+			live = append(live, made.ID)
+		}
+		// 65 entries naming 63 live tasks: refused by the raw count.
+		raw := append(append([]int64{}, live...), live[0], live[1])
+		_, err := pat.Create(ctx, ab2bus.TaskCreateInput{Channel: "work", Subject: "x", BlockedBy: raw})
+		codeOf(t, err, ab2bus.CodeValidation)
+		if err == nil || !strings.Contains(err.Error(), "blocked_by accepts at most 64 tasks") {
+			t.Fatalf("create: %v", err)
+		}
+		target := mustTask(t)(pat.Create(ctx, ab2bus.TaskCreateInput{Channel: "work", Subject: "target"}))
+		for field, p := range map[string]ab2bus.TaskPatch{
+			"add_blocked_by":    {ID: target.ID, AddBlockedBy: raw},
+			"remove_blocked_by": {ID: target.ID, RemoveBlockedBy: raw},
+		} {
+			_, err := pat.Update(ctx, p)
+			codeOf(t, err, ab2bus.CodeValidation)
+			if err == nil || !strings.Contains(err.Error(), field+" accepts at most 64 tasks") {
+				t.Fatalf("%s: %v", field, err)
+			}
+		}
+	})
+}

@@ -19,10 +19,25 @@ func TestResumeTokenPatternAgrees(t *testing.T) {
 		"plus":          strings.Repeat("A", 42) + "+",
 		"newline":       strings.Repeat("A", 42) + "\n",
 		"newline inner": strings.Repeat("A", 20) + "\n" + strings.Repeat("A", 22),
+		"43 then LF":    strings.Repeat("A", 43) + "\n",
+		"43 then CR":    strings.Repeat("A", 43) + "\r",
 		"empty":         "",
 	} {
 		if got, want := validToken(s), re.MatchString(s); got != want {
 			t.Errorf("%s: validToken %v, pattern %v", name, got, want)
 		}
+	}
+}
+
+// The base64 decoder skips CR and LF, so only the length check refuses a
+// 43-character token with a line break after it.
+func TestValidTokenRefusesLineBreaks(t *testing.T) {
+	for _, tail := range []string{"\n", "\r"} {
+		if validToken(strings.Repeat("A", ResumeTokenLen) + tail) {
+			t.Errorf("43 A + %q accepted", tail)
+		}
+	}
+	if !validToken(strings.Repeat("A", ResumeTokenLen)) {
+		t.Error("43 A refused")
 	}
 }

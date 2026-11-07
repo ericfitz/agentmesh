@@ -52,6 +52,14 @@ func applyPatch(ts []task, cur task, p bus.TaskPatch, as string, now int64, owne
 		return cur, nil
 	}
 
+	// The lists as sent are counted raw, before duplicates drop.
+	if err := checkBlockerCount("add_blocked_by", p.AddBlockedBy); err != nil {
+		return task{}, err
+	}
+	if err := checkBlockerCount("remove_blocked_by", p.RemoveBlockedBy); err != nil {
+		return task{}, err
+	}
+
 	// Rule 5: apply scalar fields onto a working copy.
 	patched := cur
 	if p.Subject != nil {
