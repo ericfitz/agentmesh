@@ -54,7 +54,7 @@ func (b *Bus) SetAgentStatus(ctx context.Context, in ab2bus.SetAgentStatusInput)
 	if err != nil {
 		return ab2bus.AgentStatus{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.AgentStatus{}, err
 	}
 	if r.JSON200 == nil {
@@ -68,7 +68,7 @@ func (b *Bus) AgentStatuses(ctx context.Context) ([]ab2bus.AgentStatusEntry, err
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {
@@ -93,7 +93,7 @@ func (b *Bus) AgentStatusHistory(ctx context.Context, identity string) ([]ab2bus
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {

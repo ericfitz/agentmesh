@@ -11,7 +11,6 @@ import (
 type mtResponse interface {
 	StatusCode() int
 	GetBody() []byte
-	GetApplicationproblemJSONDefault() *gen.Problem
 }
 
 // mtCheck maps a generated response (or the transport error) to nil or a Bus
@@ -21,7 +20,7 @@ func mtCheck[R mtResponse](ctx context.Context, r R, err error, ok func(R) bool)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	if e := errorOf(ctx, r.StatusCode(), r.GetApplicationproblemJSONDefault(), r.GetBody(), nil); e != nil {
+	if e := errorOf(ctx, r.StatusCode(), headerOf(httpResponseOf(r)), r.GetBody(), nil); e != nil {
 		return e
 	}
 	if !ok(r) {

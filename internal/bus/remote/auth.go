@@ -49,7 +49,7 @@ func Register(ctx context.Context, c *gen.ClientWithResponses, identity string, 
 	if err != nil {
 		return RegisterResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return RegisterResult{}, err
 	}
 	if r.JSON201 == nil {
@@ -99,7 +99,7 @@ func tokenRequest(ctx context.Context, c *gen.ClientWithResponses, body gen.Toke
 		if e := oauthErrorOf(r); e != nil {
 			return AccessToken{}, e
 		}
-		return AccessToken{}, errorOf(ctx, r.StatusCode(), nil, r.Body, nil)
+		return AccessToken{}, errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 	}
 	if r.JSON200 == nil {
 		return AccessToken{}, unparsable(r.StatusCode())

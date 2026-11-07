@@ -23,7 +23,7 @@ func (b *Bus) Send(ctx context.Context, in ab2bus.SendInput) (ab2bus.SendResult,
 	if err != nil {
 		return ab2bus.SendResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if e := errorOf(ctx, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body, nil); e != nil {
+	if e := errorOf(ctx, resp.StatusCode(), headerOf(resp.HTTPResponse), resp.Body, nil); e != nil {
 		return ab2bus.SendResult{}, e
 	}
 	if resp.JSON201 == nil {
@@ -58,7 +58,7 @@ func (b *Bus) History(ctx context.Context, in ab2bus.HistoryInput) ([]ab2bus.Mes
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if e := errorOf(ctx, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body, nil); e != nil {
+	if e := errorOf(ctx, resp.StatusCode(), headerOf(resp.HTTPResponse), resp.Body, nil); e != nil {
 		return nil, e
 	}
 	if resp.JSON200 == nil {
@@ -90,7 +90,7 @@ func (b *Bus) Search(ctx context.Context, in ab2bus.SearchInput) (ab2bus.SearchR
 	if err != nil {
 		return ab2bus.SearchResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if e := errorOf(ctx, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body, nil); e != nil {
+	if e := errorOf(ctx, resp.StatusCode(), headerOf(resp.HTTPResponse), resp.Body, nil); e != nil {
 		return ab2bus.SearchResult{}, e
 	}
 	if resp.JSON200 == nil {

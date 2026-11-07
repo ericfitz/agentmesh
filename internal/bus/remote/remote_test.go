@@ -52,7 +52,7 @@ func do(t *testing.T, c *canned) error {
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 func asBusError(t *testing.T, err error) *ab2bus.Error {
@@ -256,5 +256,38 @@ func TestUnsubscribeTagsEmptyPathSegment(t *testing.T) {
 				t.Fatalf("%d requests, want exactly 1 (no rule beyond the empty segment)", n)
 			}
 		})
+	}
+}
+
+func TestErrorOfRetryAfter(t *testing.T) {
+	body := []byte(`{"title":"Too Many Requests","status":429,"code":"rate_limited","detail":"slow down","retryable":true}`)
+	h := http.Header{}
+	h.Set("Retry-After", "3")
+	be := asBusError(t, errorOf(context.Background(), 429, h, body, nil))
+	if be.Code != ab2bus.CodeRateLimited || be.RetryAfter != 3*time.Second {
+		t.Fatalf("got %+v", be)
+	}
+	be = asBusError(t, errorOf(context.Background(), 429, nil, body, nil))
+	if be.RetryAfter != 0 {
+		t.Fatalf("no header: got %+v", be)
+	}
+	bad := http.Header{}
+	bad.Set("Retry-After", "soon")
+	be = asBusError(t, errorOf(context.Background(), 429, bad, body, nil))
+	if be.Code != ab2bus.CodeRateLimited || be.RetryAfter != 0 {
+		t.Fatalf("malformed header: got %+v", be)
+	}
+	// Retry-After on another status is not read.
+	be = asBusError(t, errorOf(context.Background(), 503, h, []byte(`{"code":"unavailable","title":"x"}`), nil))
+	if be.RetryAfter != 0 {
+		t.Fatalf("503: got %+v", be)
+	}
+}
+
+func TestErrorOfDecodesAnyStatus(t *testing.T) {
+	body := []byte(`{"title":"Not Found","status":404,"code":"not_found","detail":"no such channel","retryable":false}`)
+	be := asBusError(t, errorOf(context.Background(), 404, nil, body, nil))
+	if be.Code != ab2bus.CodeNotFound || be.Message != "no such channel" {
+		t.Fatalf("got %+v", be)
 	}
 }

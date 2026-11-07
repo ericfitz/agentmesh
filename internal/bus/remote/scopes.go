@@ -61,7 +61,7 @@ func (b *Bus) CreateScope(ctx context.Context, in ab2bus.CreateScopeInput) (ab2b
 	if err != nil {
 		return ab2bus.Scope{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.Scope{}, err
 	}
 	if r.JSON200 == nil {
@@ -84,7 +84,7 @@ func (b *Bus) ListScopes(ctx context.Context) ([]ab2bus.Scope, error) {
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {
@@ -113,7 +113,7 @@ func (b *Bus) GetScope(ctx context.Context, name string) (ab2bus.Scope, error) {
 	if err != nil {
 		return ab2bus.Scope{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.Scope{}, err
 	}
 	if r.JSON200 == nil {
@@ -134,7 +134,7 @@ func (b *Bus) DoneScope(ctx context.Context, in ab2bus.DoneScopeInput) (ab2bus.S
 	if err != nil {
 		return ab2bus.Scope{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.Scope{}, err
 	}
 	if r.JSON200 == nil {
@@ -161,7 +161,7 @@ func (b *Bus) CreateAgentIdentity(ctx context.Context, in ab2bus.CreateAgentIden
 	if err != nil {
 		return ab2bus.AgentIdentity{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.AgentIdentity{}, err
 	}
 	if r.JSON200 == nil {
@@ -190,7 +190,7 @@ func (b *Bus) CreateBridge(ctx context.Context, in ab2bus.CreateBridgeInput) (ab
 	if err != nil {
 		return ab2bus.BridgeCreated{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.BridgeCreated{}, err
 	}
 	if r.JSON200 == nil {
@@ -227,7 +227,7 @@ func (b *Bus) ListBridges(ctx context.Context) ([]ab2bus.Bridge, error) {
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {
@@ -256,7 +256,7 @@ func (b *Bus) GetBridge(ctx context.Context, channel string) (ab2bus.Bridge, err
 	if err != nil {
 		return ab2bus.Bridge{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.Bridge{}, err
 	}
 	if r.JSON200 == nil {
@@ -273,7 +273,7 @@ func (b *Bus) RemoveBridge(ctx context.Context, in ab2bus.RemoveBridgeInput) err
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // RemoveBridgeRequest builds the request for RemoveBridge.

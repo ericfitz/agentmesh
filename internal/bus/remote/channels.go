@@ -15,7 +15,7 @@ func (b *Bus) ListChannels(ctx context.Context) ([]ab2bus.Channel, error) {
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {
@@ -61,7 +61,7 @@ func (b *Bus) CreateChannel(ctx context.Context, in ab2bus.CreateChannelInput) (
 	if err != nil {
 		return ab2bus.ChannelInfo{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.ChannelInfo{}, err
 	}
 	if r.JSON201 == nil {
@@ -99,7 +99,7 @@ func (b *Bus) DeleteChannel(ctx context.Context, in ab2bus.DeleteChannelInput) e
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // RenameChannelRequest builds the request for RenameChannel; Body is always
@@ -117,7 +117,7 @@ func (b *Bus) RenameChannel(ctx context.Context, in ab2bus.RenameChannelInput) e
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 func (b *Bus) ACL(ctx context.Context, channel string) ([]ab2bus.ACLEntry, error) {
@@ -125,7 +125,7 @@ func (b *Bus) ACL(ctx context.Context, channel string) ([]ab2bus.ACLEntry, error
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {
@@ -154,7 +154,7 @@ func (b *Bus) SetACL(ctx context.Context, in ab2bus.SetACLInput) error {
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // SubscribeRequest builds the request for Subscribe; Body is always set, and
@@ -174,7 +174,7 @@ func (b *Bus) Subscribe(ctx context.Context, in ab2bus.SubscribeInput) error {
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // UnsubscribeRequest builds the request for Unsubscribe.
@@ -188,7 +188,7 @@ func (b *Bus) Unsubscribe(ctx context.Context, in ab2bus.UnsubscribeInput) error
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // SubscribeTagsRequest builds the request for SubscribeTags; Body is always
@@ -206,7 +206,7 @@ func (b *Bus) SubscribeTags(ctx context.Context, in ab2bus.TagSubscribeInput) er
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 func (b *Bus) UnsubscribeTags(ctx context.Context, in ab2bus.TagSubscribeInput) error {
@@ -224,7 +224,7 @@ func (b *Bus) UnsubscribeTags(ctx context.Context, in ab2bus.TagSubscribeInput) 
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // UnsubscribeTagsRequest builds the request for UnsubscribeTags: one
@@ -238,7 +238,7 @@ func (b *Bus) TagSubscriptions(ctx context.Context) ([][]string, error) {
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {

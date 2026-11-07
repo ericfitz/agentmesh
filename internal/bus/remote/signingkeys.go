@@ -31,7 +31,7 @@ func (b *Bus) ListSigningKeys(ctx context.Context) ([]ab2bus.SigningKey, error) 
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {
@@ -61,7 +61,7 @@ func (b *Bus) RotateSigningKey(ctx context.Context, in ab2bus.RotateSigningKeyIn
 	if err != nil {
 		return ab2bus.SigningKeyRotation{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.SigningKeyRotation{}, err
 	}
 	if r.JSON200 == nil {

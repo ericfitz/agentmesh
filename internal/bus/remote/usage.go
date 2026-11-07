@@ -13,7 +13,7 @@ func (b *Bus) Usage(ctx context.Context) (ab2bus.Usage, error) {
 	if err != nil {
 		return ab2bus.Usage{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.Usage{}, err
 	}
 	if r.JSON200 == nil {

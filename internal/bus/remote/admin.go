@@ -17,7 +17,7 @@ func (b *Bus) Status(ctx context.Context) (ab2bus.Status, error) {
 	if err != nil {
 		return ab2bus.Status{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.Status{}, err
 	}
 	if r.JSON200 == nil {

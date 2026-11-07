@@ -45,7 +45,7 @@ func (b *Bus) Open(ctx context.Context, in ab2bus.OpenSessionInput) (ab2bus.Sess
 	if err != nil {
 		return ab2bus.Session{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.Session{}, err
 	}
 	if r.JSON201 == nil {
@@ -68,7 +68,7 @@ func (b *Bus) Close(ctx context.Context, in ab2bus.CloseSessionInput) error {
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // CloseSessionRequest builds the request for Close.
@@ -115,7 +115,7 @@ func (b *Bus) Receive(ctx context.Context, in ab2bus.ReceiveInput) (ab2bus.Recei
 	if err != nil {
 		return ab2bus.ReceiveResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.ReceiveResult{}, err
 	}
 	if r.JSON200 == nil {
@@ -148,11 +148,7 @@ func (b *Bus) Watch(ctx context.Context, in ab2bus.WatchInput) (ab2bus.WatchResu
 	if r.StatusCode() == 204 {
 		return ab2bus.WatchResult{Woke: false}, nil
 	}
-	p := r.ApplicationproblemJSON409
-	if p == nil {
-		p = r.ApplicationproblemJSONDefault
-	}
-	if err := errorOf(ctx, r.StatusCode(), p, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.WatchResult{}, err
 	}
 	if r.JSON200 == nil {
@@ -166,7 +162,7 @@ func (b *Bus) Identities(ctx context.Context) ([]ab2bus.IdentityInfo, error) {
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return nil, err
 	}
 	if r.JSON200 == nil {

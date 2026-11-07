@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,15 +34,18 @@ var _ ab2bus.Bus = (*Bus)(nil)
 const maxBodyExcerpt = 200
 
 // errorOf maps one response to a Bus error (spec 3.3, "never by guessing").
-// status and p come from the generated response (p is the parsed problem or
-// nil), body is the raw body, err the transport error.
+// status and header come from the HTTP response (header may be nil), body is
+// the raw body, err the transport error. The problem is decoded from body at
+// any status: the generated client types only declared statuses.
 //
 //   - err != nil: ctx.Err() when the context is done, else unavailable.
 //   - 2xx: nil.
 //   - a problem with a code: the code as received (known or not) with the
-//     wire's retryable; the message is detail, or title when detail is empty.
+//     wire's retryable; the message is detail, or title when detail is empty;
+//     on 429 RetryAfter is the Retry-After header in whole seconds (absent or
+//     malformed leaves it 0).
 //   - anything else: unavailable for 5xx, internal otherwise.
-func errorOf(ctx context.Context, status int, p *gen.Problem, body []byte, err error) error {
+func errorOf(ctx context.Context, status int, header http.Header, body []byte, err error) error {
 	if err != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
@@ -49,19 +55,17 @@ func errorOf(ctx context.Context, status int, p *gen.Problem, body []byte, err e
 	if status >= 200 && status < 300 {
 		return nil
 	}
-	if p == nil && len(body) > 0 {
-		// The generated client parses only a declared status; try the body.
-		var q gen.Problem
-		if json.Unmarshal(body, &q) == nil && q.Code != "" {
-			p = &q
-		}
-	}
-	if p != nil && p.Code != "" {
+	var p gen.Problem
+	if len(body) > 0 && json.Unmarshal(body, &p) == nil && p.Code != "" {
 		msg := p.Title
 		if p.Detail != nil && *p.Detail != "" {
 			msg = *p.Detail
 		}
-		return &ab2bus.Error{Code: ab2bus.Code(p.Code), Message: ab2bus.TruncateErrorMessage(msg), Retryable: p.Retryable}
+		e := &ab2bus.Error{Code: ab2bus.Code(p.Code), Message: ab2bus.TruncateErrorMessage(msg), Retryable: p.Retryable}
+		if status == http.StatusTooManyRequests {
+			e.RetryAfter = retryAfter(header)
+		}
+		return e
 	}
 	if status >= 500 {
 		return &ab2bus.Error{Code: ab2bus.CodeUnavailable, Message: fmt.Sprintf("HTTP %d", status), Retryable: true}
@@ -71,6 +75,43 @@ func errorOf(ctx context.Context, status int, p *gen.Problem, body []byte, err e
 		excerpt = excerpt[:maxBodyExcerpt]
 	}
 	return &ab2bus.Error{Code: ab2bus.CodeInternal, Message: ab2bus.TruncateErrorMessage(fmt.Sprintf("HTTP %d: %s", status, excerpt)), Retryable: false}
+}
+
+// retryAfter reads the Retry-After header as whole seconds; absent, malformed
+// or negative is 0.
+func retryAfter(h http.Header) time.Duration {
+	n, err := strconv.Atoi(strings.TrimSpace(h.Get("Retry-After")))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
+// headerOf is the response header of a generated response's HTTPResponse, nil
+// when there is none.
+func headerOf(r *http.Response) http.Header {
+	if r == nil {
+		return nil
+	}
+	return r.Header
+}
+
+// httpResponseOf reads the HTTPResponse member every generated response has.
+func httpResponseOf(r any) *http.Response {
+	v := reflect.ValueOf(r)
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return nil
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+	if hr, ok := v.FieldByName("HTTPResponse").Interface().(*http.Response); ok {
+		return hr
+	}
+	return nil
 }
 
 // unparsable is a 2xx whose body did not parse as the documented shape:

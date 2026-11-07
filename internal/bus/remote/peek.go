@@ -32,7 +32,7 @@ func (b *Bus) Peek(ctx context.Context, in ab2bus.PeekInput) (ab2bus.PeekResult,
 	if err != nil {
 		return ab2bus.PeekResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.PeekResult{}, err
 	}
 	if r.JSON200 == nil {

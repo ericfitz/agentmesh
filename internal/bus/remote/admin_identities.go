@@ -15,7 +15,7 @@ func (b *Bus) Reset(ctx context.Context, in ab2bus.ResetInput) error {
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
-	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+	return errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil)
 }
 
 // AdminResetRequest builds the request for Reset; an empty scope is absent.
@@ -35,7 +35,7 @@ func (b *Bus) ResetCredential(ctx context.Context, in ab2bus.ResetCredentialInpu
 	if err != nil {
 		return ab2bus.ResetCredentialResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.ResetCredentialResult{}, err
 	}
 	if r.JSON200 == nil {
@@ -62,7 +62,7 @@ func (b *Bus) CreateIdentityByEmail(ctx context.Context, in ab2bus.CreateIdentit
 	if err != nil {
 		return ab2bus.CreateIdentityByEmailResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+	if err := errorOf(ctx, r.StatusCode(), headerOf(r.HTTPResponse), r.Body, nil); err != nil {
 		return ab2bus.CreateIdentityByEmailResult{}, err
 	}
 	if r.JSON200 == nil {
