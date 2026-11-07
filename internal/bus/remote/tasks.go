@@ -116,7 +116,7 @@ func ClaimTaskRequest(in ab2bus.TaskClaimInput) gen.ClaimTaskRequestObject {
 	}
 }
 
-// Release releases a task the caller owns.
+// Release releases a task: it clears the owner and lease and returns it to pending.
 func (b *Bus) Release(ctx context.Context, in ab2bus.TaskReleaseInput) (ab2bus.TaskUpdateResult, error) {
 	req := ReleaseTaskRequest(in)
 	r, err := b.c.ReleaseTaskWithResponse(ctx, req.Id, &req.Params)

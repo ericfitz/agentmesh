@@ -289,7 +289,7 @@ paths:
   /v1/sessions/{session}/peek:
     get:
       operationId: peek
-      summary: "Count what receive would deliver without delivering it"
+      summary: "Count the messages pending above the watch floor, without delivering or acknowledging them"
       tags: [sessions]
       description: Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
       parameters:
@@ -1345,7 +1345,7 @@ paths:
   /v1/tasks/{id}/release:
     post:
       operationId: releaseTask
-      summary: "Release a task the caller owns"
+      summary: "Release a task: clear its owner and lease and return it to pending"
       tags: [tasks]
       parameters:
         - $ref: "#/components/parameters/IdParam"
@@ -1516,7 +1516,7 @@ paths:
   /v1/admin/reset:
     post:
       operationId: adminReset
-      summary: "Delete everything in the store (an administrator's reset)"
+      summary: "Reset the store (an administrator's reset)"
       tags: [admin]
       parameters:
         - name: scope
@@ -1990,7 +1990,7 @@ components:
       name: id
       in: path
       required: true
-      description: "The numeric id of the memory or task (memory_id or task_id in the responses)"
+      description: "The numeric id of the memory or task"
       schema:
         type: integer
         format: int64

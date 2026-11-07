@@ -1913,7 +1913,7 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 	ResetCredential(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// AdminReset Delete everything in the store (an administrator's reset)
+	// AdminReset Reset the store (an administrator's reset)
 	//
 	// Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 	AdminReset(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2219,7 +2219,7 @@ type ClientInterface interface {
 	// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 	CloseSession(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Peek Count what receive would deliver without delivering it
+	// Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 	//
 	// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
 	//
@@ -2320,7 +2320,7 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTask(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ReleaseTask Release a task the caller owns
+	// ReleaseTask Release a task: clear its owner and lease and return it to pending
 	//
 	// Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 	ReleaseTask(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2541,7 +2541,7 @@ func (c *Client) ResetCredential(ctx context.Context, identity string, params *R
 	return c.Client.Do(req)
 }
 
-// AdminReset Delete everything in the store (an administrator's reset)
+// AdminReset Reset the store (an administrator's reset)
 //
 // Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 func (c *Client) AdminReset(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3327,7 +3327,7 @@ func (c *Client) CloseSession(ctx context.Context, session SessionParam, params 
 	return c.Client.Do(req)
 }
 
-// Peek Count what receive would deliver without delivering it
+// Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 //
 // Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
 //
@@ -3578,7 +3578,7 @@ func (c *Client) ClaimTask(ctx context.Context, id IdParam, params *ClaimTaskPar
 	return c.Client.Do(req)
 }
 
-// ReleaseTask Release a task the caller owns
+// ReleaseTask Release a task: clear its owner and lease and return it to pending
 //
 // Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 func (c *Client) ReleaseTask(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6491,7 +6491,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 	ResetCredentialWithResponse(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*ResetCredentialResponse, error)
 
-	// AdminResetWithResponse Delete everything in the store (an administrator's reset)
+	// AdminResetWithResponse Reset the store (an administrator's reset)
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6845,7 +6845,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 	CloseSessionWithResponse(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*CloseSessionResponse, error)
 
-	// PeekWithResponse Count what receive would deliver without delivering it
+	// PeekWithResponse Count the messages pending above the watch floor, without delivering or acknowledging them
 	//
 	// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
 	//
@@ -6956,7 +6956,7 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTaskWithResponse(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTaskResponse, error)
 
-	// ReleaseTaskWithResponse Release a task the caller owns
+	// ReleaseTaskWithResponse Release a task: clear its owner and lease and return it to pending
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12075,7 +12075,7 @@ func (c *ClientWithResponses) ResetCredentialWithResponse(ctx context.Context, i
 	return ParseResetCredentialResponse(rsp)
 }
 
-// AdminResetWithResponse Delete everything in the store (an administrator's reset)
+// AdminResetWithResponse Reset the store (an administrator's reset)
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12717,7 +12717,7 @@ func (c *ClientWithResponses) CloseSessionWithResponse(ctx context.Context, sess
 	return ParseCloseSessionResponse(rsp)
 }
 
-// PeekWithResponse Count what receive would deliver without delivering it
+// PeekWithResponse Count the messages pending above the watch floor, without delivering or acknowledging them
 //
 // Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
 //
@@ -12918,7 +12918,7 @@ func (c *ClientWithResponses) ClaimTaskWithResponse(ctx context.Context, id IdPa
 	return ParseClaimTaskResponse(rsp)
 }
 
-// ReleaseTaskWithResponse Release a task the caller owns
+// ReleaseTaskWithResponse Release a task: clear its owner and lease and return it to pending
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -17138,7 +17138,7 @@ type ServerInterface interface {
 	// ResetCredential Remove an identity's registered keys
 	// (POST /v1/admin/identities/{identity}/reset-credential)
 	ResetCredential(w http.ResponseWriter, r *http.Request, identity string, params ResetCredentialParams)
-	// AdminReset Delete everything in the store (an administrator's reset)
+	// AdminReset Reset the store (an administrator's reset)
 	// (POST /v1/admin/reset)
 	AdminReset(w http.ResponseWriter, r *http.Request, params AdminResetParams)
 	// ListScopes List scopes
@@ -17246,7 +17246,7 @@ type ServerInterface interface {
 	// CloseSession Close a session, freeing its display name
 	// (DELETE /v1/sessions/{session})
 	CloseSession(w http.ResponseWriter, r *http.Request, session SessionParam, params CloseSessionParams)
-	// Peek Count what receive would deliver without delivering it
+	// Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 	// (GET /v1/sessions/{session}/peek)
 	Peek(w http.ResponseWriter, r *http.Request, session SessionParam, params PeekParams)
 	// Receive Receive the next batch of messages for a session, acknowledging the previous one
@@ -17276,7 +17276,7 @@ type ServerInterface interface {
 	// ClaimTask Claim a task for the caller, optionally with a lease
 	// (POST /v1/tasks/{id}/claim)
 	ClaimTask(w http.ResponseWriter, r *http.Request, id IdParam, params ClaimTaskParams)
-	// ReleaseTask Release a task the caller owns
+	// ReleaseTask Release a task: clear its owner and lease and return it to pending
 	// (POST /v1/tasks/{id}/release)
 	ReleaseTask(w http.ResponseWriter, r *http.Request, id IdParam, params ReleaseTaskParams)
 }
@@ -26751,7 +26751,7 @@ type StrictServerInterface interface {
 	// ResetCredential Remove an identity's registered keys
 	// (POST /v1/admin/identities/{identity}/reset-credential)
 	ResetCredential(ctx context.Context, request ResetCredentialRequestObject) (ResetCredentialResponseObject, error)
-	// AdminReset Delete everything in the store (an administrator's reset)
+	// AdminReset Reset the store (an administrator's reset)
 	// (POST /v1/admin/reset)
 	AdminReset(ctx context.Context, request AdminResetRequestObject) (AdminResetResponseObject, error)
 	// ListScopes List scopes
@@ -26859,7 +26859,7 @@ type StrictServerInterface interface {
 	// CloseSession Close a session, freeing its display name
 	// (DELETE /v1/sessions/{session})
 	CloseSession(ctx context.Context, request CloseSessionRequestObject) (CloseSessionResponseObject, error)
-	// Peek Count what receive would deliver without delivering it
+	// Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 	// (GET /v1/sessions/{session}/peek)
 	Peek(ctx context.Context, request PeekRequestObject) (PeekResponseObject, error)
 	// Receive Receive the next batch of messages for a session, acknowledging the previous one
@@ -26889,7 +26889,7 @@ type StrictServerInterface interface {
 	// ClaimTask Claim a task for the caller, optionally with a lease
 	// (POST /v1/tasks/{id}/claim)
 	ClaimTask(ctx context.Context, request ClaimTaskRequestObject) (ClaimTaskResponseObject, error)
-	// ReleaseTask Release a task the caller owns
+	// ReleaseTask Release a task: clear its owner and lease and return it to pending
 	// (POST /v1/tasks/{id}/release)
 	ReleaseTask(ctx context.Context, request ReleaseTaskRequestObject) (ReleaseTaskResponseObject, error)
 }

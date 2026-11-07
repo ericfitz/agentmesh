@@ -19,8 +19,8 @@ const (
 	CodeValidation Code = "validation"
 	// CodeNotFound: a named channel, message, task or identity does not exist.
 	CodeNotFound Code = "not_found"
-	// CodeConflict: a duplicate name, the task owner guard, or an idempotency
-	// key reused with a different payload.
+	// CodeConflict: a duplicate name, a task with subtasks or open blockers, or
+	// an idempotency key reused with a different payload.
 	CodeConflict Code = "conflict"
 	// CodeForbidden: an ACL or administrator refusal (Decision 80).
 	CodeForbidden Code = "forbidden"

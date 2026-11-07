@@ -98,7 +98,8 @@ type TaskClaimInput struct {
 	IdempotencyKey string
 }
 
-// TaskReleaseInput releases a task the caller owns.
+// TaskReleaseInput releases a task: it clears the owner and lease and returns
+// the task to pending.
 type TaskReleaseInput struct {
 	ID             int64
 	IdempotencyKey string
