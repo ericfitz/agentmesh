@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
+	"strings"
 
+	"github.com/ericfitz/agentmesh/internal/auth/assertion"
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/gen"
+	"github.com/ericfitz/agentmesh/internal/store"
 )
 
 // tokenPath is the one endpoint that answers RFC 6749 section 5.2 error
@@ -18,6 +22,42 @@ const tokenPath = "/v1/auth/token"
 // `users` miss): RFC 8693 section 2.2.2 gives a failed exchange
 // invalid_request (spec Decision 13, Eric).
 const exchangeDeniedCode = "invalid_request"
+
+// MaxOAuthFieldBytes bounds every token request field that is neither a JWT
+// (assertion.MaxTokenBytes) nor the client_id (store.MaxNameBytes): issue #34,
+// Eric's decision of 2026-11-06 for opaque tokens, in bytes.
+const MaxOAuthFieldBytes = 1024
+
+// checkTokenFormBounds names the first field of b over its bound, as the
+// description of an invalid_request refusal ("<field> exceeds <n> bytes"); the
+// value itself is never echoed. over is false when every field is within bounds.
+func checkTokenFormBounds(b *gen.TokenRequest) (msg string, over bool) {
+	// Walk the struct by its JSON names, in declaration order: the generated
+	// type is the one list of fields, so a new field falls under the default.
+	rv := reflect.ValueOf(*b)
+	rt := rv.Type()
+	for i := range rt.NumField() {
+		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		f := rv.Field(i)
+		if f.Kind() == reflect.Pointer {
+			if f.IsNil() {
+				continue
+			}
+			f = f.Elem()
+		}
+		limit := MaxOAuthFieldBytes
+		switch name {
+		case "client_assertion", "subject_token", "actor_token":
+			limit = assertion.MaxTokenBytes
+		case "client_id":
+			limit = store.MaxNameBytes
+		}
+		if f.Kind() == reflect.String && f.Len() > limit {
+			return fmt.Sprintf("%s exceeds %d bytes", name, limit), true
+		}
+	}
+	return "", false
+}
 
 // oauthError is a refused token request. It is a gen.TokenResponseObject, so a
 // handler returns it as the response rather than as an error (an error would

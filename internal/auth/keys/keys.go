@@ -158,6 +158,19 @@ func ToJWK(pub crypto.PublicKey, kid string) (jose.JSONWebKey, error) {
 	return jose.JSONWebKey{Key: pub, KeyID: kid, Algorithm: string(alg), Use: "sig"}, nil
 }
 
+// MaxJWKMembers bounds the members of a JWK a client submits (issue #34, Eric
+// 2026-11-06); the server's own JWKs carry seven.
+const MaxJWKMembers = 16
+
+// CheckJWKMembers refuses a JWK of more than MaxJWKMembers members; n is the
+// member count of the submitted object.
+func CheckJWKMembers(n int) error {
+	if n > MaxJWKMembers {
+		return fmt.Errorf("keys: JWK has %d members, at most %d", n, MaxJWKMembers)
+	}
+	return nil
+}
+
 // FromJWK extracts a public key from a JWK. A JWK with no key, private material, an unsupported
 // key type, a kid that is not the key's thumbprint and an alg naming the other
 // algorithm are errors.

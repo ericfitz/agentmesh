@@ -45,6 +45,9 @@ func (a *api) Token(ctx context.Context, req gen.TokenRequestObject) (gen.TokenR
 	if req.Body == nil {
 		return oauthFail(http.StatusBadRequest, "invalid_request", "request body is required"), nil
 	}
+	if msg, over := checkTokenFormBounds(req.Body); over {
+		return oauthFail(http.StatusBadRequest, "invalid_request", "%s", msg), nil
+	}
 	switch req.Body.GrantType {
 	case "":
 		return oauthFail(http.StatusBadRequest, "invalid_request", "grant_type is required"), nil
@@ -149,6 +152,9 @@ func (a *api) Jwks(ctx context.Context, _ gen.JwksRequestObject) (gen.JwksRespon
 func (a *api) Register(ctx context.Context, req gen.RegisterRequestObject) (gen.RegisterResponseObject, error) {
 	if req.Body == nil {
 		return nil, core.E(bus.CodeValidation, "request body is required")
+	}
+	if err := keys.CheckJWKMembers(len(req.Body.PublicKeyJwk)); err != nil {
+		return nil, core.E(bus.CodeValidation, "public_key_jwk: %s", err)
 	}
 	raw, err := json.Marshal(req.Body.PublicKeyJwk)
 	if err != nil {

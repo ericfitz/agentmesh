@@ -405,3 +405,21 @@ func customTyped(t *testing.T, k crypto.Signer, kid, typ string) string {
 	}
 	return raw
 }
+
+func TestParseRefusesOversizeToken(t *testing.T) {
+	_, err := Parse(strings.Repeat("a", MaxTokenBytes+1))
+	if !errors.Is(err, ErrMalformed) || !strings.Contains(err.Error(), "16384") {
+		t.Fatalf("oversize: err = %v, want ErrMalformed naming the limit", err)
+	}
+	// At the bound the size check passes and the parse fails later, for the
+	// shape (no dots), not the size.
+	_, err = Parse(strings.Repeat("a", MaxTokenBytes))
+	if !errors.Is(err, ErrMalformed) || strings.Contains(err.Error(), "at most") {
+		t.Fatalf("at bound: err = %v, want a shape error", err)
+	}
+	// A three-segment token of exactly the bound reaches the JWS parser.
+	_, err = Parse("a." + strings.Repeat("b", MaxTokenBytes-4) + ".c")
+	if !errors.Is(err, ErrMalformed) || strings.Contains(err.Error(), "at most") {
+		t.Fatalf("at bound, three segments: err = %v", err)
+	}
+}

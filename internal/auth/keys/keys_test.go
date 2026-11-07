@@ -226,3 +226,15 @@ func TestFromJWKRejects(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckJWKMembers(t *testing.T) {
+	for _, n := range []int{0, 1, MaxJWKMembers} {
+		if err := CheckJWKMembers(n); err != nil {
+			t.Errorf("CheckJWKMembers(%d) = %v, want nil", n, err)
+		}
+	}
+	err := CheckJWKMembers(MaxJWKMembers + 1)
+	if err == nil || !strings.Contains(err.Error(), "16") {
+		t.Errorf("CheckJWKMembers(%d) = %v, want an error naming 16", MaxJWKMembers+1, err)
+	}
+}

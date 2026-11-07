@@ -125,9 +125,18 @@ func malformedCause(what string, cause error) error {
 // the replay row.
 const MaxJTIBytes = 256
 
+// MaxTokenBytes bounds a JWT presented to the token endpoint (issue #34, Eric
+// 2026-11-06): larger than the 1024-byte rule for opaque tokens because a
+// corporate id_token routinely exceeds it. The token handler and Parse both
+// enforce it.
+const MaxTokenBytes = 16 << 10
+
 // Parse checks the algorithm allowlist and the claim shape; it does not verify
 // the signature. Use Verify with the key stored under KID.
 func Parse(raw string) (Parsed, error) {
+	if len(raw) > MaxTokenBytes {
+		return Parsed{}, malformed("assertion is %d bytes, at most %d", len(raw), MaxTokenBytes)
+	}
 	if strings.Count(raw, ".") != 2 {
 		return Parsed{}, malformed("not a compact JWS")
 	}

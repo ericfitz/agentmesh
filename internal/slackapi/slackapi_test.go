@@ -2,6 +2,7 @@ package slackapi
 
 import (
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -60,6 +61,22 @@ func TestErrorTexts(t *testing.T) {
 	for _, e := range []error{ErrNameTaken, ErrAlreadyArchived, ErrChannelGone, ErrChannelNotFound, ErrUserNotFound} {
 		if e.Error() == "" {
 			t.Error("empty sentinel text")
+		}
+	}
+}
+
+func TestChannelNamePatternAgrees(t *testing.T) {
+	re := regexp.MustCompile(ChannelNamePattern)
+	if MaxChannelNameLen != 80 {
+		t.Fatalf("MaxChannelNameLen = %d", MaxChannelNameLen)
+	}
+	corpus := []string{
+		"", "a", "job-1_a", "A", "a b", "a.b", "a/b", "日本", "a\n", "-", "_", "0",
+		strings.Repeat("a", 80), strings.Repeat("a", 81), strings.Repeat("-", 80), strings.Repeat("z9", 40), strings.Repeat("z9", 41),
+	}
+	for _, name := range corpus {
+		if got, want := re.MatchString(name), ValidChannelName(name); got != want {
+			t.Errorf("%q: pattern %v, ValidChannelName %v", name, got, want)
 		}
 	}
 }

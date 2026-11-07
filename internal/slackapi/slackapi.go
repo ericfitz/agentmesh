@@ -177,10 +177,17 @@ func ValidTS(ts string) bool {
 	return true
 }
 
+// MaxChannelNameLen is the longest Slack channel name, in characters.
+const MaxChannelNameLen = 80
+
+// ChannelNamePattern is the regular expression form of ValidChannelName (the
+// spec's pattern for a bridge's slack_name).
+const ChannelNamePattern = "^[a-z0-9_-]{1,80}$"
+
 // ValidChannelName reports whether name is 1 to 80 characters of a-z, 0-9,
 // "-" and "_".
 func ValidChannelName(name string) bool {
-	if len(name) == 0 || len(name) > 80 {
+	if len(name) == 0 || len(name) > MaxChannelNameLen {
 		return false
 	}
 	for i := range len(name) {

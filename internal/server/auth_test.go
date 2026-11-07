@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -865,7 +866,7 @@ func TestTokenRepeatedAndEmptyParams(t *testing.T) {
 	}
 
 	gv := base()
-	gv.Set("grant_type", strings.Repeat("g", 5000))
+	gv.Set("grant_type", strings.Repeat("g", MaxOAuthFieldBytes))
 	if gb := readBody(t, post(gv)); !strings.Contains(gb, "unsupported_grant_type") || len(gb) > 1000 {
 		t.Errorf("long grant_type echoed (%d bytes): %.300s", len(gb), gb)
 	}
@@ -980,4 +981,65 @@ func TestSignerUnavailableIsLogged(t *testing.T) {
 			t.Errorf("log holds the signer error %d times: %s", got, lg.String())
 		}
 	})
+}
+
+func TestTokenFormBounds(t *testing.T) {
+	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
+	const formCT = "application/x-www-form-urlencoded"
+	post := func(extra map[string]string) *http.Response {
+		v := url.Values{"grant_type": {"client_credentials"}, "client_assertion_type": {assertion.Type}}
+		for k, s := range extra {
+			v.Set(k, s)
+		}
+		return e.do("POST", "/v1/auth/token", formCT, "", v.Encode())
+	}
+	for _, c := range []struct {
+		field string
+		max   int
+	}{
+		{"client_assertion", assertion.MaxTokenBytes},
+		{"subject_token", assertion.MaxTokenBytes},
+		{"actor_token", assertion.MaxTokenBytes},
+		{"audience", MaxOAuthFieldBytes},
+		{"resource", MaxOAuthFieldBytes},
+		{"scope", MaxOAuthFieldBytes},
+		{"subject_token_type", MaxOAuthFieldBytes},
+		{"actor_token_type", MaxOAuthFieldBytes},
+		{"requested_token_type", MaxOAuthFieldBytes},
+		{"client_assertion_type", MaxOAuthFieldBytes},
+		{"client_id", store.MaxNameBytes},
+	} {
+		t.Run(c.field, func(t *testing.T) {
+			over := strings.Repeat("a", c.max+1)
+			wantOAuthError(t, post(map[string]string{c.field: over}), 400, "invalid_request", c.field+" exceeds "+strconv.Itoa(c.max)+" bytes", over)
+			// At the bound the size check passes; the request fails later for
+			// another reason (never the size).
+			resp := post(map[string]string{c.field: strings.Repeat("a", c.max)})
+			b := readBody(t, resp)
+			if strings.Contains(b, "exceeds") {
+				t.Fatalf("%s at the bound refused for size: %d %s", c.field, resp.StatusCode, b)
+			}
+		})
+	}
+	t.Run("grant_type", func(t *testing.T) {
+		v := url.Values{"grant_type": {strings.Repeat("g", MaxOAuthFieldBytes+1)}}
+		wantOAuthError(t, e.do("POST", "/v1/auth/token", formCT, "", v.Encode()), 400, "invalid_request", "grant_type exceeds 1024 bytes", "")
+	})
+}
+
+func TestRegisterRefusesWideJWK(t *testing.T) {
+	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
+	key := genKey(t, keys.EdDSA)
+	post := func(extra int) *http.Response {
+		jwk := jwkJSON(t, key)
+		for i := 0; len(jwk) < keys.MaxJWKMembers+extra; i++ {
+			jwk["x-extra-"+strconv.Itoa(i)] = "v"
+		}
+		b, _ := json.Marshal(map[string]any{"identity": "wide", "public_key_jwk": jwk})
+		return e.do("POST", "/v1/auth/register", "application/json", "", string(b))
+	}
+	wantAuthProblem(t, post(1), 400, "validation", "16")
+	if resp := post(0); resp.StatusCode != 201 {
+		t.Fatalf("16 members: %d %s", resp.StatusCode, readBody(t, resp))
+	}
 }
