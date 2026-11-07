@@ -237,8 +237,13 @@ func TestEFixedRetryable(t *testing.T) {
 		bus.CodeNotRegistered: false, bus.CodeReplaced: false, bus.CodeSessionLapsed: false, bus.CodeSessionClosed: false,
 		bus.CodeInspectionRejected: false, bus.CodePayloadTooLarge: false, bus.CodeUnauthenticated: false,
 	}
-	if len(table) != 14 {
-		t.Fatalf("table has %d codes, want all 14 bus codes", len(table))
+	for _, c := range bus.Codes() {
+		if _, ok := table[c]; !ok {
+			t.Errorf("table lacks bus code %s", c)
+		}
+	}
+	if len(table) != len(bus.Codes()) {
+		t.Fatalf("table has %d codes, want all %d bus codes", len(table), len(bus.Codes()))
 	}
 	for code, want := range table {
 		if got := E(code, "x").Retryable; got != want {

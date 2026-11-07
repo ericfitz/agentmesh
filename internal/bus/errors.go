@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -59,6 +60,16 @@ var validCodes = map[Code]bool{
 
 // ValidCode reports whether c is one of the codes above.
 func ValidCode(c Code) bool { return validCodes[c] }
+
+// Codes returns every valid code, sorted, as a fresh slice.
+func Codes() []Code {
+	out := make([]Code, 0, len(validCodes))
+	for c := range validCodes {
+		out = append(out, c)
+	}
+	slices.Sort(out)
+	return out
+}
 
 // Error is the application error carried to the caller.
 type Error struct {

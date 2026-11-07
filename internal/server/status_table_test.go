@@ -50,8 +50,8 @@ const (
 )
 
 // operationExtras are the codes beyond the tiers; every operation has an
-// entry, possibly empty. The audit of each row (a producing site per code) is
-// in the commit message of the task that added this table.
+// entry, possibly empty. The producing site of each code is listed in the plan's
+// "per-operation table" (docs/superpowers/plans/2026-11-07-issue-33-error-responses.md).
 var operationExtras = map[string][]bus.Code{
 	"wellKnown": {}, "authorizationServerMetadata": {}, "openidConfiguration": {}, "discover": {},
 	// open operation: no global requirement, so its 401, 403 and 503 are extras.
@@ -153,8 +153,7 @@ func declaredErrors(t *testing.T, id string, op *openapi3.Operation) map[int]str
 		}
 		s, err := strconv.Atoi(key)
 		if err != nil {
-			t.Errorf("%s: response key %q is not a status", id, key)
-			continue
+			continue // "default" and ranges: TestStatusTable/references reports them
 		}
 		out[s] = strings.TrimPrefix(ref.Ref, "#/components/responses/")
 	}
@@ -165,15 +164,22 @@ func TestStatusTable(t *testing.T) {
 	doc := Spec()
 
 	t.Run("status_for", func(t *testing.T) {
-		if len(statusTable) != 14 {
-			t.Fatalf("statusTable has %d codes, want 14", len(statusTable))
+		all := map[bus.Code]bool{}
+		for _, c := range bus.Codes() {
+			all[c] = true
+			if _, ok := statusTable[c]; !ok {
+				t.Errorf("bus code %q has no status in statusTable", c)
+			}
+		}
+		if len(statusTable) != 14 || len(all) != 14 {
+			t.Fatalf("statusTable has %d codes, bus.Codes() %d, want 14", len(statusTable), len(all))
 		}
 		for code, status := range statusTable {
 			if got := StatusFor(code); got != status {
 				t.Errorf("StatusFor(%s) = %d, want %d", code, got, status)
 			}
-			if !bus.ValidCode(code) {
-				t.Errorf("%s is in statusTable but is not a valid bus code", code)
+			if !all[code] {
+				t.Errorf("%s is in statusTable but not in bus.Codes()", code)
 			}
 		}
 		problem := doc.Components.Schemas["Problem"]
@@ -187,8 +193,8 @@ func TestStatusTable(t *testing.T) {
 			if _, ok := statusTable[c]; !ok {
 				t.Errorf("spec code %q has no status in statusTable", c)
 			}
-			if !bus.ValidCode(c) {
-				t.Errorf("spec code %q is not a valid bus code", c)
+			if !all[c] {
+				t.Errorf("spec code %q is not in bus.Codes()", c)
 			}
 		}
 		for code := range statusTable {
@@ -196,9 +202,10 @@ func TestStatusTable(t *testing.T) {
 				t.Errorf("code %q is in statusTable but not in the spec's Problem.code enum", code)
 			}
 		}
-		// the generated enum names every code too: gen.ProblemCodeX.
-		if got := len(enum); got != len(statusTable) {
-			t.Errorf("spec has %d codes, statusTable %d", got, len(statusTable))
+		for c := range all {
+			if !enum[c] {
+				t.Errorf("bus code %q is not in the spec's Problem.code enum", c)
+			}
 		}
 	})
 
@@ -274,6 +281,11 @@ func TestStatusTable(t *testing.T) {
 		for id, op := range ops {
 			if op.Responses.Default() != nil {
 				t.Errorf("%s declares a default response", id)
+			}
+			for key := range op.Responses.Map() {
+				if _, err := strconv.Atoi(key); err != nil && key != "default" {
+					t.Errorf("%s: response key %q is not a status", id, key)
+				}
 			}
 			for status, name := range declaredErrors(t, id, op) {
 				want := responseFor[status]
