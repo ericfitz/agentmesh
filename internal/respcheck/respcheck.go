@@ -91,11 +91,14 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return resp, err
 	}
-	body, rerr := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if rerr != nil {
-		resp.Body = io.NopCloser(bytes.NewReader(body))
-		return resp, rerr
+	var body []byte
+	if resp.Body != nil { // a custom transport may return no body
+		var rerr error
+		body, rerr = io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if rerr != nil {
+			return nil, rerr
+		}
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(body))
 	t.report(t.Checker.Check(req, resp.StatusCode, resp.Header, body))
@@ -111,25 +114,27 @@ func (t *Transport) report(err error) {
 // Proxy is a reverse proxy to target that checks every response. It rewrites
 // the scheme and host of the outgoing URL only: the client's Host header is
 // kept, so a server that builds URLs from the request's host sees the proxy's.
+// Accept-Encoding is dropped so the buffered body is never compressed. When a
+// response body cannot be read, the failure goes to report and the client sees
+// the reverse proxy's 502, which the server never sent.
 func (c *Checker) Proxy(target *url.URL, report func(error)) http.Handler {
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL.Scheme = target.Scheme
 			pr.Out.URL.Host = target.Host
-			pr.Out.Host = pr.In.Host
+			pr.Out.Header.Del("Accept-Encoding")
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			body, err := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
-			resp.Body = io.NopCloser(bytes.NewReader(body))
 			if err != nil {
+				if report != nil {
+					report(fmt.Errorf("respcheck: proxy could not read the response to %s %s: %w", resp.Request.Method, resp.Request.URL.Path, err))
+				}
 				return err
 			}
-			// resp.Request is the outgoing request (target host); restore the
-			// client's host so the router sees what the client sent.
-			req := resp.Request.Clone(resp.Request.Context())
-			req.URL.Host = req.Host
-			if e := c.Check(req, resp.StatusCode, resp.Header, body); e != nil && !errors.Is(e, ErrNoRoute) && report != nil {
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+			if e := c.Check(resp.Request, resp.StatusCode, resp.Header, body); e != nil && !errors.Is(e, ErrNoRoute) && report != nil {
 				report(e)
 			}
 			return nil

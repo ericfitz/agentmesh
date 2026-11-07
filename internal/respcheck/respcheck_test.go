@@ -1,13 +1,16 @@
 package respcheck_test
 
 import (
+	"compress/gzip"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -257,4 +260,112 @@ func TestProxy(t *testing.T) {
 			t.Fatalf("status %d reports %d (was %d)", resp.StatusCode, col.n(), before)
 		}
 	})
+}
+
+type rtFunc func(*http.Request) (*http.Response, error)
+
+func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type errBody struct{}
+
+func (errBody) Read([]byte) (int, error) { return 0, errors.New("boom") }
+func (errBody) Close() error             { return nil }
+
+func TestTransportEdges(t *testing.T) {
+	c := newChecker(t)
+	var col collector
+	mk := func(resp *http.Response) *http.Client {
+		return &http.Client{Transport: c.Transport(rtFunc(func(*http.Request) (*http.Response, error) { return resp, nil }), col.report)}
+	}
+	t.Run("nil_body", func(t *testing.T) {
+		resp, err := mk(&http.Response{StatusCode: 204, Header: http.Header{}}).Get("http://x/things/a")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Body == nil || col.n() != 0 {
+			t.Fatalf("body %v reports %d", resp.Body, col.n())
+		}
+	})
+	t.Run("read_error", func(t *testing.T) {
+		resp, err := mk(&http.Response{StatusCode: 200, Header: http.Header{}, Body: errBody{}}).Get("http://x/things/a")
+		if err == nil || !strings.Contains(err.Error(), "boom") || resp != nil {
+			t.Fatalf("resp %v err %v", resp, err)
+		}
+	})
+}
+
+func TestProxyGzipClient(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			zw := gzip.NewWriter(w)
+			_, _ = zw.Write([]byte(`{"ok":true}`))
+			_ = zw.Close()
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer target.Close()
+	tu, _ := url.Parse(target.URL)
+	var col collector
+	px := httptest.NewServer(newChecker(t).Proxy(tu, col.report))
+	defer px.Close()
+	req, _ := http.NewRequest(http.MethodGet, px.URL+"/things/a", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if string(b) != `{"ok":true}` || col.n() != 0 {
+		t.Fatalf("body %q reports %v", b, col.errs)
+	}
+}
+
+func TestProxyReadErrorReported(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok"`)) // short body: the connection closes early
+	}))
+	defer target.Close()
+	tu, _ := url.Parse(target.URL)
+	var col collector
+	px := httptest.NewServer(newChecker(t).Proxy(tu, col.report))
+	defer px.Close()
+	resp, err := http.Get(px.URL + "/things/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway || col.n() != 1 || !strings.Contains(col.errs[0].Error(), "could not read") {
+		t.Fatalf("status %d reports %v", resp.StatusCode, col.errs)
+	}
+}
+
+func TestCheckConcurrent(t *testing.T) {
+	c := newChecker(t)
+	var bad atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				if err := c.Check(get(fmt.Sprintf("/things/%d", j)), 200, hdr("Content-Type", "application/json"), []byte(`{"ok":true}`)); err != nil {
+					bad.Add(1)
+				}
+				if err := c.Check(get("/things/a"), 500, http.Header{}, nil); err == nil {
+					bad.Add(1)
+				}
+				_ = c.Check(httptest.NewRequest(http.MethodDelete, "/nothing", nil), 404, http.Header{}, nil)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if bad.Load() != 0 || c.Skipped() != 32*20 {
+		t.Fatalf("bad %d skipped %d", bad.Load(), c.Skipped())
+	}
 }
