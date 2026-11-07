@@ -1348,6 +1348,62 @@ block_error_responses_fire() {
 		TestInprocResponseCheckWired '--- FAIL: TestInprocResponseCheckWired'
 }
 
+# --- 37. spec-bounds-fire --------------------------------------------------------------
+# issue #34: every request field carries its bound (TestSpecBounds pins the spec to the Go
+# constants, TestValidatorRefusesOverBound the validator's refusal, TestOverBoundRefused the
+# core's). Mutations 1 to 8, 11 and 12 are Docker-free; 9 and 10 run the conformance suite on
+# the local transport (no AGENTMESH_BUS_TRANSPORT: the validator would answer first on inproc)
+# and need Docker or the ambient Postgres like blocks 9 to 11. The spec anchors are written
+# against the committed text of api/openapi.yaml, scoped to SendRequest so each occurs once.
+block_spec_bounds_fire() {
+	local sub=TestSpecBounds/schemas/SendRequest.subject
+	mutate_spec_block spec-bound-removed '    SendRequest:' \
+		$'          maxLength: 200\n' '' \
+		./internal/server/ '^TestSpecBounds$' "$sub" 'spec lacks or differs'
+	mutate_spec_block spec-bound-changed '    SendRequest:' \
+		'maxLength: 200' 'maxLength: 201' \
+		./internal/server/ '^TestSpecBounds$' "$sub" 'spec lacks or differs'
+	mutate_unit_block go-constant-changed internal/core/rules/status.go \
+		'const MaxLineRunes = 200' 'const MaxLineRunes = 201' \
+		./internal/server/ '^TestSpecBounds$' "$sub"
+	mutate_spec_block spec-field-unlisted '    SendRequest:' \
+		$'      properties:\n        subject:' \
+		$'      properties:\n        extra:\n          type: string\n          maxLength: 5\n        subject:' \
+		./internal/server/ '^TestSpecBounds$' TestSpecBounds/coverage \
+		'schemas/SendRequest.extra'
+	mutate_unit_block table-row-stale internal/server/spec_bounds_test.go \
+		'var bounds = map[string]bound{' \
+		$'var bounds = map[string]bound{\n\t"schemas/SendRequest.nope": {MaxLength: n(1), Unit: bytesUnit},' \
+		./internal/server/ '^TestSpecBounds$' TestSpecBounds/stale \
+		'schemas/SendRequest.nope'
+	mutate_spec_block spec-pattern-dropped '    SendRequest:' \
+		$'            pattern: ^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$\n' '' \
+		./internal/server/ '^TestSpecBounds$' 'TestSpecBounds/schemas/SendRequest.tags[]'
+	mutate_unit_block ceiling-constant-changed internal/core/config.go \
+		'ReceiveCountCeiling = 10000' 'ReceiveCountCeiling = 10001' \
+		./internal/server/ '^TestSpecBounds$' TestSpecBounds/schemas/ReceiveRequest.count
+	mutate_spec_block description-unit-missing '    SendRequest:' \
+		'description: At most 200 code points.' 'description: At most 200.' \
+		./internal/server/ '^TestSpecBounds$' "$sub" 'description lacks the unit'
+	mutate_block core-check-removed internal/core/rules/status.go \
+		'if utf8.RuneCountInString(s) > MaxLineRunes {' 'if utf8.RuneCountInString(s) > MaxLineRunes*4 {' \
+		TestOverBoundRefused '--- FAIL: TestOverBoundRefused/sqlite/send_subject_runes' \
+		'--- FAIL: TestOverBoundRefused/postgres/send_subject_runes'
+	mutate_block tags-dedupe-restored internal/core/rules/tags.go \
+		$'	if len(tags) > MaxTags {\n		return nil, bus.Errorf(bus.CodeValidation, false, capFmt, MaxTags)\n	}\n' '' \
+		TestOverBoundRefused '--- FAIL: TestOverBoundRefused/sqlite/send_tags_duplicates' \
+		'--- FAIL: TestOverBoundRefused/postgres/send_tags_duplicates'
+	mutate_spec_block validator-bound-loosened '    SendRequest:' \
+		'maxLength: 200' 'maxLength: 100000' \
+		./internal/server/ '^TestValidatorRefusesOverBound$' TestValidatorRefusesOverBound/schemas/SendRequest.subject
+	# the probes are generated from the bounds table, so the row is the probe: commented out, the
+	# coverage subtest reports a spec bound with no probe
+	mutate_unit_block probe-missing internal/server/spec_bounds_test.go \
+		'"schemas/SendRequest.subject":' '// "schemas/SendRequest.subject":' \
+		./internal/server/ '^TestValidatorRefusesOverBound$' TestValidatorRefusesOverBound/coverage \
+		'schemas/SendRequest.subject'
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1384,6 +1440,7 @@ block_m10_deps_rule_fires
 block_wire_roundtrip_fires
 block_tool_coverage_fires
 block_error_responses_fire
+block_spec_bounds_fire
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"
