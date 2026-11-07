@@ -56,7 +56,8 @@ func FromGenBridge(g gen.Bridge) (ab2bus.Bridge, error) {
 
 // CreateScope makes an open scope.
 func (b *Bus) CreateScope(ctx context.Context, in ab2bus.CreateScopeInput) (ab2bus.Scope, error) {
-	r, err := b.c.CreateScopeWithResponse(ctx, &gen.CreateScopeParams{IdempotencyKey: key(in.IdempotencyKey)}, gen.CreateScopeJSONRequestBody{Name: in.Name})
+	req := CreateScopeRequest(in)
+	r, err := b.c.CreateScopeWithResponse(ctx, &req.Params, *req.Body)
 	if err != nil {
 		return ab2bus.Scope{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -67,6 +68,14 @@ func (b *Bus) CreateScope(ctx context.Context, in ab2bus.CreateScopeInput) (ab2b
 		return ab2bus.Scope{}, unparsable(r.StatusCode())
 	}
 	return FromGenScope(*r.JSON200)
+}
+
+// CreateScopeRequest builds the request for CreateScope; Body is always set.
+func CreateScopeRequest(in ab2bus.CreateScopeInput) gen.CreateScopeRequestObject {
+	return gen.CreateScopeRequestObject{
+		Params: gen.CreateScopeParams{IdempotencyKey: key(in.IdempotencyKey)},
+		Body:   &gen.CreateScopeJSONRequestBody{Name: in.Name},
+	}
 }
 
 // ListScopes lists the open and done scopes.
@@ -81,8 +90,14 @@ func (b *Bus) ListScopes(ctx context.Context) ([]ab2bus.Scope, error) {
 	if r.JSON200 == nil {
 		return nil, unparsable(r.StatusCode())
 	}
-	out := make([]ab2bus.Scope, len(r.JSON200.Scopes))
-	for i, g := range r.JSON200.Scopes {
+	return FromGenScopeList(*r.JSON200)
+}
+
+// FromGenScopeList converts a wire scope list, refusing a scope outside the
+// closed sets.
+func FromGenScopeList(l gen.ScopeList) ([]ab2bus.Scope, error) {
+	out := make([]ab2bus.Scope, len(l.Scopes))
+	for i, g := range l.Scopes {
 		sc, err := FromGenScope(g)
 		if err != nil {
 			return nil, err
@@ -114,8 +129,8 @@ func (b *Bus) DoneScope(ctx context.Context, in ab2bus.DoneScopeInput) (ab2bus.S
 		return ab2bus.Scope{}, &ab2bus.Error{Code: ab2bus.CodeValidation,
 			Message: fmt.Sprintf("retire must be %q or %q, got %q", ab2bus.RetireWithBridge, ab2bus.RetireNormal, string(in.Retire))}
 	}
-	r, err := b.c.DoneScopeWithResponse(ctx, in.Name, &gen.DoneScopeParams{IdempotencyKey: key(in.IdempotencyKey)},
-		gen.DoneScopeJSONRequestBody{Retire: gen.DoneScopeRequestRetire(in.Retire)})
+	req := DoneScopeRequest(in)
+	r, err := b.c.DoneScopeWithResponse(ctx, req.Scope, &req.Params, *req.Body)
 	if err != nil {
 		return ab2bus.Scope{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -128,14 +143,21 @@ func (b *Bus) DoneScope(ctx context.Context, in ab2bus.DoneScopeInput) (ab2bus.S
 	return FromGenScope(*r.JSON200)
 }
 
+// DoneScopeRequest builds the request for DoneScope; Body is always set. It
+// does not validate the retire mode (DoneScope does, before sending).
+func DoneScopeRequest(in ab2bus.DoneScopeInput) gen.DoneScopeRequestObject {
+	return gen.DoneScopeRequestObject{
+		Scope:  in.Name,
+		Params: gen.DoneScopeParams{IdempotencyKey: key(in.IdempotencyKey)},
+		Body:   &gen.DoneScopeJSONRequestBody{Retire: gen.DoneScopeRequestRetire(in.Retire)},
+	}
+}
+
 // CreateAgentIdentity creates an agent identity, optionally in a scope, and
 // its one-time enrollment token.
 func (b *Bus) CreateAgentIdentity(ctx context.Context, in ab2bus.CreateAgentIdentityInput) (ab2bus.AgentIdentity, error) {
-	body := gen.CreateAgentIdentityJSONRequestBody{Name: in.Name}
-	if in.Scope != "" {
-		body.Scope = &in.Scope
-	}
-	r, err := b.c.CreateAgentIdentityWithResponse(ctx, body)
+	req := CreateAgentIdentityRequest(in)
+	r, err := b.c.CreateAgentIdentityWithResponse(ctx, *req.Body)
 	if err != nil {
 		return ab2bus.AgentIdentity{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -145,17 +167,26 @@ func (b *Bus) CreateAgentIdentity(ctx context.Context, in ab2bus.CreateAgentIden
 	if r.JSON200 == nil {
 		return ab2bus.AgentIdentity{}, unparsable(r.StatusCode())
 	}
-	g := r.JSON200
-	return ab2bus.AgentIdentity{Identity: g.Identity, Scope: deref(g.Scope), Created: g.Created, EnrollmentToken: g.EnrollmentToken, ExpiresAt: g.ExpiresAt}, nil
+	return FromGenAgentIdentity(*r.JSON200), nil
+}
+
+// CreateAgentIdentityRequest builds the request for CreateAgentIdentity; Body
+// is always set and an empty scope is absent.
+func CreateAgentIdentityRequest(in ab2bus.CreateAgentIdentityInput) gen.CreateAgentIdentityRequestObject {
+	return gen.CreateAgentIdentityRequestObject{
+		Body: &gen.CreateAgentIdentityJSONRequestBody{Name: in.Name, Scope: strPtr(in.Scope)},
+	}
+}
+
+// FromGenAgentIdentity converts a wire agent identity result to the domain type.
+func FromGenAgentIdentity(g gen.AgentIdentity) ab2bus.AgentIdentity {
+	return ab2bus.AgentIdentity{Identity: g.Identity, Scope: deref(g.Scope), Created: g.Created, EnrollmentToken: g.EnrollmentToken, ExpiresAt: g.ExpiresAt}
 }
 
 // CreateBridge bridges a channel to a new private Slack channel.
 func (b *Bus) CreateBridge(ctx context.Context, in ab2bus.CreateBridgeInput) (ab2bus.BridgeCreated, error) {
-	body := gen.CreateBridgeJSONRequestBody{Channel: in.Channel}
-	if in.SlackName != "" {
-		body.SlackName = &in.SlackName
-	}
-	r, err := b.c.CreateBridgeWithResponse(ctx, body)
+	req := CreateBridgeRequest(in)
+	r, err := b.c.CreateBridgeWithResponse(ctx, *req.Body)
 	if err != nil {
 		return ab2bus.BridgeCreated{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -165,12 +196,26 @@ func (b *Bus) CreateBridge(ctx context.Context, in ab2bus.CreateBridgeInput) (ab
 	if r.JSON200 == nil {
 		return ab2bus.BridgeCreated{}, unparsable(r.StatusCode())
 	}
-	br, err := FromGenBridge(r.JSON200.Bridge)
+	return FromGenBridgeCreated(*r.JSON200)
+}
+
+// CreateBridgeRequest builds the request for CreateBridge; Body is always set
+// and an empty Slack name is absent.
+func CreateBridgeRequest(in ab2bus.CreateBridgeInput) gen.CreateBridgeRequestObject {
+	return gen.CreateBridgeRequestObject{
+		Body: &gen.CreateBridgeJSONRequestBody{Channel: in.Channel, SlackName: strPtr(in.SlackName)},
+	}
+}
+
+// FromGenBridgeCreated converts a wire created bridge, refusing a bridge
+// state outside the closed set; not_invited is never nil.
+func FromGenBridgeCreated(g gen.BridgeCreated) (ab2bus.BridgeCreated, error) {
+	br, err := FromGenBridge(g.Bridge)
 	if err != nil {
 		return ab2bus.BridgeCreated{}, err
 	}
-	out := ab2bus.BridgeCreated{Bridge: br, NotInvited: make([]ab2bus.BridgeNotInvited, len(r.JSON200.NotInvited))}
-	for i, n := range r.JSON200.NotInvited {
+	out := ab2bus.BridgeCreated{Bridge: br, NotInvited: make([]ab2bus.BridgeNotInvited, len(g.NotInvited))}
+	for i, n := range g.NotInvited {
 		out.NotInvited[i] = ab2bus.BridgeNotInvited{Identity: n.Identity, Reason: n.Reason}
 	}
 	return out, nil
@@ -188,8 +233,14 @@ func (b *Bus) ListBridges(ctx context.Context) ([]ab2bus.Bridge, error) {
 	if r.JSON200 == nil {
 		return nil, unparsable(r.StatusCode())
 	}
-	out := make([]ab2bus.Bridge, len(r.JSON200.Bridges))
-	for i, g := range r.JSON200.Bridges {
+	return FromGenBridgeList(*r.JSON200)
+}
+
+// FromGenBridgeList converts a wire bridge list, refusing a bridge outside
+// the closed sets.
+func FromGenBridgeList(l gen.BridgeList) ([]ab2bus.Bridge, error) {
+	out := make([]ab2bus.Bridge, len(l.Bridges))
+	for i, g := range l.Bridges {
 		br, err := FromGenBridge(g)
 		if err != nil {
 			return nil, err
@@ -217,9 +268,15 @@ func (b *Bus) GetBridge(ctx context.Context, channel string) (ab2bus.Bridge, err
 // RemoveBridge archives the Slack channel of a channel's bridge and deletes
 // the bridge.
 func (b *Bus) RemoveBridge(ctx context.Context, in ab2bus.RemoveBridgeInput) error {
-	r, err := b.c.RemoveBridgeWithResponse(ctx, in.Channel)
+	req := RemoveBridgeRequest(in)
+	r, err := b.c.RemoveBridgeWithResponse(ctx, req.Channel)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
 	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+}
+
+// RemoveBridgeRequest builds the request for RemoveBridge.
+func RemoveBridgeRequest(in ab2bus.RemoveBridgeInput) gen.RemoveBridgeRequestObject {
+	return gen.RemoveBridgeRequestObject{Channel: in.Channel}
 }

@@ -47,32 +47,50 @@ func signingKeyToGen(k bus.SigningKey) gen.SigningKey {
 	}
 }
 
+// ListSigningKeys lists the server's signing key set, the active key first.
 func (a *api) ListSigningKeys(ctx context.Context, _ gen.ListSigningKeysRequestObject) (gen.ListSigningKeysResponseObject, error) {
 	ks, err := a.signingKeys().ListSigningKeys(ctx, IdentityFrom(ctx))
 	if err != nil {
 		return nil, err
 	}
-	// keys is required on the wire: an empty array, never null.
+	return gen.ListSigningKeys200JSONResponse(signingKeyListToGen(ks)), nil
+}
+
+// signingKeyListToGen converts the keys to their wire list; keys is required
+// (empty, never null).
+func signingKeyListToGen(ks []bus.SigningKey) gen.SigningKeyList {
 	out := gen.SigningKeyList{Keys: make([]gen.SigningKey, len(ks))}
 	for i, k := range ks {
 		out.Keys[i] = signingKeyToGen(k)
 	}
-	return gen.ListSigningKeys200JSONResponse(out), nil
+	return out
 }
 
+// RotateSigningKey rotates the active signing key.
 func (a *api) RotateSigningKey(ctx context.Context, req gen.RotateSigningKeyRequestObject) (gen.RotateSigningKeyResponseObject, error) {
-	in := bus.RotateSigningKeyInput{IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
-	if req.Params.RevokePrevious != nil {
-		in.RevokePrevious = *req.Params.RevokePrevious
-	}
-	res, err := a.signingKeys().RotateSigningKey(ctx, IdentityFrom(ctx), in)
+	res, err := a.signingKeys().RotateSigningKey(ctx, IdentityFrom(ctx), rotateSigningKeyInput(req))
 	if err != nil {
 		return nil, err
 	}
+	return gen.RotateSigningKey200JSONResponse(signingKeyRotationToGen(res)), nil
+}
+
+// rotateSigningKeyInput reads the query and the Idempotency-Key header; an
+// absent revoke_previous is false.
+func rotateSigningKeyInput(req gen.RotateSigningKeyRequestObject) bus.RotateSigningKeyInput {
+	return bus.RotateSigningKeyInput{
+		RevokePrevious: derefOr(req.Params.RevokePrevious),
+		IdempotencyKey: idemKey(req.Params.IdempotencyKey),
+	}
+}
+
+// signingKeyRotationToGen converts a rotation to its wire form; previous is
+// absent when the set had no previous key (an empty KID).
+func signingKeyRotationToGen(res bus.SigningKeyRotation) gen.SigningKeyRotation {
 	out := gen.SigningKeyRotation{Active: signingKeyToGen(res.Active), Revoked: res.Revoked}
 	if res.Previous.KID != "" {
 		p := signingKeyToGen(res.Previous)
 		out.Previous = &p
 	}
-	return gen.RotateSigningKey200JSONResponse(out), nil
+	return out
 }

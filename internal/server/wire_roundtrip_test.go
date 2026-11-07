@@ -105,6 +105,24 @@ var pairs = []pair{
 	pairOf("UpdateTaskRequestObject", updateTaskInput, ok(remote.UpdateTaskRequest)),
 	pairOf("ClaimTaskRequestObject", ok(claimTaskInput), ok(remote.ClaimTaskRequest)),
 	pairOf("ReleaseTaskRequestObject", ok(releaseTaskInput), ok(remote.ReleaseTaskRequest)),
+	pairOf("Status", ok(remote.FromGenStatus), ok(statusToGen)),
+	pairOf("AdminResetRequestObject", ok(adminResetInput), ok(remote.AdminResetRequest)),
+	pairOf("ResetCredentialRequestObject", ok(resetCredentialInput), ok(remote.ResetCredentialRequest)),
+	pairOf("CredentialReset", ok(remote.FromGenCredentialReset), ok(credentialResetToGen)),
+	pairOf("CreateIdentityByEmailRequestObject", ok(createIdentityByEmailInput), ok(remote.CreateIdentityByEmailRequest)),
+	pairOf("HumanIdentity", ok(remote.FromGenHumanIdentity), ok(humanIdentityToGen)),
+	pairOf("CreateScopeRequestObject", ok(createScopeInput), ok(remote.CreateScopeRequest)),
+	pairOf("DoneScopeRequestObject", ok(doneScopeInput), ok(remote.DoneScopeRequest)),
+	pairOf("ScopeList", remote.FromGenScopeList, ok(scopeListToGen)),
+	pairOf("CreateAgentIdentityRequestObject", ok(createAgentIdentityInput), ok(remote.CreateAgentIdentityRequest)),
+	pairOf("AgentIdentity", ok(remote.FromGenAgentIdentity), ok(agentIdentityToGen)),
+	pairOf("CreateBridgeRequestObject", ok(createBridgeInput), ok(remote.CreateBridgeRequest)),
+	pairOf("BridgeCreated", remote.FromGenBridgeCreated, ok(bridgeCreatedToGen)),
+	pairOf("BridgeList", remote.FromGenBridgeList, ok(bridgeListToGen)),
+	pairOf("RemoveBridgeRequestObject", ok(removeBridgeInput), ok(remote.RemoveBridgeRequest)),
+	pairOf("SigningKeyList", remote.FromGenSigningKeyList, ok(signingKeyListToGen)),
+	pairOf("RotateSigningKeyRequestObject", ok(rotateSigningKeyInput), ok(remote.RotateSigningKeyRequest)),
+	pairOf("SigningKeyRotation", remote.FromGenSigningKeyRotation, ok(signingKeyRotationToGen)),
 }
 
 // exception names a member a converter pair may not carry, with the reason.
@@ -143,9 +161,19 @@ var enumValues = map[string]any{
 	"bus.RetireMode":            bus.RetireNormal,
 	"gen.BridgeState":           gen.BridgeState(bus.BridgeCreating),
 	"bus.BridgeState":           bus.BridgeCreating,
-	"SigningKey.State":          "active",
-	"SigningKey.Provider":       "store",
-	"SigningKey.Algorithm":      "EdDSA",
+}
+
+// The bus side of a signing key carries its state, provider and algorithm as
+// plain strings, so they are keyed by member path, one set per place a key
+// sits in a filled value.
+func init() {
+	for _, prefix := range []string{
+		"SigningKey", "SigningKeyList.Keys[0]", "SigningKeyList[0]", "SigningKeyRotation.Active", "SigningKeyRotation.Previous",
+	} {
+		enumValues[prefix+".State"] = "active"
+		enumValues[prefix+".Provider"] = "store"
+		enumValues[prefix+".Algorithm"] = "EdDSA"
+	}
 }
 
 type counter struct{ n int64 }

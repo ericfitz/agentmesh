@@ -37,8 +37,14 @@ func (b *Bus) ListSigningKeys(ctx context.Context) ([]ab2bus.SigningKey, error) 
 	if r.JSON200 == nil {
 		return nil, unparsable(r.StatusCode())
 	}
-	out := make([]ab2bus.SigningKey, 0, len(r.JSON200.Keys))
-	for _, g := range r.JSON200.Keys {
+	return FromGenSigningKeyList(*r.JSON200)
+}
+
+// FromGenSigningKeyList converts a wire key list, refusing a key outside the
+// closed sets; the result is never nil.
+func FromGenSigningKeyList(l gen.SigningKeyList) ([]ab2bus.SigningKey, error) {
+	out := make([]ab2bus.SigningKey, 0, len(l.Keys))
+	for _, g := range l.Keys {
 		k, err := FromGenSigningKey(g)
 		if err != nil {
 			return nil, err
@@ -50,11 +56,8 @@ func (b *Bus) ListSigningKeys(ctx context.Context) ([]ab2bus.SigningKey, error) 
 
 // RotateSigningKey rotates the active signing key.
 func (b *Bus) RotateSigningKey(ctx context.Context, in ab2bus.RotateSigningKeyInput) (ab2bus.SigningKeyRotation, error) {
-	params := &gen.RotateSigningKeyParams{IdempotencyKey: key(in.IdempotencyKey)}
-	if in.RevokePrevious {
-		params.RevokePrevious = &in.RevokePrevious
-	}
-	r, err := b.c.RotateSigningKeyWithResponse(ctx, params)
+	req := RotateSigningKeyRequest(in)
+	r, err := b.c.RotateSigningKeyWithResponse(ctx, &req.Params)
 	if err != nil {
 		return ab2bus.SigningKeyRotation{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -64,12 +67,29 @@ func (b *Bus) RotateSigningKey(ctx context.Context, in ab2bus.RotateSigningKeyIn
 	if r.JSON200 == nil {
 		return ab2bus.SigningKeyRotation{}, unparsable(r.StatusCode())
 	}
-	out := ab2bus.SigningKeyRotation{Revoked: r.JSON200.Revoked}
-	if out.Active, err = FromGenSigningKey(r.JSON200.Active); err != nil {
+	return FromGenSigningKeyRotation(*r.JSON200)
+}
+
+// RotateSigningKeyRequest builds the request for RotateSigningKey;
+// revoke_previous is present only when true.
+func RotateSigningKeyRequest(in ab2bus.RotateSigningKeyInput) gen.RotateSigningKeyRequestObject {
+	p := gen.RotateSigningKeyParams{IdempotencyKey: key(in.IdempotencyKey)}
+	if in.RevokePrevious {
+		p.RevokePrevious = ptr(true)
+	}
+	return gen.RotateSigningKeyRequestObject{Params: p}
+}
+
+// FromGenSigningKeyRotation converts a wire rotation, refusing a key outside
+// the closed sets; an absent previous is the zero SigningKey.
+func FromGenSigningKeyRotation(g gen.SigningKeyRotation) (ab2bus.SigningKeyRotation, error) {
+	out := ab2bus.SigningKeyRotation{Revoked: g.Revoked}
+	var err error
+	if out.Active, err = FromGenSigningKey(g.Active); err != nil {
 		return ab2bus.SigningKeyRotation{}, err
 	}
-	if r.JSON200.Previous != nil {
-		if out.Previous, err = FromGenSigningKey(*r.JSON200.Previous); err != nil {
+	if g.Previous != nil {
+		if out.Previous, err = FromGenSigningKey(*g.Previous); err != nil {
 			return ab2bus.SigningKeyRotation{}, err
 		}
 	}

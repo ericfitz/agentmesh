@@ -130,6 +130,60 @@ func TestRequestConvertersNilBody(t *testing.T) {
 	if raw := mustMarshal(t, remote.UpdateTaskRequest(bus.TaskPatch{ID: 1}).Body); raw != `{}` {
 		t.Fatalf("UpdateTaskRequest zero patch must be {}: %s", raw)
 	}
+	// Task 6: zero inputs and the lists that must stay [] not null.
+	if got := adminResetInput(gen.AdminResetRequestObject{}); got.Scope != bus.ResetData || got.IdempotencyKey != "" {
+		t.Fatalf("adminResetInput zero params must default to data: %+v", got)
+	}
+	if p := remote.AdminResetRequest(bus.ResetInput{}).Params; p.Scope != nil || p.IdempotencyKey != nil {
+		t.Fatalf("AdminResetRequest zero input must omit scope and key: %+v", p)
+	}
+	if got := rotateSigningKeyInput(gen.RotateSigningKeyRequestObject{}); got.RevokePrevious || got.IdempotencyKey != "" {
+		t.Fatalf("rotateSigningKeyInput zero params = %+v", got)
+	}
+	if p := remote.RotateSigningKeyRequest(bus.RotateSigningKeyInput{}).Params; p.RevokePrevious != nil {
+		t.Fatalf("RotateSigningKeyRequest zero input must omit revoke_previous: %+v", p)
+	}
+	if got := createAgentIdentityInput(gen.CreateAgentIdentityRequestObject{Body: &gen.CreateAgentIdentityJSONRequestBody{Name: "n"}}); got.Name != "n" || got.Scope != "" {
+		t.Fatalf("createAgentIdentityInput absent scope = %+v", got)
+	}
+	if raw := mustMarshal(t, agentIdentityToGen(bus.AgentIdentity{Identity: "i"})); strings.Contains(raw, `"scope"`) {
+		t.Fatalf("agentIdentityToGen empty scope must be absent: %s", raw)
+	}
+	if got := createBridgeInput(gen.CreateBridgeRequestObject{Body: &gen.CreateBridgeJSONRequestBody{Channel: "c"}}); got.Channel != "c" || got.SlackName != "" {
+		t.Fatalf("createBridgeInput absent slack_name = %+v", got)
+	}
+	if raw := mustMarshal(t, remote.CreateBridgeRequest(bus.CreateBridgeInput{Channel: "c"}).Body); raw != `{"channel":"c"}` {
+		t.Fatalf("CreateBridgeRequest empty slack_name must be absent: %s", raw)
+	}
+	if raw := mustMarshal(t, bridgeCreatedToGen(bus.BridgeCreated{})); !strings.Contains(raw, `"not_invited":[]`) {
+		t.Fatalf("bridgeCreatedToGen not_invited must be [] not null: %s", raw)
+	}
+	if raw := mustMarshal(t, scopeListToGen(nil)); raw != `{"scopes":[]}` {
+		t.Fatalf("scopeListToGen zero = %s", raw)
+	}
+	if raw := mustMarshal(t, bridgeListToGen(nil)); raw != `{"bridges":[]}` {
+		t.Fatalf("bridgeListToGen zero = %s", raw)
+	}
+	if raw := mustMarshal(t, signingKeyListToGen(nil)); raw != `{"keys":[]}` {
+		t.Fatalf("signingKeyListToGen zero = %s", raw)
+	}
+	st := statusToGen(bus.Status{})
+	if st.Sessions == nil || st.Channels == nil || st.Notices == nil || st.EmbeddingRejectedLast != nil || st.EmbeddingError != nil || st.EmbeddingErrorAt != nil {
+		t.Fatalf("statusToGen zero = %+v", st)
+	}
+	if rot := signingKeyRotationToGen(bus.SigningKeyRotation{}); rot.Previous != nil || rot.Revoked {
+		t.Fatalf("signingKeyRotationToGen zero must omit previous: %+v", rot)
+	}
+	// Revoked is the bus flag, not a member of the key: a swap with Previous cannot hide.
+	if rot := signingKeyRotationToGen(bus.SigningKeyRotation{Revoked: true}); !rot.Revoked || rot.Previous != nil {
+		t.Fatalf("signingKeyRotationToGen revoked-only = %+v", rot)
+	}
+	if rot, err := remote.FromGenSigningKeyRotation(gen.SigningKeyRotation{Active: gen.SigningKey{State: "active", Provider: "store", Algorithm: "EdDSA"}}); err != nil || rot.Previous.KID != "" || rot.Revoked {
+		t.Fatalf("FromGenSigningKeyRotation absent previous = %+v, %v", rot, err)
+	}
+	if got := remote.FromGenStatus(gen.Status{}); got.Sessions == nil || got.Channels == nil || got.Notices == nil {
+		t.Fatalf("FromGenStatus zero must keep the lists non-nil: %+v", got)
+	}
 }
 
 func mustMarshal(t *testing.T, v any) string {

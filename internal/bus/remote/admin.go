@@ -4,6 +4,7 @@ import (
 	"context"
 
 	ab2bus "github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
 var _ ab2bus.Admin = (*Bus)(nil)
@@ -22,7 +23,11 @@ func (b *Bus) Status(ctx context.Context) (ab2bus.Status, error) {
 	if r.JSON200 == nil {
 		return ab2bus.Status{}, unparsable(r.StatusCode())
 	}
-	g := *r.JSON200
+	return FromGenStatus(*r.JSON200), nil
+}
+
+// FromGenStatus converts the wire administrator's view to the domain type.
+func FromGenStatus(g gen.Status) ab2bus.Status {
 	st := ab2bus.Status{
 		Sessions:              make([]ab2bus.SessionInfo, len(g.Sessions)),
 		Channels:              make([]ab2bus.ChannelInfo, len(g.Channels)),
@@ -42,5 +47,5 @@ func (b *Bus) Status(ctx context.Context) (ab2bus.Status, error) {
 	for i, n := range g.Notices {
 		st.Notices[i] = ab2bus.Notice{Kind: n.Kind, Message: n.Message, SetAt: n.SetAt}
 	}
-	return st, nil
+	return st
 }

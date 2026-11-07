@@ -85,13 +85,15 @@ var ruleAllowed = map[string]map[string]int{
 	"internal/core/sessions/identities.go Identities":       {"Admin": 1},               // copies the flag into bus.IdentityInfo
 	"internal/core/identities/agent.go createAgentIdentity": {"Scope": 1},               // copies the request's scope into the result
 	"internal/bus/local/admin_identities.go Reset":          {"Scope": 1},               // passes the reset scope through to the core
-	"internal/server/admin_auth.go AdminReset":              {"Scope": 2},               // wire copy of the request's reset scope (spec Appendix A, kind N)
+	"internal/server/admin_auth.go adminResetInput":         {"Scope": 2},               // wire copy of the request's reset scope (spec Appendix A, kind N)
+	"internal/server/admin_auth.go AdminReset":              {"Scope": 1},               // hands the converted reset scope to the core (kind N)
 	"internal/server/bridges.go bridgeToGen":                {"Scope": 1},               // wire copy of the bridge's scope (kind N)
 	"internal/server/channels.go createChannelInput":        {"Scope": 3},               // wire copy of the request's scope field (kind N)
 	"internal/server/channels.go channelInfoToGen":          {"Creator": 1, "Scope": 3}, // wire copy of the channel's creator and scope fields (kind N)
-	"internal/server/scopes.go CreateAgentIdentity":         {"Scope": 6},               // wire copy of the request's and result's scope (kind N)
+	"internal/server/scopes.go createAgentIdentityInput":    {"Scope": 3},               // wire copy of the request's scope (kind N)
+	"internal/server/scopes.go agentIdentityToGen":          {"Scope": 3},               // wire copy of the result's scope (kind N)
 	"internal/server/scopes.go GetScope":                    {"Scope": 1},               // the path parameter naming the scope (kind N)
-	"internal/server/scopes.go DoneScope":                   {"Scope": 1},               // the path parameter naming the scope (kind N)
+	"internal/server/scopes.go doneScopeInput":              {"Scope": 1},               // the path parameter naming the scope (kind N)
 	"internal/server/sessions.go identityToGen":             {"Admin": 1},               // wire copy of the identity's flag (kind N)
 	"internal/slackbridge/service.go toBus":                 {"Scope": 1},               // converter
 	"internal/slackbridge/outbound.go drainOne":             {"Scope": 1},               // the bridge's scope as the post's display prefix

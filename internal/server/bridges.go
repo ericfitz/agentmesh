@@ -58,33 +58,51 @@ func bridgeToGen(b bus.Bridge) gen.Bridge {
 	return out
 }
 
+// CreateBridge bridges a channel to a new private Slack channel.
 func (a *api) CreateBridge(ctx context.Context, req gen.CreateBridgeRequestObject) (gen.CreateBridgeResponseObject, error) {
+	res, err := a.bridges().Create(ctx, IdentityFrom(ctx), createBridgeInput(req))
+	if err != nil {
+		return nil, err
+	}
+	return gen.CreateBridge200JSONResponse(bridgeCreatedToGen(res)), nil
+}
+
+// createBridgeInput reads the body (required); an absent Slack name is "".
+func createBridgeInput(req gen.CreateBridgeRequestObject) bus.CreateBridgeInput {
 	in := bus.CreateBridgeInput{Channel: req.Body.Channel}
 	if req.Body.SlackName != nil {
 		in.SlackName = *req.Body.SlackName
 	}
-	res, err := a.bridges().Create(ctx, IdentityFrom(ctx), in)
-	if err != nil {
-		return nil, err
-	}
-	// not_invited is required on the wire: an empty array, never null.
+	return in
+}
+
+// bridgeCreatedToGen converts a created bridge to its wire form; not_invited
+// is required: an empty array, never null.
+func bridgeCreatedToGen(res bus.BridgeCreated) gen.BridgeCreated {
 	out := gen.BridgeCreated{Bridge: bridgeToGen(res.Bridge), NotInvited: make([]gen.BridgeNotInvited, len(res.NotInvited))}
 	for i, n := range res.NotInvited {
 		out.NotInvited[i] = gen.BridgeNotInvited{Identity: n.Identity, Reason: n.Reason}
 	}
-	return gen.CreateBridge200JSONResponse(out), nil
+	return out
 }
 
+// ListBridges lists every bridge.
 func (a *api) ListBridges(ctx context.Context, _ gen.ListBridgesRequestObject) (gen.ListBridgesResponseObject, error) {
 	all, err := a.bridges().List(ctx, IdentityFrom(ctx))
 	if err != nil {
 		return nil, err
 	}
+	return gen.ListBridges200JSONResponse(bridgeListToGen(all)), nil
+}
+
+// bridgeListToGen converts the bridges to their wire list; bridges is
+// required (empty, never null).
+func bridgeListToGen(all []bus.Bridge) gen.BridgeList {
 	out := gen.BridgeList{Bridges: make([]gen.Bridge, len(all))}
 	for i, b := range all {
 		out.Bridges[i] = bridgeToGen(b)
 	}
-	return gen.ListBridges200JSONResponse(out), nil
+	return out
 }
 
 func (a *api) GetBridge(ctx context.Context, req gen.GetBridgeRequestObject) (gen.GetBridgeResponseObject, error) {
@@ -95,9 +113,15 @@ func (a *api) GetBridge(ctx context.Context, req gen.GetBridgeRequestObject) (ge
 	return gen.GetBridge200JSONResponse(bridgeToGen(b)), nil
 }
 
+// RemoveBridge archives the Slack channel of the bridge and deletes it.
 func (a *api) RemoveBridge(ctx context.Context, req gen.RemoveBridgeRequestObject) (gen.RemoveBridgeResponseObject, error) {
-	if err := a.bridges().Remove(ctx, IdentityFrom(ctx), bus.RemoveBridgeInput{Channel: req.Channel}); err != nil {
+	if err := a.bridges().Remove(ctx, IdentityFrom(ctx), removeBridgeInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.RemoveBridge204Response{}, nil
+}
+
+// removeBridgeInput reads the path.
+func removeBridgeInput(req gen.RemoveBridgeRequestObject) bus.RemoveBridgeInput {
+	return bus.RemoveBridgeInput{Channel: req.Channel}
 }
