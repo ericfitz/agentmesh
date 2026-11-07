@@ -28,7 +28,7 @@ requires Go 1.25), ogen v1.24.0 (released 2026-08-07), Go 1.27.2,
 `CGO_ENABLED=0` throughout. The sample spec (OpenAPI 3.0.3) had four
 operations: the well-known path, `GET /v1/discover`, the long-poll
 `watch` and an idempotent `send`, with bearer and `openIdConnect` schemes
-and a shared `application/problem+json` default response carrying `code`
+and a shared `application/problem+json` response (`default` at the time; see the issue #33 addendum) carrying `code`
 and `retryable`.
 
 ## Evidence from the spike
@@ -39,7 +39,7 @@ tests (`RESULT: PASS`). By need:
 1. Long-poll `watch` (200, bodiless 204, 409 problem+json, context
    cancellation): both pass. oapi-codegen returns typed response objects
    with a `Visit*` method; ogen returns a sum-type interface.
-2. `default` response as `application/problem+json`: both honor it. To
+2. `default` response as `application/problem+json` (the spec no longer has one: issue #33 addendum): both honor it. To
    make the framework's own errors (bad parameter, missing header, failed
    security) problem+json, oapi-codegen needs three hooks
    (`StdHTTPServerOptions.ErrorHandlerFunc`,
@@ -237,3 +237,8 @@ Resolved on 2026-10-20:
 ## Protocol client checks addendum (Eric's decision, 2026-11-06; issue #29)
 
 - The Consequences line "kept in step with the OpenAPI document by hand, whichever generator is chosen" is superseded as recorded in ADR 0001's addendum of the same date. The generator choice is unaffected.
+
+## Error responses addendum (issue #33, 2026-11-07)
+
+- Need 2 changed: no operation has a `default` response any more; each declares its error statuses from 11 shared `components/responses` (Eric's decision 2026-11-06).
+- Plan ruling (not Eric's decision): narrowing `Problem.code` per shared response uses `allOf` of `Problem` and a `code` enum with `x-go-type: Problem` beside it. Evidence, a spike with oapi-codegen v2.8.0 (2026-11-07): `allOf` alone generates a fresh struct per response with `Code interface{}` (a second Go type, the enum lost); with `x-go-type: Problem` it generates `type NotFound = Problem`, an alias, so the narrowing costs nothing on the Go side. kin-openapi ignores `x-go-type` and validates the `allOf`, so response validators see the narrowed enum. Cost: the strict server generates one response type per operation and status, which nothing uses, and `internal/gen/gen.go` grows by about a third.

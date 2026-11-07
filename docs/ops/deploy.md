@@ -71,7 +71,7 @@ Postgres requirements and sizing: Postgres 12 or later (the size columns the bud
 
 Per replica:
 
-- **Rate limits.** The send buckets (`send_messages_per_second`, `send_kib_per_second`) are per process, so N replicas each grant an identity the full rate.
+- **Rate limits.** The send buckets (`send_messages_per_second`, `send_kib_per_second`) are per process, so N replicas each grant an identity the full rate. A refused send answers 429 `rate_limited` with a `Retry-After` header in whole seconds (at least 1), taken from the bucket's wait.
 - **Wake-ups.** Each replica holds one extra Postgres connection that `LISTEN`s, so a send on one replica wakes long-polls on the others. The wake is a hint only: if the connection drops, the replica reconnects with backoff and a lost hint costs latency, never a message. The server starts without it.
 - **Maintenance** runs on one replica at a time. The holder keeps the lock across ticks and releases it at shutdown. A holder that is silently partitioned keeps the lock until the server ends its session, which pauses maintenance on every replica: cleanup is delayed, and no new tick starts on two replicas at once. The lock is checked when a tick starts, so a tick already running when its holder loses the lock finishes the job in hand (the tick stops starting jobs half an interval in) and can overlap the next holder's first tick; every job is idempotent, so the overlap repeats work and loses nothing. To bound the pause, set TCP keepalives on the Postgres server side, `tcp_keepalives_idle = 60`, `tcp_keepalives_interval = 10` and `tcp_keepalives_count = 3`, in `postgresql.conf` (or the managed service's parameter group), or per connection in the DSN:
 

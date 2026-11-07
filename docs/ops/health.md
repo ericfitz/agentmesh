@@ -65,7 +65,7 @@ The administrator flag is the one that gates `GET /v1/admin/status` (see `admin-
 
 - `degraded` when the `capacity`, the `embedding` or the `inspection` notice is set (an `inspection` notice that no replica has rewritten for `inspection_notice_ttl_seconds` no longer counts, and the next successful inspection on any replica clears it whatever its age), or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same `status`; only an administrator sees why.
 - `ok` otherwise.
-- Not a document: when the store does not answer, the response is a 503 problem (`application/problem+json`) with `code` `unavailable`, `retryable` true and `detail` exactly `store unreachable`. The cause (a driver error that names a host, user or file path) is logged on the server and never sent, because the probe tier is unauthenticated.
+- Not a document (both this and the 401 are declared responses of the `health` operation in `api/openapi.yaml`): when the store does not answer, the response is a 503 problem (`application/problem+json`) with `code` `unavailable`, `retryable` true and `detail` exactly `store unreachable`. The cause (a driver error that names a host, user or file path) is logged on the server and never sent, because the probe tier is unauthenticated.
 
 ## Examples
 

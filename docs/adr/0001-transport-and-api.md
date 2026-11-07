@@ -215,7 +215,8 @@ internal/` then prints nothing).
   operation; absent or empty means no receipt, as `core.WithReceipt` treats
   an empty key. The remote `Bus` sends the header only for a non-empty key.
 - **Choice 3.** `Problem.code` is the eleven codes of the `Bus` plus
-  `unauthenticated` (`CodeUnauthenticated`, 401). `server.StatusFor` fixes
+  `unauthenticated` (`CodeUnauthenticated`, 401) (14 codes since issue #33,
+  which adds `payload_too_large`, 413: see its addendum). `server.StatusFor` fixes
   the status per code; `Problem.type` is `urn:agentbus2:problem:<code>`.
 - **Choice 4.** Handlers return `nil, err` for every failure and one hook
   (`server.ProblemFor`) writes the problem.
@@ -225,11 +226,13 @@ internal/` then prints nothing).
 - **Choice 10.** `receive` is a `POST` with a body and no `Idempotency-Key`.
 - **Choice 11.** `limitBody` is the outermost middleware (order: `limitBody`,
   authentication, validator, mux). It reads the body ahead with its own
-  limit and answers 413 `validation`; it never uses `http.MaxBytesReader`.
+  limit and answers 413 `payload_too_large` (was `validation` before issue #33); it never uses `http.MaxBytesReader`.
 - **Choice 13.** The remote `Bus` maps a problem+json body to a `*bus.Error`
   by struct literal (an unknown code is kept as received), a non-problem 5xx
   to `unavailable`, other non-problem statuses to `internal`, and a
-  transport error to `ctx.Err()` or `unavailable`.
+  transport error to `ctx.Err()` or `unavailable` (since issue #33 the client
+  decodes the problem body at any status and reads `Retry-After`: see its
+  addendum).
 - **Choice 15.** `http.Server`: `ReadHeaderTimeout` 10 s, `ReadTimeout` 30 s,
   `WriteTimeout` 0, `IdleTimeout` 120 s, graceful shutdown for 60 s.
   `ReadTimeout` does not end a long-poll (test `TestWatchLongPollSurvivesReadTimeout`
@@ -395,3 +398,21 @@ internal/` then prints nothing).
 - Each check has a mutation in `scripts/check-gates-selftest.sh` (blocks 23, 33, 34 and 35).
 - Tool shapes stay free: no schema is generated from the spec and no tool has to match the API.
 - Implementation record (not a decision): the plan moved `TestAccessRuleSites` entries into the extracted wire converters. One count grew, an exception to the plan's "counts move, never grow": `internal/server/admin_auth.go AdminReset` went from 2 to 3 (`adminResetInput` holds 2, `AdminReset` 1, a pass-through of the converted scope to `identities.Service.Reset`).
+
+## Error responses declared per operation (issue #33)
+
+Decisions of Eric, 2026-11-06 (human-made):
+
+1. Every 429 `rate_limited` answer carries `Retry-After`, whole seconds rounded up, taken from the limiter's known wait; the shared 429 response declares the header.
+2. `default` is removed from every operation and each declares its error statuses explicitly (500 included); the spec is exhaustive, so response validation fails on any undeclared status.
+3. `Problem.code` is narrowed per shared response in the spec only; Go keeps the single `Problem` type.
+
+Plan and controller rulings (2026-11-07; Eric may overrule; not his decisions):
+
+- `payload_too_large` is the 14th code, not retryable, and the only code on 413 (`limitBody` sent `validation`, which would have been that code's second status). Alternative: keep `validation` on 413 with a documented second status. This amends choice 3 (14 codes).
+- 413 is declared on the 20 operations with a request body (`token` as `OAuthError`); 400 and 500 on every one of the 57 operations; 401, 403, 404, 409, 410, 422, 429 and 503 where the operation can answer them (`TestOperationErrorTable`).
+- The 11 shared responses are `BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`, `Conflict`, `Gone`, `PayloadTooLarge`, `UnprocessableEntity`, `TooManyRequests`, `InternalServerError` and `ServiceUnavailable`; `OAuthError` stays for `token`. Each narrows `code` with `allOf` plus `x-go-type: Problem` (ADR 0007 addendum).
+- `Limiter.Check(identity, n, now)` returns `(ok bool, wait time.Duration)`; `core.RateLimited(wait, format, args...)` is the one constructor of a `rate_limited` error (`TestRateLimitedSites`); `bus.Error.RetryAfter` is `json:"-"`, so `Error()` text is unchanged. The header is `max(1, ceil(seconds))`, and `WriteProblem` floors any 429 to `Retry-After: 1`.
+- Amends choice 13: the remote `Bus` (`errorOf`) decodes a problem body at any status and reads `Retry-After` (integer seconds, capped at 86400) into `bus.Error.RetryAfter`; a 429 without a problem body is a retryable `rate_limited`. It still never imports kin-openapi (decision 47).
+- Checks: `TestStatusTable` (every code maps to one status; `bus.Codes()` lists the codes) and `TestOperationErrorTable` in `internal/server/status_table_test.go`. `internal/respcheck` validates every wire response against the embedded spec in tests only, never in production; it is wired into the inproc Bus suite (`TestInprocResponseCheckWired`), `TestAuthEndToEnd`, the `internal/server` and `internal/server/cmd` tests (`TestMain` fails on `respcheck.Late()`) and the e2e validating proxy. The m4 rule (`check_deps` in `scripts/m4-exit-checks.sh`, run by `make verify` as `--deps-only`) forbids `.` and `./cmd/agentmesh-mcponly` importing it. Mutations: `scripts/check-gates-selftest.sh` block 36 (12).
+- The protocol version stays `1.0.0` (pre-release rule).
