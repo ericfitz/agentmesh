@@ -40,6 +40,15 @@ func Run(ctx context.Context, args []string, environ []string, stdout, stderr io
 	return run(ctx, args, environ, stdout, stderr, Serve)
 }
 
+// RunWith is Run with the serving function injected. The e2e fixture of
+// internal/e2e uses it to put the Slack fake (internal/slackapi/slackfake)
+// in Config.Slack before Serve runs; the binary's main calls Run. It is
+// reachable from Go code of this module only: no flag, setting, variable or
+// build tag selects another serving function.
+func RunWith(ctx context.Context, args []string, environ []string, stdout, stderr io.Writer, serve func(context.Context, Config) error) int {
+	return run(ctx, args, environ, stdout, stderr, serve)
+}
+
 // run is Run with the serving function injected, so a test can look at the
 // Config the flags produce without serving.
 //

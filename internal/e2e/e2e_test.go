@@ -7,6 +7,11 @@
 // that is the "another host" condition. Hosts A and B are two HOME
 // directories; host C is a third with no session state file.
 //
+// A second fixture (slack_test.go, issue #32, Eric's decision 4) runs the
+// server wiring in the test process through cmd.RunWith with the Slack fake in
+// Config.Slack, so the bridges journey runs against a live bridge; the binary's
+// main calls cmd.Run and nothing but Go code selects the fake.
+//
 // TestSection24Sequence is declared first and the tests run in file order
 // (-shuffle is not used), so its display-name assertions hold: nothing has
 // opened a session for pat before it.
@@ -48,6 +53,7 @@ var (
 	binPath    string
 	mcpOnlyBin string
 	fx         *fixture
+	slackFx    *slackFixture // fixture 2, slack_test.go
 )
 
 // fixture is the server of step 0 and the registrations of step 1, started
@@ -186,7 +192,21 @@ func runMain(m *testing.M) int {
 		}
 		return 1
 	}
+	slackFx, err = startSlackFixture(root, fx.check, fx.violations.add)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "e2e: Slack fixture:", err)
+		if slackFx != nil {
+			fmt.Fprintf(os.Stderr, "server stdout: %s\nserver stderr: %s\n", slackFx.out.String(), slackFx.errb.String())
+			slackFx.stop()
+		}
+		fx.stopServer()
+		return 1
+	}
 	code := m.Run()
+	if c := slackFx.stop(); c != 0 {
+		fmt.Fprintf(os.Stderr, "e2e: the in-process Slack server exited %d after cancel, want 0\nstderr: %s\n", c, slackFx.errb.String())
+		code = 1
+	}
 	if c := fx.stopServer(); c != 0 {
 		fmt.Fprintf(os.Stderr, "e2e: the server exited %d after SIGTERM, want 0\nstderr: %s\n", c, fx.srvErr.String())
 		code = 1

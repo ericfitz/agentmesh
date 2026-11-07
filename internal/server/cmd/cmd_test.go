@@ -863,3 +863,23 @@ func TestAPIKey(t *testing.T) {
 		t.Fatalf("missing file: %v", err)
 	}
 }
+
+// TestRunWithInjectsServe: RunWith hands the Config the flags produce to the
+// injected function (the e2e Slack fixture sets Config.Slack there); a start
+// without Slack settings leaves Slack nil.
+func TestRunWithInjectsServe(t *testing.T) {
+	calls := 0
+	var slackNil bool
+	var mode string
+	var out, errb bytes.Buffer
+	code := RunWith(context.Background(), []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "s.sqlite")}, nil, &out, &errb,
+		func(_ context.Context, c Config) error {
+			calls++
+			slackNil = c.Slack == nil
+			mode = string(c.Registration)
+			return nil
+		})
+	if code != 0 || calls != 1 || !slackNil || mode == "" {
+		t.Fatalf("exit %d, serve calls %d, Slack nil %v, registration %q; stderr %q", code, calls, slackNil, mode, errb.String())
+	}
+}

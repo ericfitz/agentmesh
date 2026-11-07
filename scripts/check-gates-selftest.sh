@@ -1475,6 +1475,10 @@ block_spec_validation_fires() {
 	finish m4-arazzotest-rule-fires
 	mutate_rm_block arazzo-refusal-fixture-missing internal/arazzotest/testdata/refuse-operation-path.arazzo.yaml \
 		./internal/arazzotest/ '^TestRefusalCoverage$' TestRefusalCoverage
+	# fixture 2 (issue #32, decision 4): the runner still starts, the handlers see no bridge
+	mutate_unit_block slack-fixture-fires internal/server/cmd/serve.go \
+		'		bridges = br' '		bridges = nil' \
+		./internal/e2e/ '^TestSlackBridgeFixture$' TestSlackBridgeFixture unavailable
 }
 
 block_skip_in_wiring
