@@ -68,7 +68,7 @@ release-lint: ## actionlint over the workflows and shellcheck over release/, scr
 	shellcheck -s sh install.sh
 release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; its own CI job)
 	bash release/test-install.sh $(RELEASE_INSTALL_ARGS)
-verify:      ## Done gate (CLAUDE.md): build, the m4, m6 and m10 dependency rules, vet, gofmt, lint, tidy go.mod, generated-code freshness, unit tests, conformance suites on both engines, gate checks
+verify:      ## Done gate (CLAUDE.md): build, the m4, m6 and m10 dependency rules, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, conformance suites on both engines, gate checks
 	$(MAKE) build
 	$(MAKE) build-all
 	$(MAKE) build-mcponly
@@ -78,6 +78,7 @@ verify:      ## Done gate (CLAUDE.md): build, the m4, m6 and m10 dependency rule
 	$(MAKE) vet
 	$(MAKE) fmt-check
 	$(MAKE) lint
+	$(MAKE) spec-lint
 	$(MAKE) tidy-check
 	$(MAKE) generate-check
 	$(MAKE) test

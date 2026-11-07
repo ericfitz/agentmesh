@@ -577,7 +577,7 @@ func (e SearchParamsMode) Valid() bool {
 	}
 }
 
-// ACLEntry defines model for ACLEntry.
+// ACLEntry Grants a list of permissions on a channel to one identity.
 type ACLEntry struct {
 	// Identity At most 128 bytes (the server counts bytes).
 	Identity string `json:"identity"`
@@ -589,7 +589,7 @@ type ACLEntry struct {
 // ACLEntryPermissions defines model for ACLEntry.Permissions.
 type ACLEntryPermissions string
 
-// AccessToken defines model for AccessToken.
+// AccessToken The answer of a successful token exchange: the bearer, its type and its lifetime in seconds.
 type AccessToken struct {
 	AccessToken     string  `json:"access_token"`
 	ExpiresIn       int64   `json:"expires_in"`
@@ -597,7 +597,7 @@ type AccessToken struct {
 	TokenType       string  `json:"token_type"`
 }
 
-// AgentIdentity defines model for AgentIdentity.
+// AgentIdentity The result of creating an agent identity: the identity, its scope, whether this call created it and the one-time enrollment token bound to the name with its expiry.
 type AgentIdentity struct {
 	Created         bool    `json:"created"`
 	EnrollmentToken string  `json:"enrollment_token"`
@@ -606,7 +606,7 @@ type AgentIdentity struct {
 	Scope           *string `json:"scope,omitempty"`
 }
 
-// AgentStatus defines model for AgentStatus.
+// AgentStatus One status revision of one identity: its tag, text, problem, session and the time it was set.
 type AgentStatus struct {
 	DisplayName string `json:"display_name"`
 	Identity    string `json:"identity"`
@@ -625,18 +625,20 @@ type AgentStatus struct {
 	Text  string `json:"text"`
 }
 
-// AgentStatusEntry defines model for AgentStatusEntry.
+// AgentStatusEntry One identity's current status in the agent list, with whether the identity is live.
 type AgentStatusEntry struct {
 	Identity string               `json:"identity"`
 	Kind     AgentStatusEntryKind `json:"kind"`
 	Live     bool                 `json:"live"`
-	Status   AgentStatus          `json:"status"`
+
+	// Status One status revision of one identity: its tag, text, problem, session and the time it was set.
+	Status AgentStatus `json:"status"`
 }
 
 // AgentStatusEntryKind defines model for AgentStatusEntry.Kind.
 type AgentStatusEntryKind string
 
-// AuthMethod defines model for AuthMethod.
+// AuthMethod One authentication method the server accepts, as advertised in the discovery document.
 type AuthMethod struct {
 	BearerFormat *string `json:"bearer_format,omitempty"`
 	Name         string  `json:"name"`
@@ -644,7 +646,7 @@ type AuthMethod struct {
 	Type         string  `json:"type"`
 }
 
-// AuthorizationServerMetadata defines model for AuthorizationServerMetadata.
+// AuthorizationServerMetadata The RFC 8414 authorization server metadata of the server's token endpoint.
 type AuthorizationServerMetadata struct {
 	GrantTypesSupported                        []string `json:"grant_types_supported"`
 	Issuer                                     string   `json:"issuer"`
@@ -655,7 +657,7 @@ type AuthorizationServerMetadata struct {
 	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported"`
 }
 
-// Bridge defines model for Bridge.
+// Bridge The link between a bus channel and a Slack channel, with its state and times.
 type Bridge struct {
 	ArchivedAt     *int64      `json:"archived_at,omitempty"`
 	Channel        string      `json:"channel"`
@@ -669,24 +671,25 @@ type Bridge struct {
 // BridgeState defines model for Bridge.State.
 type BridgeState string
 
-// BridgeCreated defines model for BridgeCreated.
+// BridgeCreated The created bridge and the humans it could not invite.
 type BridgeCreated struct {
+	// Bridge The link between a bus channel and a Slack channel, with its state and times.
 	Bridge     Bridge             `json:"bridge"`
 	NotInvited []BridgeNotInvited `json:"not_invited"`
 }
 
-// BridgeList defines model for BridgeList.
+// BridgeList The bridges of the server.
 type BridgeList struct {
 	Bridges []Bridge `json:"bridges"`
 }
 
-// BridgeNotInvited defines model for BridgeNotInvited.
+// BridgeNotInvited A human the bridge could not invite, and why.
 type BridgeNotInvited struct {
 	Identity string `json:"identity"`
 	Reason   string `json:"reason"`
 }
 
-// Channel defines model for Channel.
+// Channel What a caller sees of a channel it may list: name, kind and capabilities.
 type Channel struct {
 	// Capabilities Traits of the channel; a value present means the trait applies. Known: bridged (a live Slack bridge). Clients ignore values they do not know.
 	Capabilities []string    `json:"capabilities"`
@@ -697,7 +700,7 @@ type Channel struct {
 // ChannelKind defines model for Channel.Kind.
 type ChannelKind string
 
-// ChannelInfo defines model for ChannelInfo.
+// ChannelInfo The creator's view of a channel on creation and the administrator's view on status: name, kind, capabilities, creator, scope and creation time.
 type ChannelInfo struct {
 	// Capabilities Traits of the channel; a value present means the trait applies. Known: bridged (a live Slack bridge). Clients ignore values they do not know.
 	Capabilities []string        `json:"capabilities"`
@@ -711,12 +714,12 @@ type ChannelInfo struct {
 // ChannelInfoKind defines model for ChannelInfo.Kind.
 type ChannelInfoKind string
 
-// ClaimTaskRequest defines model for ClaimTaskRequest.
+// ClaimTaskRequest Claims a task for the caller, optionally with a lease that runs until a time.
 type ClaimTaskRequest struct {
 	LeasedUntil *int64 `json:"leased_until,omitempty"`
 }
 
-// CreateAgentIdentityRequest defines model for CreateAgentIdentityRequest.
+// CreateAgentIdentityRequest Creates an agent identity by name, optionally in a scope.
 type CreateAgentIdentityRequest struct {
 	// Name At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
@@ -725,7 +728,7 @@ type CreateAgentIdentityRequest struct {
 	Scope *string `json:"scope,omitempty"`
 }
 
-// CreateBridgeRequest defines model for CreateBridgeRequest.
+// CreateBridgeRequest Creates a bridge from a bus channel to a Slack channel, optionally with a Slack channel name.
 type CreateBridgeRequest struct {
 	// Channel At most 128 bytes (the server counts bytes).
 	Channel string `json:"channel"`
@@ -734,7 +737,7 @@ type CreateBridgeRequest struct {
 	SlackName *string `json:"slack_name,omitempty"`
 }
 
-// CreateChannelRequest defines model for CreateChannelRequest.
+// CreateChannelRequest Creates a channel: its name, kind, an optional access control list and an optional scope.
 type CreateChannelRequest struct {
 	// Acl At most 256 items.
 	Acl  *[]ACLEntry               `json:"acl,omitempty"`
@@ -750,25 +753,25 @@ type CreateChannelRequest struct {
 // CreateChannelRequestKind defines model for CreateChannelRequest.Kind.
 type CreateChannelRequestKind string
 
-// CreateIdentityByEmailRequest defines model for CreateIdentityByEmailRequest.
+// CreateIdentityByEmailRequest Creates a human identity from an email address.
 type CreateIdentityByEmailRequest struct {
 	// Email At most 128 bytes (the server counts bytes).
 	Email string `json:"email"`
 }
 
-// CreateScopeRequest defines model for CreateScopeRequest.
+// CreateScopeRequest Creates a scope by name.
 type CreateScopeRequest struct {
 	// Name At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 }
 
-// CredentialReset defines model for CredentialReset.
+// CredentialReset The result of a credential reset: the identity and how many registered keys were removed.
 type CredentialReset struct {
 	Identity    string `json:"identity"`
 	KeysRemoved int    `json:"keys_removed"`
 }
 
-// Discovery defines model for Discovery.
+// Discovery The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods and the issuer metadata locations.
 type Discovery struct {
 	ApiVersions []string     `json:"api_versions"`
 	AuthMethods []AuthMethod `json:"auth_methods"`
@@ -786,7 +789,7 @@ type Discovery struct {
 	ServerVersion   string `json:"server_version"`
 }
 
-// DoneScopeRequest defines model for DoneScopeRequest.
+// DoneScopeRequest Retires a scope; retire is with_bridge or normal.
 type DoneScopeRequest struct {
 	Retire DoneScopeRequestRetire `json:"retire"`
 }
@@ -815,7 +818,7 @@ type EditMemoryRequest struct {
 	Type *string `json:"type,omitempty"`
 }
 
-// EditResult defines model for EditResult.
+// EditResult Identifies the new revision of an edited memory and the one it replaced.
 type EditResult struct {
 	MemoryId int64 `json:"memory_id"`
 	Replaced int64 `json:"replaced"`
@@ -823,7 +826,7 @@ type EditResult struct {
 	Seq      int64 `json:"seq"`
 }
 
-// Gap defines model for Gap.
+// Gap A range of sequence numbers on a channel that the receiver will never see because retention removed them.
 type Gap struct {
 	Channel string `json:"channel"`
 	From    int64  `json:"from"`
@@ -832,7 +835,10 @@ type Gap struct {
 
 // Health The server's health as the caller's tier may see it (spec 2026-10-25 section 4). Members above the probe tier are absent, never null, below their tier. An unreachable store is a 503 problem with code unavailable, never a document.
 type Health struct {
-	Embeddings  *HealthEmbeddings  `json:"embeddings,omitempty"`
+	// Embeddings The embedding state and backlog; the model, last error and rejection details are set at the administrator tier only.
+	Embeddings *HealthEmbeddings `json:"embeddings,omitempty"`
+
+	// Maintenance This process's view of the maintenance loop: its interval, the lock owner and the last tick's jobs.
 	Maintenance *HealthMaintenance `json:"maintenance,omitempty"`
 	Notices     *[]Notice          `json:"notices,omitempty"`
 	Now         int64              `json:"now"`
@@ -841,10 +847,14 @@ type Health struct {
 	ProtocolVersion string       `json:"protocol_version"`
 	StartedAt       *int64       `json:"started_at,omitempty"`
 	Status          HealthStatus `json:"status"`
-	Storage         *Usage       `json:"storage,omitempty"`
-	Store           *HealthStore `json:"store,omitempty"`
-	Tier            HealthTier   `json:"tier"`
-	Version         string       `json:"version"`
+
+	// Storage Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set.
+	Storage *Usage `json:"storage,omitempty"`
+
+	// Store The store engine and its schema version.
+	Store   *HealthStore `json:"store,omitempty"`
+	Tier    HealthTier   `json:"tier"`
+	Version string       `json:"version"`
 }
 
 // HealthStatus defines model for Health.Status.
@@ -853,7 +863,7 @@ type HealthStatus string
 // HealthTier defines model for Health.Tier.
 type HealthTier string
 
-// HealthEmbeddings defines model for HealthEmbeddings.
+// HealthEmbeddings The embedding state and backlog; the model, last error and rejection details are set at the administrator tier only.
 type HealthEmbeddings struct {
 	// Backlog Memories waiting for an embedding, capped at 1000 (the search page maximum), so 1000 means "at least 1000".
 	Backlog      int                   `json:"backlog"`
@@ -868,7 +878,7 @@ type HealthEmbeddings struct {
 // HealthEmbeddingsState defines model for HealthEmbeddings.State.
 type HealthEmbeddingsState string
 
-// HealthJob defines model for HealthJob.
+// HealthJob One maintenance job's outcome in the last tick.
 type HealthJob struct {
 	Changed int     `json:"changed"`
 	Error   *string `json:"error,omitempty"`
@@ -876,7 +886,7 @@ type HealthJob struct {
 	Skipped bool    `json:"skipped"`
 }
 
-// HealthMaintenance defines model for HealthMaintenance.
+// HealthMaintenance This process's view of the maintenance loop: its interval, the lock owner and the last tick's jobs.
 type HealthMaintenance struct {
 	IntervalSeconds int                   `json:"interval_seconds"`
 	Jobs            []HealthJob           `json:"jobs"`
@@ -889,7 +899,7 @@ type HealthMaintenance struct {
 // HealthMaintenanceLock defines model for HealthMaintenance.Lock.
 type HealthMaintenanceLock string
 
-// HealthStore defines model for HealthStore.
+// HealthStore The store engine and its schema version.
 type HealthStore struct {
 	Engine        HealthStoreEngine `json:"engine"`
 	SchemaVersion int               `json:"schema_version"`
@@ -898,19 +908,21 @@ type HealthStore struct {
 // HealthStoreEngine defines model for HealthStore.Engine.
 type HealthStoreEngine string
 
-// HumanIdentity defines model for HumanIdentity.
+// HumanIdentity The normalized human identity name and whether this call created it.
 type HumanIdentity struct {
 	Created  bool   `json:"created"`
 	Identity string `json:"identity"`
 }
 
-// Identity defines model for Identity.
+// Identity An identity that has a live session, with its kind, administrator flag, live sessions and current status.
 type Identity struct {
 	Admin    bool          `json:"admin"`
 	Kind     IdentityKind  `json:"kind"`
 	Name     string        `json:"name"`
 	Sessions []SessionInfo `json:"sessions"`
-	Status   *AgentStatus  `json:"status,omitempty"`
+
+	// Status One status revision of one identity: its tag, text, problem, session and the time it was set.
+	Status *AgentStatus `json:"status,omitempty"`
 }
 
 // IdentityKind defines model for Identity.Kind.
@@ -919,12 +931,12 @@ type IdentityKind string
 // JWK At most 16 keys.
 type JWK map[string]interface{}
 
-// JWKS defines model for JWKS.
+// JWKS A JSON Web Key Set.
 type JWKS struct {
 	Keys []JWK `json:"keys"`
 }
 
-// Message defines model for Message.
+// Message A delivered, read or searched message: sender, session, channel, sequence number, subject, content, tags and, on a memory channel, the memory id and revision.
 type Message struct {
 	Channel     string             `json:"channel"`
 	Content     string             `json:"content"`
@@ -947,7 +959,7 @@ type Message struct {
 // MessageSenderKind defines model for Message.SenderKind.
 type MessageSenderKind string
 
-// Notice defines model for Notice.
+// Notice A server notice shown to administrators: its kind, message and the time it was set.
 type Notice struct {
 	Kind    string `json:"kind"`
 	Message string `json:"message"`
@@ -960,14 +972,14 @@ type OAuthError struct {
 	ErrorDescription *string `json:"error_description,omitempty"`
 }
 
-// OfferedCursor defines model for OfferedCursor.
+// OfferedCursor A position a client offers on open: a channel and the last sequence number it holds.
 type OfferedCursor struct {
 	// Channel At most 128 bytes (the server counts bytes).
 	Channel string `json:"channel"`
 	Seq     int64  `json:"seq"`
 }
 
-// OpenSessionRequest defines model for OpenSessionRequest.
+// OpenSessionRequest Opens or resumes a session: an optional hint, an optional resume token and the cursors the client offers.
 type OpenSessionRequest struct {
 	// Cursors At most 256 items.
 	Cursors *[]OfferedCursor `json:"cursors,omitempty"`
@@ -979,7 +991,7 @@ type OpenSessionRequest struct {
 	ResumeToken *string `json:"resume_token,omitempty"`
 }
 
-// Peek defines model for Peek.
+// Peek The read-only pending counts of a session: the total and the non-zero count of each channel.
 type Peek struct {
 	Channels []struct {
 		Channel string `json:"channel"`
@@ -988,13 +1000,13 @@ type Peek struct {
 	Count int `json:"count"`
 }
 
-// PendingChannel defines model for PendingChannel.
+// PendingChannel The number of messages waiting on one subscribed channel.
 type PendingChannel struct {
 	Channel string `json:"channel"`
 	Pending int64  `json:"pending"`
 }
 
-// Problem defines model for Problem.
+// Problem The body of every error response (application/problem+json): the stable code, the HTTP status, whether a retry can succeed, and a human-readable title and detail.
 type Problem struct {
 	// Code agentmesh extension member (RFC 9457 section 3.2).
 	Code     ProblemCode `json:"code"`
@@ -1011,7 +1023,7 @@ type Problem struct {
 // ProblemCode agentmesh extension member (RFC 9457 section 3.2).
 type ProblemCode string
 
-// ReceiveRequest defines model for ReceiveRequest.
+// ReceiveRequest Reads the next batch for a session: the batch token to acknowledge, a count, an optional channel filter and whether the session's own messages count.
 type ReceiveRequest struct {
 	// Ack At most 1024 bytes.
 	Ack *string `json:"ack,omitempty"`
@@ -1024,7 +1036,7 @@ type ReceiveRequest struct {
 	IncludeOwn *bool `json:"include_own,omitempty"`
 }
 
-// ReceiveResult defines model for ReceiveResult.
+// ReceiveResult One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice and an instruction.
 type ReceiveResult struct {
 	AckIgnored  bool      `json:"ack_ignored"`
 	Batch       string    `json:"batch"`
@@ -1035,7 +1047,7 @@ type ReceiveResult struct {
 	Redelivered bool      `json:"redelivered"`
 }
 
-// RegisterRequest defines model for RegisterRequest.
+// RegisterRequest Registers a public key for an identity, with an enrollment token where the server requires one.
 type RegisterRequest struct {
 	// EnrollmentToken At most 1024 bytes.
 	EnrollmentToken *string `json:"enrollment_token,omitempty"`
@@ -1047,7 +1059,7 @@ type RegisterRequest struct {
 	PublicKeyJwk JWK `json:"public_key_jwk"`
 }
 
-// Registration defines model for Registration.
+// Registration The outcome of a registration: the identity, the key id and algorithm, and whether this call created the identity.
 type Registration struct {
 	Algorithm RegistrationAlgorithm `json:"algorithm"`
 	Created   bool                  `json:"created"`
@@ -1058,7 +1070,7 @@ type Registration struct {
 // RegistrationAlgorithm defines model for Registration.Algorithm.
 type RegistrationAlgorithm string
 
-// RejectedCursor defines model for RejectedCursor.
+// RejectedCursor An offered cursor that was not adopted, with the reason (before_retention, ahead, unreadable or unsubscribed).
 type RejectedCursor struct {
 	Channel string               `json:"channel"`
 	Reason  RejectedCursorReason `json:"reason"`
@@ -1067,13 +1079,13 @@ type RejectedCursor struct {
 // RejectedCursorReason defines model for RejectedCursor.Reason.
 type RejectedCursorReason string
 
-// RenameChannelRequest defines model for RenameChannelRequest.
+// RenameChannelRequest Renames a channel to a new name.
 type RenameChannelRequest struct {
 	// Name At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 }
 
-// Scope defines model for Scope.
+// Scope A named group of channels and agent identities retired as one unit; channels and identities are filled on a get only.
 type Scope struct {
 	Channels     *[]string    `json:"channels,omitempty"`
 	CreatedAt    int64        `json:"created_at"`
@@ -1091,25 +1103,26 @@ type ScopeRetire string
 // ScopeState defines model for Scope.State.
 type ScopeState string
 
-// ScopeList defines model for ScopeList.
+// ScopeList The scopes of the server.
 type ScopeList struct {
 	Scopes []Scope `json:"scopes"`
 }
 
-// SearchHit defines model for SearchHit.
+// SearchHit A message with its search score.
 type SearchHit struct {
+	// Message A delivered, read or searched message: sender, session, channel, sequence number, subject, content, tags and, on a memory channel, the memory id and revision.
 	Message Message `json:"message"`
 	Score   float64 `json:"score"`
 }
 
-// SearchResult defines model for SearchResult.
+// SearchResult One page of search hits, the cursor of the next page and whether semantic search was unavailable.
 type SearchResult struct {
 	Hits                []SearchHit `json:"hits"`
 	Next                *string     `json:"next,omitempty"`
 	SemanticUnavailable *bool       `json:"semantic_unavailable,omitempty"`
 }
 
-// SendRequest defines model for SendRequest.
+// SendRequest Sends a message to a channel: subject, content, an optional reply-to sequence number, metadata, tags and the sending session.
 type SendRequest struct {
 	// Content At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
 	Content string `json:"content"`
@@ -1131,13 +1144,13 @@ type SendRequest struct {
 	Type *string `json:"type,omitempty"`
 }
 
-// SendResult defines model for SendResult.
+// SendResult The sequence number of the new message and, on a memory channel, its memory id.
 type SendResult struct {
 	MemoryId *int64 `json:"memory_id,omitempty"`
 	Seq      int64  `json:"seq"`
 }
 
-// Session defines model for Session.
+// Session An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors and the pending counts.
 type Session struct {
 	DisplayName     string           `json:"display_name"`
 	Id              string           `json:"id"`
@@ -1148,7 +1161,7 @@ type Session struct {
 	Resumed         bool             `json:"resumed"`
 }
 
-// SessionInfo defines model for SessionInfo.
+// SessionInfo One live session: its id, identity, display name and the time it was opened.
 type SessionInfo struct {
 	DisplayName string `json:"display_name"`
 	Id          string `json:"id"`
@@ -1156,7 +1169,7 @@ type SessionInfo struct {
 	OpenedAt    int64  `json:"opened_at"`
 }
 
-// SetAgentStatusRequest defines model for SetAgentStatusRequest.
+// SetAgentStatusRequest Sets the caller's status: a tag, a text and, for a problem, a description of the problem.
 type SetAgentStatusRequest struct {
 	// Problem At most 200 code points.
 	Problem *string `json:"problem,omitempty"`
@@ -1168,7 +1181,7 @@ type SetAgentStatusRequest struct {
 	Text string `json:"text"`
 }
 
-// SigningKey defines model for SigningKey.
+// SigningKey One token signing key: its id, state, provider, algorithm and times.
 type SigningKey struct {
 	Algorithm SigningKeyAlgorithm `json:"algorithm"`
 	CreatedAt int64               `json:"created_at"`
@@ -1197,13 +1210,14 @@ type SigningKeyProvider string
 // SigningKeyState defines model for SigningKey.State.
 type SigningKeyState string
 
-// SigningKeyList defines model for SigningKeyList.
+// SigningKeyList The server's token signing keys.
 type SigningKeyList struct {
 	Keys []SigningKey `json:"keys"`
 }
 
-// SigningKeyRotation defines model for SigningKeyRotation.
+// SigningKeyRotation The result of a rotation: the new active key, the key that was active before and whether that key was deleted.
 type SigningKeyRotation struct {
+	// Active One token signing key: its id, state, provider, algorithm and times.
 	Active SigningKey `json:"active"`
 
 	// Previous The key that was active before the rotation, as the rotation left it (retiring, with its retirement times), or, when revoked is true, the deleted key as it was. Absent when the set had none.
@@ -1213,7 +1227,7 @@ type SigningKeyRotation struct {
 	Revoked bool `json:"revoked"`
 }
 
-// Status defines model for Status.
+// Status The administrator's view: live sessions, every channel with its creator, server notices and the embedding backlog and rejections.
 type Status struct {
 	Channels              []ChannelInfo `json:"channels"`
 	EmbeddingBacklog      int           `json:"embedding_backlog"`
@@ -1225,7 +1239,7 @@ type Status struct {
 	Sessions              []SessionInfo `json:"sessions"`
 }
 
-// SubscribeRequest defines model for SubscribeRequest.
+// SubscribeRequest Subscribes the caller to a channel, from now or from the oldest retained message.
 type SubscribeRequest struct {
 	From *SubscribeRequestFrom `json:"from,omitempty"`
 }
@@ -1233,13 +1247,13 @@ type SubscribeRequest struct {
 // SubscribeRequestFrom defines model for SubscribeRequest.From.
 type SubscribeRequestFrom string
 
-// TagPatterns defines model for TagPatterns.
+// TagPatterns A tag subscription, which is one AND set of tag patterns.
 type TagPatterns struct {
 	// Patterns At most 10 items.
 	Patterns []string `json:"patterns"`
 }
 
-// Task defines model for Task.
+// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease.
 type Task struct {
 	Blocked      bool               `json:"blocked"`
 	BlockedBy    *[]int64           `json:"blocked_by,omitempty"`
@@ -1265,7 +1279,7 @@ type Task struct {
 	UpdatedBy     string  `json:"updated_by"`
 }
 
-// TaskCreateRequest defines model for TaskCreateRequest.
+// TaskCreateRequest Creates a task: subject, description, parent, a position relative to a sibling (before or after, mutually exclusive), blockers and metadata.
 type TaskCreateRequest struct {
 	After  *int64 `json:"after,omitempty"`
 	Before *int64 `json:"before,omitempty"`
@@ -1284,7 +1298,7 @@ type TaskCreateRequest struct {
 	Subject string `json:"subject"`
 }
 
-// TaskPatch defines model for TaskPatch.
+// TaskPatch The task update input: absent fields are unchanged; before and after are mutually exclusive sibling ids.
 type TaskPatch struct {
 	// AddBlockedBy At most 64 items.
 	AddBlockedBy *[]int64 `json:"add_blocked_by,omitempty"`
@@ -1313,7 +1327,7 @@ type TaskPatch struct {
 	Subject *string `json:"subject,omitempty"`
 }
 
-// TaskSummary defines model for TaskSummary.
+// TaskSummary One row of a task list result.
 type TaskSummary struct {
 	Depth        int      `json:"depth"`
 	HasDetails   *bool    `json:"has_details,omitempty"`
@@ -1332,11 +1346,13 @@ type TaskSummary struct {
 	Subject       string  `json:"subject"`
 }
 
-// TaskUpdateResult defines model for TaskUpdateResult.
+// TaskUpdateResult The result of a task update: the task, whether an earlier revision was replaced and whether the task was deleted.
 type TaskUpdateResult struct {
 	Deleted  *bool `json:"deleted,omitempty"`
 	Replaced int64 `json:"replaced"`
-	Task     Task  `json:"task"`
+
+	// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease.
+	Task Task `json:"task"`
 }
 
 // TokenRequest RFC 6749 section 4.4.2 and RFC 8693 section 2.1 token request. The grant is a plain string so that an unsupported one answers unsupported_grant_type (RFC 6749 section 5.2) rather than failing validation; the handler checks which parameters each grant needs.
@@ -1378,7 +1394,7 @@ type TokenRequest struct {
 	SubjectTokenType *string `json:"subject_token_type,omitempty"`
 }
 
-// Usage defines model for Usage.
+// Usage Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set.
 type Usage struct {
 	BudgetBytes int64 `json:"budget_bytes"`
 
@@ -1400,14 +1416,14 @@ type Usage struct {
 // UsageTier defines model for Usage.Tier.
 type UsageTier string
 
-// Wake defines model for Wake.
+// Wake The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on.
 type Wake struct {
 	Channels []string `json:"channels"`
 	Count    int      `json:"count"`
 	Seq      int64    `json:"seq"`
 }
 
-// WellKnown defines model for WellKnown.
+// WellKnown The answer of the well-known document: the path of the discovery document.
 type WellKnown struct {
 	Discover string `json:"discover"`
 }

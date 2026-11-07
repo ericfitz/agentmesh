@@ -2189,6 +2189,7 @@ components:
     # schema shared by a request and a response (ACLEntry) follows the request
     # rule. A new request body follows the convention.
     Problem:
+      description: "The body of every error response (application/problem+json): the stable code, the HTTP status, whether a retry can succeed, and a human-readable title and detail."
       type: object
       required: [type, title, status, code, retryable]
       properties:
@@ -2226,6 +2227,7 @@ components:
           type: boolean
           description: agentmesh extension member (RFC 9457 section 3.2).
     Wake:
+      description: "The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on."
       type: object
       required: [seq, count, channels]
       properties:
@@ -2239,6 +2241,7 @@ components:
           items:
             type: string
     Peek:
+      description: "The read-only pending counts of a session: the total and the non-zero count of each channel."
       type: object
       required: [count, channels]
       properties:
@@ -2255,12 +2258,14 @@ components:
               count:
                 type: integer
     WellKnown:
+      description: "The answer of the well-known document: the path of the discovery document."
       type: object
       required: [discover]
       properties:
         discover:
           type: string
     AuthMethod:
+      description: One authentication method the server accepts, as advertised in the discovery document.
       type: object
       required: [name, type]
       properties:
@@ -2273,6 +2278,7 @@ components:
         bearer_format:
           type: string
     Discovery:
+      description: "The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods and the issuer metadata locations."
       type: object
       required: [api_versions, server_version, protocol_version, capabilities, auth_methods, issuers]
       properties:
@@ -2309,6 +2315,7 @@ components:
           items:
             type: string
     AuthorizationServerMetadata:
+      description: The RFC 8414 authorization server metadata of the server's token endpoint.
       type: object
       required:
         - issuer
@@ -2342,6 +2349,7 @@ components:
           items:
             type: string
     OfferedCursor:
+      description: "A position a client offers on open: a channel and the last sequence number it holds."
       type: object
       additionalProperties: false
       required: [channel, seq]
@@ -2356,6 +2364,7 @@ components:
           minimum: 0
           maximum: 9223372036854775807
     OpenSessionRequest:
+      description: "Opens or resumes a session: an optional hint, an optional resume token and the cursors the client offers."
       type: object
       additionalProperties: false
       properties:
@@ -2376,6 +2385,7 @@ components:
           maxItems: 256
           description: At most 256 items.
     RejectedCursor:
+      description: An offered cursor that was not adopted, with the reason (before_retention, ahead, unreadable or unsubscribed).
       type: object
       required: [channel, reason]
       properties:
@@ -2385,6 +2395,7 @@ components:
           type: string
           enum: [before_retention, ahead, unreadable, unsubscribed]
     PendingChannel:
+      description: The number of messages waiting on one subscribed channel.
       type: object
       required: [channel, pending]
       properties:
@@ -2394,6 +2405,7 @@ components:
           type: integer
           format: int64
     Session:
+      description: "An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors and the pending counts."
       type: object
       required: [id, identity, display_name, resume_token, resumed, rejected_cursors, pending]
       properties:
@@ -2416,6 +2428,7 @@ components:
           items:
             $ref: "#/components/schemas/PendingChannel"
     ReceiveRequest:
+      description: "Reads the next batch for a session: the batch token to acknowledge, a count, an optional channel filter and whether the session's own messages count."
       type: object
       additionalProperties: false
       properties:
@@ -2442,6 +2455,7 @@ components:
         include_own:
           type: boolean
     Gap:
+      description: A range of sequence numbers on a channel that the receiver will never see because retention removed them.
       type: object
       required: [channel, from, to]
       properties:
@@ -2454,6 +2468,7 @@ components:
           type: integer
           format: int64
     Message:
+      description: "A delivered, read or searched message: sender, session, channel, sequence number, subject, content, tags and, on a memory channel, the memory id and revision."
       type: object
       required: [seq, channel, sender, sender_kind, display, created_at, type, subject, content]
       properties:
@@ -2502,6 +2517,7 @@ components:
           items:
             type: string
     ReceiveResult:
+      description: "One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice and an instruction."
       type: object
       required: [messages, batch, redelivered, ack_ignored, gaps]
       properties:
@@ -2524,6 +2540,7 @@ components:
         instruction:
           type: string
     SessionInfo:
+      description: "One live session: its id, identity, display name and the time it was opened."
       type: object
       required: [id, identity, display_name, opened_at]
       properties:
@@ -2537,6 +2554,7 @@ components:
           type: integer
           format: int64
     Identity:
+      description: "An identity that has a live session, with its kind, administrator flag, live sessions and current status."
       type: object
       required: [name, kind, admin, sessions]
       properties:
@@ -2554,6 +2572,7 @@ components:
         status:
           $ref: "#/components/schemas/AgentStatus"
     SetAgentStatusRequest:
+      description: "Sets the caller's status: a tag, a text and, for a problem, a description of the problem."
       type: object
       additionalProperties: false
       required: [tag, text]
@@ -2572,6 +2591,7 @@ components:
           maxLength: 200
           description: At most 200 code points.
     AgentStatus:
+      description: "One status revision of one identity: its tag, text, problem, session and the time it was set."
       type: object
       required: [identity, revision, tag, text, session, display_name, set_at]
       properties:
@@ -2601,6 +2621,7 @@ components:
           format: int64
           description: Unix milliseconds.
     AgentStatusEntry:
+      description: One identity's current status in the agent list, with whether the identity is live.
       type: object
       required: [identity, kind, live, status]
       properties:
@@ -2614,6 +2635,7 @@ components:
         status:
           $ref: "#/components/schemas/AgentStatus"
     Channel:
+      description: "What a caller sees of a channel it may list: name, kind and capabilities."
       type: object
       required: [name, kind, capabilities]
       properties:
@@ -2628,6 +2650,7 @@ components:
             type: string
           description: "Traits of the channel; a value present means the trait applies. Known: bridged (a live Slack bridge). Clients ignore values they do not know."
     ChannelInfo:
+      description: "The creator's view of a channel on creation and the administrator's view on status: name, kind, capabilities, creator, scope and creation time."
       type: object
       required: [name, kind, creator, created_at, capabilities]
       properties:
@@ -2649,6 +2672,7 @@ components:
           type: integer
           format: int64
     ACLEntry:
+      description: Grants a list of permissions on a channel to one identity.
       type: object
       additionalProperties: false
       required: [identity, permissions]
@@ -2666,6 +2690,7 @@ components:
           minItems: 1
           description: At least 1 and at most 3 items.
     CreateChannelRequest:
+      description: "Creates a channel: its name, kind, an optional access control list and an optional scope."
       type: object
       additionalProperties: false
       required: [name]
@@ -2688,6 +2713,7 @@ components:
           maxLength: 128
           description: At most 128 bytes (the server counts bytes).
     RenameChannelRequest:
+      description: Renames a channel to a new name.
       type: object
       additionalProperties: false
       required: [name]
@@ -2697,6 +2723,7 @@ components:
           maxLength: 128
           description: At most 128 bytes (the server counts bytes).
     SubscribeRequest:
+      description: Subscribes the caller to a channel, from now or from the oldest retained message.
       type: object
       additionalProperties: false
       properties:
@@ -2704,6 +2731,7 @@ components:
           type: string
           enum: [now, oldest]
     TagPatterns:
+      description: A tag subscription, which is one AND set of tag patterns.
       type: object
       additionalProperties: false
       required: [patterns]
@@ -2719,6 +2747,7 @@ components:
           maxItems: 10
           description: At most 10 items.
     SendRequest:
+      description: "Sends a message to a channel: subject, content, an optional reply-to sequence number, metadata, tags and the sending session."
       type: object
       additionalProperties: false
       required: [content]
@@ -2765,6 +2794,7 @@ components:
           maxLength: 1024
           description: At most 1024 bytes.
     SendResult:
+      description: The sequence number of the new message and, on a memory channel, its memory id.
       type: object
       required: [seq]
       properties:
@@ -2775,6 +2805,7 @@ components:
           type: integer
           format: int64
     SearchHit:
+      description: A message with its search score.
       type: object
       required: [message, score]
       properties:
@@ -2784,6 +2815,7 @@ components:
           type: number
           format: double
     SearchResult:
+      description: One page of search hits, the cursor of the next page and whether semantic search was unavailable.
       type: object
       required: [hits]
       properties:
@@ -2843,6 +2875,7 @@ components:
           maxItems: 10
           description: At most 10 items.
     EditResult:
+      description: Identifies the new revision of an edited memory and the one it replaced.
       type: object
       required: [seq, memory_id, revision, replaced]
       properties:
@@ -2859,6 +2892,7 @@ components:
           type: integer
           format: int64
     Task:
+      description: A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease.
       type: object
       required: [id, channel, revision, subject, status, rank, blocked, updated_at, updated_by]
       properties:
@@ -2915,6 +2949,7 @@ components:
         updated_by:
           type: string
     TaskSummary:
+      description: One row of a task list result.
       type: object
       required: [id, subject, status, depth]
       properties:
@@ -2950,6 +2985,7 @@ components:
         has_details:
           type: boolean
     TaskCreateRequest:
+      description: "Creates a task: subject, description, parent, a position relative to a sibling (before or after, mutually exclusive), blockers and metadata."
       type: object
       additionalProperties: false
       required: [subject]
@@ -2998,6 +3034,7 @@ components:
           description: >-
             At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
     TaskPatch:
+      description: "The task update input: absent fields are unchanged; before and after are mutually exclusive sibling ids."
       type: object
       additionalProperties: false
       properties:
@@ -3069,6 +3106,7 @@ components:
         delete:
           type: boolean
     TaskUpdateResult:
+      description: "The result of a task update: the task, whether an earlier revision was replaced and whether the task was deleted."
       type: object
       required: [task, replaced]
       properties:
@@ -3080,6 +3118,7 @@ components:
         deleted:
           type: boolean
     ClaimTaskRequest:
+      description: Claims a task for the caller, optionally with a lease that runs until a time.
       type: object
       additionalProperties: false
       properties:
@@ -3089,6 +3128,7 @@ components:
           minimum: 0
           maximum: 9223372036854775807
     Notice:
+      description: "A server notice shown to administrators: its kind, message and the time it was set."
       type: object
       required: [kind, message, set_at]
       properties:
@@ -3100,6 +3140,7 @@ components:
           type: integer
           format: int64
     Status:
+      description: "The administrator's view: live sessions, every channel with its creator, server notices and the embedding backlog and rejections."
       type: object
       required: [sessions, channels, notices, embedding_backlog, embedding_rejected]
       properties:
@@ -3127,6 +3168,7 @@ components:
           type: integer
           format: int64
     Usage:
+      description: "Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set."
       type: object
       required: [bytes, budget_bytes, evictable, disk_bytes, disk_ratio, tier]
       properties:
@@ -3195,6 +3237,7 @@ components:
         maintenance:
           $ref: "#/components/schemas/HealthMaintenance"
     HealthStore:
+      description: The store engine and its schema version.
       type: object
       required: [engine, schema_version]
       properties:
@@ -3204,6 +3247,7 @@ components:
         schema_version:
           type: integer
     HealthEmbeddings:
+      description: The embedding state and backlog; the model, last error and rejection details are set at the administrator tier only.
       type: object
       required: [state, backlog, rejected]
       properties:
@@ -3227,6 +3271,7 @@ components:
         rejected_last:
           type: string
     HealthMaintenance:
+      description: "This process's view of the maintenance loop: its interval, the lock owner and the last tick's jobs."
       type: object
       required: [interval_seconds, owner, lock, jobs]
       properties:
@@ -3247,6 +3292,7 @@ components:
           items:
             $ref: "#/components/schemas/HealthJob"
     HealthJob:
+      description: One maintenance job's outcome in the last tick.
       type: object
       required: [name, changed, skipped]
       properties:
@@ -3325,6 +3371,7 @@ components:
         error_description:
           type: string
     AccessToken:
+      description: "The answer of a successful token exchange: the bearer, its type and its lifetime in seconds."
       type: object
       required: [access_token, token_type, expires_in]
       properties:
@@ -3343,6 +3390,7 @@ components:
       maxProperties: 16
       description: At most 16 keys.
     JWKS:
+      description: A JSON Web Key Set.
       type: object
       required: [keys]
       properties:
@@ -3351,6 +3399,7 @@ components:
           items:
             $ref: "#/components/schemas/JWK"
     RegisterRequest:
+      description: Registers a public key for an identity, with an enrollment token where the server requires one.
       type: object
       additionalProperties: false
       required: [identity, public_key_jwk]
@@ -3366,6 +3415,7 @@ components:
           maxLength: 1024
           description: At most 1024 bytes.
     Registration:
+      description: "The outcome of a registration: the identity, the key id and algorithm, and whether this call created the identity."
       type: object
       required: [identity, kid, algorithm, created]
       properties:
@@ -3379,6 +3429,7 @@ components:
         created:
           type: boolean
     CreateIdentityByEmailRequest:
+      description: Creates a human identity from an email address.
       type: object
       additionalProperties: false
       required: [email]
@@ -3388,6 +3439,7 @@ components:
           maxLength: 128
           description: At most 128 bytes (the server counts bytes).
     HumanIdentity:
+      description: The normalized human identity name and whether this call created it.
       type: object
       required: [identity, created]
       properties:
@@ -3396,6 +3448,7 @@ components:
         created:
           type: boolean
     CredentialReset:
+      description: "The result of a credential reset: the identity and how many registered keys were removed."
       type: object
       required: [identity, keys_removed]
       properties:
@@ -3404,6 +3457,7 @@ components:
         keys_removed:
           type: integer
     SigningKey:
+      description: "One token signing key: its id, state, provider, algorithm and times."
       type: object
       required: [kid, state, provider, provider_ref, algorithm, created_at, retired_at, remove_after]
       properties:
@@ -3434,6 +3488,7 @@ components:
           format: int64
           description: Unix milliseconds, the earliest removal of a retiring key; 0 while the key is active.
     SigningKeyList:
+      description: The server's token signing keys.
       type: object
       required: [keys]
       properties:
@@ -3442,6 +3497,7 @@ components:
           items:
             $ref: "#/components/schemas/SigningKey"
     SigningKeyRotation:
+      description: "The result of a rotation: the new active key, the key that was active before and whether that key was deleted."
       type: object
       required: [active, revoked]
       properties:
@@ -3454,6 +3510,7 @@ components:
           type: boolean
           description: True when previous was deleted instead of retired.
     CreateAgentIdentityRequest:
+      description: Creates an agent identity by name, optionally in a scope.
       type: object
       additionalProperties: false
       required: [name]
@@ -3467,6 +3524,7 @@ components:
           maxLength: 128
           description: At most 128 bytes (the server counts bytes).
     AgentIdentity:
+      description: "The result of creating an agent identity: the identity, its scope, whether this call created it and the one-time enrollment token bound to the name with its expiry."
       type: object
       required: [identity, created, enrollment_token, expires_at]
       properties:
@@ -3482,6 +3540,7 @@ components:
           type: integer
           format: int64
     CreateScopeRequest:
+      description: Creates a scope by name.
       type: object
       additionalProperties: false
       required: [name]
@@ -3491,6 +3550,7 @@ components:
           maxLength: 128
           description: At most 128 bytes (the server counts bytes).
     DoneScopeRequest:
+      description: Retires a scope; retire is with_bridge or normal.
       type: object
       additionalProperties: false
       required: [retire]
@@ -3499,6 +3559,7 @@ components:
           type: string
           enum: [with_bridge, normal]
     Scope:
+      description: A named group of channels and agent identities retired as one unit; channels and identities are filled on a get only.
       type: object
       required: [name, state, created_at, last_activity]
       properties:
@@ -3528,6 +3589,7 @@ components:
           items:
             type: string
     ScopeList:
+      description: The scopes of the server.
       type: object
       required: [scopes]
       properties:
@@ -3536,6 +3598,7 @@ components:
           items:
             $ref: "#/components/schemas/Scope"
     CreateBridgeRequest:
+      description: Creates a bridge from a bus channel to a Slack channel, optionally with a Slack channel name.
       type: object
       additionalProperties: false
       required: [channel]
@@ -3551,6 +3614,7 @@ components:
           description: >-
             At most 80 code points of lowercase letters, digits, underscore and hyphen.
     Bridge:
+      description: The link between a bus channel and a Slack channel, with its state and times.
       type: object
       required: [channel, scope, slack_name, state, created_at]
       properties:
@@ -3572,6 +3636,7 @@ components:
           type: integer
           format: int64
     BridgeNotInvited:
+      description: A human the bridge could not invite, and why.
       type: object
       required: [identity, reason]
       properties:
@@ -3580,6 +3645,7 @@ components:
         reason:
           type: string
     BridgeCreated:
+      description: The created bridge and the humans it could not invite.
       type: object
       required: [bridge, not_invited]
       properties:
@@ -3590,6 +3656,7 @@ components:
           items:
             $ref: "#/components/schemas/BridgeNotInvited"
     BridgeList:
+      description: The bridges of the server.
       type: object
       required: [bridges]
       properties:
