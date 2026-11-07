@@ -1410,6 +1410,73 @@ block_spec_bounds_fire() {
 		'row schemas/SendRequest.subject has no probe line'
 }
 
+# --- 38. spec-validation-fires ---------------------------------------------------------
+# issue #32: make spec-lint (vacuum at fail-severity info) is a gate, every operation has a summary
+# (TestOperationShape), no route exists outside the document (TestNoRoutesOutsideTheDocument), the
+# m4 rule keeps internal/arazzotest out of both binaries and the runner's refusals each have a
+# fixture. Docker-free. Mutations 1 to 3 need the pinned vacuum on the PATH (the same as
+# make verify).
+# mutate_lint_block LABEL FILE FROM TO WANT: replace FROM (exactly once on one line of FILE) with TO,
+# run make spec-lint in the worktree and require exit non-zero and the text WANT in its log.
+mutate_lint_block() {
+	local label="$1" file="$2" from="$3" to="$4" want="$5" log="$tmp/$1.log" rc=0
+	begin
+	if mutate_file "$label" "$file" "$from" "$to"; then
+		make -C "$wt" spec-lint >"$log" 2>&1 || rc=$?
+		[ "$rc" -ne 0 ] || problem "$label" "spec-lint exited 0 on the mutated $file"
+		grep -qF -- "$want" "$log" || problem "$label" "log lacks '$want': $(tail -n 3 "$log" | tr '\n' ' ')"
+	fi
+	finish "$label"
+	revert
+}
+
+# mutate_rm_block LABEL FILE PKG RUN WANT [EXTRA]: delete FILE in the worktree, run the named unit
+# test in PKG and require '--- FAIL: WANT' (and, when given, EXTRA) in its log.
+mutate_rm_block() {
+	local label="$1" file="$2" pkg="$3" run="$4" want="$5" extra="${6:-}" log="$tmp/$1.log"
+	begin
+	if [ ! -f "$wt/$file" ]; then
+		problem "$label" "file absent from the worktree: $file"
+	else
+		rm -f "$wt/$file"
+		(cd "$wt" && go test -count=1 -p 1 -v -run "$run" "$pkg" >"$log" 2>&1) || true
+		grep -qF -- "--- FAIL: $want" "$log" || problem "$label" "log lacks '--- FAIL: $want': $(tail -n 3 "$log" | tr '\n' ' ')"
+		if [ -n "$extra" ]; then grep -qF -- "$extra" "$log" || problem "$label" "log lacks '$extra'"; fi
+	fi
+	finish "$label"
+	revert
+}
+
+block_spec_validation_fires() {
+	local m=github.com/ericfitz/agentmesh log="$tmp/b38s.log" rc=0
+	# a tag without a description is a vacuum error
+	mutate_lint_block spec-lint-fires api/openapi.yaml \
+		'    description: "GET /v1/health"' '' \
+		tag-description
+	# -n info is load-bearing: the tag order is not alphabetical, so the informs fire once the rule is on
+	mutate_lint_block spec-lint-inform-fires api/vacuum-ruleset.yaml \
+		'openapi-tags-alphabetical: off' 'openapi-tags-alphabetical: info' \
+		openapi-tags-alphabetical
+	begin
+	make -C "$wt" spec-lint VACUUM=/nonexistent/vacuum >"$log" 2>&1 || rc=$?
+	[ "$rc" -ne 0 ] || problem spec-lint-hint "spec-lint exited 0 with no vacuum"
+	grep -qF -- 'vacuum is not installed; run: go install github.com/daveshanley/vacuum@v' "$log" || problem spec-lint-hint "log lacks the install hint: $(tail -n 3 "$log" | tr '\n' ' ')"
+	finish spec-lint-hint
+	mutate_spec_block summary-missing 'operationId: listChannels' \
+		'      summary: "List the channels the caller may see"' '' \
+		./internal/gen/ '^TestOperationShape$' TestOperationShape/listChannels
+	mutate_unit_block stray-route-site internal/server/server.go \
+		'	validator := nethttpmiddleware.OapiRequestValidatorWithOptions(' \
+		$'	_ = http.NewServeMux()\n	validator := nethttpmiddleware.OapiRequestValidatorWithOptions(' \
+		./internal/server/ '^TestNoRoutesOutsideTheDocument$' TestNoRoutesOutsideTheDocument
+	begin
+	deps_probe m4-arazzotest-rule-fires probe_m4.go "$m/internal/arazzotest" "deps_violation=$m imports $m/internal/arazzotest"
+	deps_probe m4-arazzotest-rule-fires cmd/agentmesh-mcponly/probe_m4.go "$m/internal/arazzotest" "deps_violation=$m/cmd/agentmesh-mcponly imports $m/internal/arazzotest"
+	finish m4-arazzotest-rule-fires
+	mutate_rm_block arazzo-refusal-fixture-missing internal/arazzotest/testdata/refuse-operation-path.arazzo.yaml \
+		./internal/arazzotest/ '^TestRefusalCoverage$' TestRefusalCoverage
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1447,6 +1514,7 @@ block_wire_roundtrip_fires
 block_tool_coverage_fires
 block_error_responses_fire
 block_spec_bounds_fire
+block_spec_validation_fires
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"

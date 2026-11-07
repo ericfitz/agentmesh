@@ -480,3 +480,40 @@ Plan and controller rulings (2026-11-07; Eric may overrule; not his decisions):
 - The `env:*,x` comma-no-split check of `internal/gen/openapi31_test.go` was dropped: the tag pattern now refuses a comma.
 - The protocol version stays `1.0.0` (pre-release rule).
 - Checks: `TestSpecBounds`, `TestValidatorRefusesOverBound`, `TestOverBoundRefused` and `TestAtBoundAccepted` (Bus suite, `local` transport); mutations: `scripts/check-gates-selftest.sh` block 37.
+
+## Spec validation addendum (issue #32)
+
+Eric's decisions (2026-11-06):
+
+- Decision 1: response validation lives in the test suites only (`internal/respcheck`, issue #33); the production server validates requests and never its responses.
+- Decision 2: `spec-lint` is part of `make verify`, fails fast with an install hint, CI installs a pinned vacuum, and the ruleset disables `info-license` and `info-contact`, citing issue #35.
+- Decision 3: the journeys come from the `profile:journeys` skill and Eric tunes them by hand; the `openapi:arazzo` skill emits `arazzo.yaml`; a small test-only Go runner over kin-openapi runs them against the e2e server. It supports steps by operationId, runtime-expression parameters and bodies, success criteria on status and JSON pointer, and step outputs, refuses any other feature loudly and has its own tests.
+
+Where things live: the ruleset is `api/vacuum-ruleset.yaml` (extends `all`, seven rules off, each with its reason in the file); the gate is `make spec-lint` (`VACUUM_VERSION` 0.36.2, exact; `-n info`, so a finding of any severity fails; two failure texts: not installed, wrong version). `api/arazzo.yaml` and `docs/journeys.md` are written after Eric's hand-tuning of the journeys (the plan's controller steps C2 to C4); the runner is `internal/arazzotest`, test-only, kept out of both binaries by the m4 rule (`scripts/m4-exit-checks.sh`).
+
+The route completeness test is two directions and says what it proves. `TestNoRoutesOutsideTheDocument` (`internal/server/routes_test.go`, go/ast) allows one `http.NewServeMux` and one `gen.HandlerWithOptions` call, both in `server.go`; `TestDeclaredMethodsRouted` and `TestUndeclaredMethodsRefused` probe every documented path through `server.New`. Stated limit: a 400 from the validator proves the router matched, not that the handler ran; the handler's presence is `var _ gen.StrictServerInterface = (*api)(nil)`, and `generate-check` keeps the generated router equal to the YAML. `TestOperationShape` (`internal/gen`) pins operationId, summary, one defined tag and a 2xx per operation.
+
+The runner's supported surface (plan ruling 9) is steps by operationId; path, query and header parameters; JSON and form bodies; `$inputs`, `$steps`, `$statusCode`, `$response.body` and `$response.body#/pointer`; `==` and `!=` criteria; outputs; and `dependsOn` as a check. Every other Arazzo feature is refused by name with an `*UnsupportedError`, one fixture each (`TestRefusalCoverage`, `TestRefusalsTieToSource`).
+
+Plan rulings (2026-11-07; Eric may overrule; not his decisions):
+
+- Ruling 1: the ruleset extends `all`, not `recommended`, and the gate runs at `-n info`.
+- Ruling 2: seven rules are off, each with a reason in the ruleset; everything else was fixed. Eric should see `oas3-missing-example` (issue #30 decides the examples).
+- Ruling 3: exact version pin, one variable (`VACUUM_VERSION`), two failure texts; CI installs vacuum with `go install` in every job that reaches `spec-lint`.
+- Ruling 4: the ruleset lives at `api/vacuum-ruleset.yaml`, the Arazzo document at `api/arazzo.yaml`, the journeys at `docs/journeys.md`; no `apis.yaml`.
+- Ruling 5: `DELETE` and `PATCH /v1/channels/{channel}` are tagged `[channels]` only (their rule is the channel ACL's `Admin`, not the administrator flag).
+- Ruling 6: summaries and descriptions are sourced from the Bus types and handlers, not invented.
+- Ruling 7: the completeness test is a scan plus a probe, with the limit above.
+- Ruling 8: `TestOperationShape` is the Go test for "operationId, summary, security, responses"; descriptions are vacuum's job.
+- Ruling 9: the runner's supported surface, exactly as listed above.
+- Ruling 10: the bearer travels as an Arazzo header parameter, never injected by the runner. Eric should see this one.
+- Ruling 11: the bridges workflow asserts the documented 503 `unavailable` of a server with no Slack tokens.
+- Ruling 12: admin bootstrap is split at the listener: host commands stay in Go, the workflow covers the API half.
+- Ruling 13: runner fixtures are recorded request logs under `internal/arazzotest/testdata/`.
+- Ruling 14: spec descriptions and `spec-lint` landed before the human gate.
+- The token endpoint's 405 stays undeclared in the spec: OpenAPI cannot attach a response to a method that has no operation (ADR 0002 line 729 records the special case).
+- A braced-only string such as `'{$x}'` yields a string; only a bare `$x` keeps the resolved value's type.
+- `Load` refuses a step without `successCriteria`.
+- Mutations: `scripts/check-gates-selftest.sh` block 38.
+
+Open for Eric: the bridges journey's fixture. Ruling 11 runs it against the e2e server and asserts the documented 503; the alternative is a second fixture whose server is wired to `internal/slackapi/slackfake`, which needs a test-only server flag or an in-process server in `internal/e2e`.
