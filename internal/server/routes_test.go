@@ -1,0 +1,199 @@
+package server
+
+import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+
+	"github.com/getkin/kin-openapi/openapi3"
+)
+
+// routeSiteNames are the selector names that register or build a route.
+// Method values and package-level http.Handle calls are selectors too, so a
+// scan of call expressions with these names finds them.
+var routeSiteNames = map[string]bool{
+	"Handle": true, "HandleFunc": true, "NewServeMux": true,
+	"HandlerFromMux": true, "HandlerFromMuxWithBaseURL": true, "HandlerWithOptions": true,
+}
+
+// TestNoRoutesOutsideTheDocument pins that the server has no route the
+// document does not generate: the one mux comes from gen.HandlerWithOptions in
+// server.go, and no other non-test file of the packages that build or wire the
+// server registers a route.
+func TestNoRoutesOutsideTheDocument(t *testing.T) {
+	allow := map[string]int{"server.go:NewServeMux": 1, "server.go:HandlerWithOptions": 1}
+	got := map[string]int{}
+	var positions []string
+	fset := token.NewFileSet()
+	for _, dir := range []string{".", "cmd", "../client/localmode"} {
+		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(files) == 0 {
+			t.Fatalf("no Go files in %s", dir)
+		}
+		for _, f := range files {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			src, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			file, err := parser.ParseFile(fset, f, src, parser.SkipObjectResolution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || !routeSiteNames[sel.Sel.Name] {
+					return true
+				}
+				key := filepath.Base(f) + ":" + sel.Sel.Name
+				got[key]++
+				positions = append(positions, fmt.Sprintf("%s: %s", fset.Position(call.Pos()), key))
+				return true
+			})
+		}
+	}
+	sort.Strings(positions)
+	for key, n := range got {
+		if allow[key] != n {
+			t.Errorf("route site %s: %d, allowed %d\n%s", key, n, allow[key], strings.Join(positions, "\n"))
+		}
+	}
+	for key, n := range allow {
+		if _, seen := got[key]; !seen {
+			t.Errorf("route site %s: 0, want %d (allowlist is stale)", key, n)
+		}
+	}
+}
+
+var routeSamples = strings.NewReplacer(
+	"{channel}", "c1", "{scope}", "s1", "{identity}", "pat", "{session}", "sess1", "{id}", "1")
+
+var routeMethods = []string{"GET", "POST", "PUT", "PATCH", "DELETE"}
+
+// routeProbe builds the same request shape for every probe: no query, and a
+// body only where the operation declares one.
+func routeProbe(t *testing.T, method, path string, op *openapi3.Operation) *http.Request {
+	t.Helper()
+	url := "http://inproc" + routeSamples.Replace(path)
+	if strings.ContainsAny(url, "{}") {
+		t.Fatalf("path %s has an unsampled parameter", path)
+	}
+	var body *strings.Reader
+	ctype := ""
+	switch {
+	case op != nil && op.OperationID == "token":
+		body, ctype = strings.NewReader("grant_type=client_credentials"), "application/x-www-form-urlencoded"
+	case op != nil && op.RequestBody != nil:
+		body, ctype = strings.NewReader("{}"), "application/json"
+	}
+	var req *http.Request
+	var err error
+	if body != nil {
+		req, err = http.NewRequest(method, url, body)
+		if err == nil {
+			req.Header.Set("Content-Type", ctype)
+		}
+	} else {
+		req, err = http.NewRequest(method, url, nil)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+// TestDeclaredMethodsRouted sends every documented (method, path) through
+// server.New and asserts the answer is not the router's refusal. A 400 from
+// the validator proves the router matched, not that the handler ran; the
+// handler's presence is the compile-time StrictServerInterface.
+func TestDeclaredMethodsRouted(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.identity("root", true)
+	n := 0
+	for path, item := range Spec().Paths.Map() {
+		for method, op := range item.Operations() {
+			n++
+			t.Run(lowerFirst(op.OperationID), func(t *testing.T) {
+				resp := e.rawAllowUnrouted("root", routeProbe(t, method, path, op))
+				if resp.StatusCode == http.StatusMethodNotAllowed {
+					t.Fatalf("%s %s: 405", method, path)
+				}
+				if op.OperationID == "token" {
+					return // the OAuth error object: any 4xx is routed
+				}
+				if resp.StatusCode == http.StatusNotFound {
+					p := readProblem(t, resp)
+					d := ""
+					if p.Detail != nil {
+						d = *p.Detail
+					}
+					if strings.Contains(d, "no matching operation was found") || strings.Contains(d, "method not allowed") {
+						t.Fatalf("%s %s: router refusal: %s", method, path, d)
+					}
+				}
+			})
+		}
+	}
+	t.Run("count", func(t *testing.T) {
+		if n != 57 {
+			t.Fatalf("%d operations probed, want 57", n)
+		}
+	})
+}
+
+// TestUndeclaredMethodsRefused sends every method the document does not
+// declare on a documented path and asserts the router's refusal.
+func TestUndeclaredMethodsRefused(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.identity("root", true)
+	n := 0
+	for path, item := range Spec().Paths.Map() {
+		for _, method := range routeMethods {
+			if item.GetOperation(method) != nil {
+				continue
+			}
+			n++
+			t.Run(method+" "+path, func(t *testing.T) {
+				resp := e.rawAllowUnrouted("root", routeProbe(t, method, path, nil))
+				if path == tokenPath {
+					// The token endpoint answers in RFC 6749's shape, before the router.
+					body, _ := io.ReadAll(resp.Body)
+					want := `{"error":"invalid_request","error_description":"the token endpoint accepts POST only"}` + "\n"
+					if resp.StatusCode != http.StatusMethodNotAllowed || string(body) != want {
+						t.Fatalf("token path: got %d %q, want 405 %q", resp.StatusCode, body, want)
+					}
+					return
+				}
+				p := readProblem(t, resp)
+				if resp.StatusCode != http.StatusNotFound || string(p.Code) != "not_found" {
+					t.Fatalf("got %d %s, want 404 not_found", resp.StatusCode, p.Code)
+				}
+				if p.Detail == nil || !strings.Contains(*p.Detail, "method not allowed") {
+					t.Fatalf("detail %v does not contain %q", p.Detail, "method not allowed")
+				}
+			})
+		}
+	}
+	t.Run("count", func(t *testing.T) {
+		if want := len(Spec().Paths.Map())*len(routeMethods) - 57; n != want {
+			t.Fatalf("%d undeclared probes, want %d", n, want)
+		}
+	})
+}
