@@ -1021,7 +1021,7 @@ func TestTokenFormBounds(t *testing.T) {
 			// another reason (never the size).
 			resp := post(map[string]string{c.field: strings.Repeat("a", c.max)})
 			b := readBody(t, resp)
-			if strings.Contains(b, "exceeds") {
+			if strings.Contains(b, "exceeds") || strings.Contains(b, tokenFormRefused) {
 				t.Fatalf("%s at the bound refused for size: %d %s", c.field, resp.StatusCode, b)
 			}
 		})

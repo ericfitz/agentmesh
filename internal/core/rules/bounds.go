@@ -28,6 +28,8 @@ const (
 	// MaxSearchCursorLen is the digits of math.MaxInt64: a search cursor is a
 	// decimal offset.
 	MaxSearchCursorLen = 19
+	// SearchCursorPattern is the shape of a search cursor for api/openapi.yaml.
+	SearchCursorPattern = "^[0-9]+$"
 )
 
 func tooLong(field string, limit int, unit string) error {

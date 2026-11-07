@@ -135,7 +135,7 @@ var bounds = map[string]bound{
 	"operations/listTasks/query/status":          labelBound("listTasks status"),
 	"operations/search/query/channel":            nameBound("search channel"),
 	"operations/search/query/count":              countBound(rules.SearchPageMax, "", "rules.SearchPageMax"),
-	"operations/search/query/cursor":             {MaxLength: n(rules.MaxSearchCursorLen), Pattern: "^[0-9]+$", Unit: codePoints, Source: "rules.MaxSearchCursorLen; strconv.Atoi"},
+	"operations/search/query/cursor":             {MaxLength: n(rules.MaxSearchCursorLen), Pattern: rules.SearchCursorPattern, Unit: codePoints, Source: "rules.MaxSearchCursorLen; strconv.Atoi"},
 	"operations/search/query/q":                  {MaxLength: n(rules.MaxQueryRunes), Unit: codePoints, Source: "rules.MaxQueryRunes; ruling 9"},
 	"operations/search/query/sender":             nameBound("search sender"),
 	"operations/search/query/since":              idBound("search since"),
@@ -438,10 +438,8 @@ func TestValidatorCountsEncodedPath(t *testing.T) {
 		t.Fatalf("fixture: %d bytes, %d encoded", len(name), len(url.PathEscape(name)))
 	}
 	code, body = statusReq(t, e, "alice", http.MethodGet, "/v1/channels/"+url.PathEscape(name)+"/acl", "", "")
-	if code == 400 {
-		if _, detail := problemDetail(t, body); strings.Contains(detail, "maxLength: got") {
-			t.Errorf("the validator refused 384 encoded characters: %s", detail)
-		}
+	if strings.Contains(string(body), "maxLength: got") {
+		t.Errorf("the validator refused 384 encoded characters (status %d): %s", code, body)
 	}
 }
 
