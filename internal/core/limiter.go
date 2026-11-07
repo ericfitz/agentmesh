@@ -65,6 +65,9 @@ func (l *Limiter) Check(identity string, n int, now time.Time) (ok bool, wait ti
 	if d := 1 - bk.count; d > 0 {
 		wait = time.Duration(d / l.perSec * float64(time.Second))
 	}
+	// n above byteCap never reaches here: the envelope limit (append.go:50,
+	// max_message_kib) refuses it first and byteCap is at least that limit, so
+	// the bytes wait is always for a state the bucket can reach.
 	if d := float64(n) - bk.bytes; d > 0 {
 		wait = max(wait, time.Duration(d/l.bytesSec*float64(time.Second)))
 	}

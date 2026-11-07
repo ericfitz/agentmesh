@@ -87,6 +87,11 @@ func WriteProblem(w http.ResponseWriter, r *http.Request, status int, code bus.C
 
 func writeProblemBody(w http.ResponseWriter, p gen.Problem) {
 	w.Header().Set("Content-Type", "application/problem+json")
+	// Every 429 carries Retry-After (issue #33 decision 1); responseError sets
+	// the limiter's wait first, any other writer gets the one-second floor.
+	if p.Status == http.StatusTooManyRequests && w.Header().Get("Retry-After") == "" {
+		w.Header().Set("Retry-After", "1")
+	}
 	w.WriteHeader(p.Status)
 	_ = json.NewEncoder(w).Encode(p)
 }

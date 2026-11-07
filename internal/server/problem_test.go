@@ -149,3 +149,23 @@ func TestRetryAfterSeconds(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteProblem429CarriesRetryAfter(t *testing.T) {
+	r := httptest.NewRequest("GET", "/v1/x", nil)
+	rec := httptest.NewRecorder()
+	WriteProblem(rec, r, 429, bus.CodeRateLimited, "slow", true)
+	if got := rec.Header().Get("Retry-After"); got != "1" {
+		t.Errorf("WriteProblem 429 Retry-After = %q, want 1", got)
+	}
+	rec = httptest.NewRecorder()
+	WriteProblem(rec, r, 409, bus.CodeConflict, "x", false)
+	if _, has := rec.Header()["Retry-After"]; has {
+		t.Error("a 409 carries Retry-After")
+	}
+	// responseError's own value is not overwritten by the floor.
+	rec = httptest.NewRecorder()
+	responseError(rec, r, core.RateLimited(5*time.Second, "x"))
+	if got := rec.Header().Get("Retry-After"); got != "5" {
+		t.Errorf("responseError Retry-After = %q, want 5", got)
+	}
+}

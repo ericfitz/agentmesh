@@ -103,3 +103,40 @@ func TestCheckReturnsWait(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckWaitWhenBothInDebt(t *testing.T) {
+	now := time.UnixMilli(startMs)
+	// Count deficit larger: 1 msg/s, 640 KiB/s; the byte bucket stays positive.
+	l := NewLimiter(1, 640, 1)
+	for range 4 {
+		l.Charge("pat", 1024, now)
+	}
+	// count started at 1, four charges leave -3: deficit 1-(-3) = 4 s.
+	if ok, wait := l.Check("pat", 1, now); ok || wait != 4*time.Second {
+		t.Fatalf("count-dominant wait = %v (ok=%v), want 4s", wait, ok)
+	}
+	// Bytes deficit larger: 100 msg/s, 64 KiB/s. Byte bucket driven to -64 KiB
+	// by two full charges, count barely used.
+	l = NewLimiter(100, 64, 1)
+	l.Charge("kim", 64*1024, now)
+	l.Charge("kim", 64*1024, now)
+	l.Charge("kim", 64*1024, now)
+	for range 99 {
+		l.Charge("kim", 0, now)
+	}
+	ok, wait := l.Check("kim", 1024, now)
+	// count: 100-3-99 = -2, deficit 3 -> 30ms; bytes: 64K-3*64K = -128K,
+	// need 1 KiB more -> (1024+128*1024)/(64*1024) s = 2.015625 s.
+	if want := time.Duration((float64(1024) + 128*1024) / (64 * 1024) * float64(time.Second)); ok || wait != want {
+		t.Fatalf("bytes-dominant wait = %v (ok=%v), want %v", wait, ok, want)
+	}
+	if wait <= 30*time.Millisecond {
+		t.Fatalf("wait %v did not take the larger deficit", wait)
+	}
+	// Never negative on a refused path.
+	for _, n := range []int{0, 1, 1 << 20} {
+		if ok, w := l.Check("kim", n, now); !ok && w < 0 {
+			t.Errorf("negative wait %v", w)
+		}
+	}
+}
