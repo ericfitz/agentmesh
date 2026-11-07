@@ -1,0 +1,86 @@
+arazzo: 1.0.1
+info:
+  title: Runner fixture
+  summary: Every supported feature once
+  version: 1.0.0
+sourceDescriptions:
+  - name: api
+    url: openapi.yaml
+    type: openapi
+workflows:
+  - workflowId: login
+    summary: Exchange a client id for a token
+    inputs:
+      type: object
+      required: [client]
+      properties:
+        client: {type: string}
+    steps:
+      - stepId: token
+        operationId: token
+        requestBody:
+          contentType: application/x-www-form-urlencoded
+          payload:
+            grant_type: client_credentials
+            client_id: "{$inputs.client}"
+        successCriteria:
+          - condition: $statusCode == 200
+        outputs:
+          access_token: $response.body#/access_token
+    outputs:
+      access_token: $steps.token.outputs.access_token
+  - workflowId: things
+    description: Create, read and list
+    dependsOn: [login]
+    inputs:
+      type: object
+      required: [bearer]
+      properties:
+        bearer: {type: string}
+    steps:
+      - stepId: create
+        description: Create a thing
+        operationId: createThing
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: x
+            count: 2
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          id: $response.body#/id
+      - stepId: get
+        operationId: getThing
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create.outputs.id
+          - name: verbose
+            in: query
+            value: true
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: '$response.body#/state == "ok"'
+          - condition: '$response.body#/tags/0 == "a"'
+          - condition: '$response.body#/id != 0'
+        outputs:
+          state: $response.body#/state
+      - stepId: list
+        operationId: listThings
+        parameters:
+          - name: limit
+            in: query
+            value: 5
+        successCriteria:
+          - condition: $statusCode == 200
+        outputs:
+          first: $response.body#/items/0/id
+    outputs:
+      id: $steps.create.outputs.id
+      state: $steps.get.outputs.state
+      first: $steps.list.outputs.first

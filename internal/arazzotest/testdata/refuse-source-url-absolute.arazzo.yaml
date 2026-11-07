@@ -1,0 +1,7 @@
+arazzo: 1.0.1
+info: {title: refusal, version: 1.0.0}
+sourceDescriptions:
+  - {name: api, url: /etc/openapi.yaml, type: openapi}
+workflows:
+  - workflowId: w
+    steps: []

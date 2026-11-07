@@ -1,0 +1,28 @@
+openapi: 3.0.3
+info: {title: arazzotest fixture, version: 1.0.0}
+paths:
+  /token:
+    post:
+      operationId: token
+      responses: {"200": {description: ok}}
+  /things:
+    get:
+      operationId: listThings
+      responses: {"200": {description: ok}}
+    post:
+      operationId: createThing
+      responses: {"201": {description: created}}
+  /things/{id}:
+    get:
+      operationId: getThing
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses: {"200": {description: ok}}
+  /links:
+    post:
+      operationId: linkThings
+      responses: {"200": {description: ok}}
+  /plain:
+    get:
+      operationId: getPlain
+      responses: {"200": {description: ok}}

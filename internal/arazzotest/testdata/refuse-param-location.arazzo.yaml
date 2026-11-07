@@ -1,0 +1,11 @@
+arazzo: 1.0.1
+info: {title: refusal, version: 1.0.0}
+sourceDescriptions:
+  - {name: api, url: openapi.yaml, type: openapi}
+workflows:
+  - workflowId: w
+    steps:
+      - stepId: s
+        operationId: listThings
+        parameters:
+          - {name: sid, in: body, value: x}

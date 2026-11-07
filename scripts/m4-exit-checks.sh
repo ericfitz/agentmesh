@@ -17,8 +17,9 @@
 #   ./internal/server/...
 #       must not import internal/bus/local or internal/bus/remote
 #   . ./cmd/agentmesh-mcponly
-#       must not import internal/respcheck (test-only response validation,
-#       issue #33): neither binary links it
+#       must not import internal/respcheck or internal/arazzotest (test-only
+#       response validation, issue #33, and the test-only Arazzo runner, issue
+#       #32): neither binary links either
 # Prints deps_ok=1 when nothing matched; otherwise one
 # deps_violation=<package> imports <forbidden> line per hit and exits 1.
 set -euo pipefail
@@ -71,7 +72,9 @@ import_check() {
 	check_deps ./internal/bus/remote internal/server internal/core internal/gen/spec github.com/getkin/kin-openapi
 	check_deps './internal/server/...' internal/bus/local internal/bus/remote
 	check_deps . internal/respcheck
+	check_deps . internal/arazzotest
 	check_deps ./cmd/agentmesh-mcponly internal/respcheck
+	check_deps ./cmd/agentmesh-mcponly internal/arazzotest
 	if [ "$violations" -ne 0 ]; then
 		return 1
 	fi

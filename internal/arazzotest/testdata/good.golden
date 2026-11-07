@@ -1,0 +1,15 @@
+== requests
+POST /token | Authorization:  | Content-Type: application/x-www-form-urlencoded | client_id=c1&grant_type=client_credentials
+POST /things | Authorization: Bearer tok | Content-Type: application/json | {"count":2,"name":"x"}
+GET /things/41?verbose=true | Authorization:  | Content-Type:  | 
+GET /things?limit=5 | Authorization:  | Content-Type:  | 
+== outputs login
+{
+  "access_token": "tok"
+}
+== outputs things
+{
+  "first": 41,
+  "id": 41,
+  "state": "ok"
+}

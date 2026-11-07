@@ -1,0 +1,73 @@
+arazzo: 1.0.0
+info: {title: Runner fixture, version: 1.0.0}
+sourceDescriptions:
+  - {name: api, url: openapi.yaml, type: openapi}
+workflows:
+  - workflowId: link
+    inputs:
+      type: object
+      required: [label, bearer]
+      properties:
+        label: {type: string}
+        bearer: {type: string}
+    steps:
+      - stepId: create
+        operationId: createThing
+        parameters:
+          - {name: Authorization, in: header, value: "Bearer {$inputs.bearer}"}
+        requestBody:
+          contentType: application/json
+          payload: {name: x, count: 2}
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          id: $response.body#/id
+      - stepId: link
+        operationId: linkThings
+        requestBody:
+          contentType: application/json
+          payload:
+            from: $steps.create.outputs.id
+            label: "thing-{$inputs.label}"
+            both: "{$steps.create.outputs.id}"
+            html: "a<b&c"
+        successCriteria:
+          - condition: $statusCode == 200
+  - workflowId: escape
+    inputs:
+      type: object
+      required: [id]
+      properties:
+        id: {type: string}
+    steps:
+      - stepId: get
+        operationId: getThing
+        parameters:
+          - {name: id, in: path, value: $inputs.id}
+        successCriteria:
+          - condition: $statusCode == 404
+  - workflowId: conditions
+    steps:
+      - stepId: get
+        operationId: getThing
+        parameters:
+          - {name: id, in: path, value: "41"}
+        successCriteria:
+          - condition: '$response.body#/state == "ok"'
+          - condition: '$response.body#/flag == true'
+          - condition: '$response.body#/other == false'
+          - condition: '$response.body#/none == null'
+          - condition: '$response.body#/id != 0'
+          - condition: '$response.body#/id != "41"'
+          - condition: '$response.body#/a~1b == 5'
+          - condition: '$response.body#/m~0n == 1'
+          - condition: '$response.body#/tags/0 == "a"'
+          - condition: '$response.body#/state != "bad == state"'
+  - workflowId: conditionsfail
+    steps:
+      - stepId: get
+        operationId: getThing
+        parameters:
+          - {name: id, in: path, value: "41"}
+        successCriteria:
+          - condition: '$response.body#/state != "ok"'
