@@ -299,6 +299,7 @@ deps_probe() {
 	local label="$1" file="$2" import="$3" want="$4" script="${5:-m4-exit-checks.sh}" log="$tmp/b12.log" rc=0 pkgname
 	pkgname="$(basename "$(dirname "$file")")"
 	case "$file" in cmd/*) pkgname=main ;; esac # a command directory holds package main
+	case "$file" in probe*.go) pkgname=main ;; esac # a root-level file is the agentmesh main package
 	printf 'package %s\n\nimport _ "%s"\n' "$pkgname" "$import" >"$wt/$file"
 	bash "$wt/scripts/$script" --deps-only >"$log" 2>&1 || rc=$?
 	if [ "$rc" -ne 1 ]; then
@@ -314,6 +315,8 @@ block_deps_rule_fires() {
 	deps_probe "$label" internal/core/probe_m4.go "$m/internal/gen" "deps_violation=$m/internal/core imports $m/internal/gen"
 	deps_probe "$label" internal/bus/remote/probe_m4.go "$m/internal/server" "deps_violation=$m/internal/bus/remote imports $m/internal/server"
 	deps_probe "$label" internal/bus/remote/probe_m4.go github.com/getkin/kin-openapi/openapi3 "deps_violation=$m/internal/bus/remote imports github.com/getkin/kin-openapi"
+	deps_probe "$label" cmd/agentmesh-mcponly/probe_m4.go "$m/internal/respcheck" "deps_violation=$m/cmd/agentmesh-mcponly imports $m/internal/respcheck"
+	deps_probe "$label" probe_m4.go "$m/internal/respcheck" "deps_violation=$m imports $m/internal/respcheck"
 	if bash "$wt/scripts/m4-exit-checks.sh" --deps-only >"$log" 2>&1; then
 		grep -qF 'deps_ok=1' "$log" || problem "$label" "clean tree: exit 0 without deps_ok=1"
 	else

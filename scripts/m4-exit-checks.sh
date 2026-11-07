@@ -16,6 +16,9 @@
 #       or any package of github.com/getkin/kin-openapi
 #   ./internal/server/...
 #       must not import internal/bus/local or internal/bus/remote
+#   . ./cmd/agentmesh-mcponly
+#       must not import internal/respcheck (test-only response validation,
+#       issue #33): neither binary links it
 # Prints deps_ok=1 when nothing matched; otherwise one
 # deps_violation=<package> imports <forbidden> line per hit and exits 1.
 set -euo pipefail
@@ -67,6 +70,8 @@ import_check() {
 	done
 	check_deps ./internal/bus/remote internal/server internal/core internal/gen/spec github.com/getkin/kin-openapi
 	check_deps './internal/server/...' internal/bus/local internal/bus/remote
+	check_deps . internal/respcheck
+	check_deps ./cmd/agentmesh-mcponly internal/respcheck
 	if [ "$violations" -ne 0 ]; then
 		return 1
 	fi
