@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/dbtest"
 	"github.com/ericfitz/agentmesh/internal/gen"
+	"github.com/ericfitz/agentmesh/internal/respcheck"
 	"github.com/ericfitz/agentmesh/internal/server"
 )
 
@@ -86,7 +88,7 @@ func TestTransportInUse(t *testing.T) {
 			if n := countingFor(h).n.Load(); n != 1 {
 				t.Fatalf("request counter = %d after one ListChannels through newBus, want 1", n)
 			}
-			c, err := gen.NewClientWithResponses("http://inproc", gen.WithHTTPClient(&http.Client{Transport: server.InProcessTransport(handlerFor(h), "pat")}))
+			c, err := gen.NewClientWithResponses("http://inproc", gen.WithHTTPClient(&http.Client{Transport: inprocTransport(h, "pat")}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,6 +102,32 @@ func TestTransportInUse(t *testing.T) {
 			if n := countingFor(h).n.Load(); n != 2 {
 				t.Fatalf("request counter = %d, want 2", n)
 			}
+		}
+	})
+}
+
+// TestInprocResponseCheckWired proves the in-process paths are behind the
+// response validator: inprocTransport must return a *respcheck.Transport over
+// the in-process transport, so a helper that unwraps it fails here.
+func TestInprocResponseCheckWired(t *testing.T) {
+	if transport != "inproc" {
+		t.Skip("the local transport has no wire")
+	}
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		h := newHarness(t, e, harnessOptions{})
+		rt, ok := inprocTransport(h, "pat").(*respcheck.Transport)
+		if !ok {
+			t.Fatalf("inprocTransport returned %T, want *respcheck.Transport", inprocTransport(h, "pat"))
+		}
+		if rt.Checker != check {
+			t.Fatalf("the transport's Checker is not the suite's")
+		}
+		cn, ok := rt.Next.(countEmptySegment)
+		if !ok {
+			t.Fatalf("the validator wraps %T, want the empty-segment counter over the in-process transport", rt.Next)
+		}
+		if got := fmt.Sprintf("%T", cn.next); got != "server.inprocTransport" {
+			t.Fatalf("the validator wraps %s, want server.inprocTransport", got)
 		}
 	})
 }

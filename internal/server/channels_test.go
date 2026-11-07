@@ -204,7 +204,7 @@ func TestTagSubscriptionsWire(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	e.identity("pat", false)
 	ctx := context.Background()
-	rec := &pathRecorder{next: InProcessTransport(e.handler(), "pat")}
+	rec := &pathRecorder{next: checkedTransport(t, InProcessTransport(e.handler(), "pat"))}
 	c, err := gen.NewClientWithResponses("http://inproc", gen.WithHTTPClient(&http.Client{Transport: rec}))
 	if err != nil {
 		t.Fatal(err)
@@ -311,7 +311,7 @@ func TestUnsubscribeTagsCommaIsOnePattern(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	e.identity("pat", false)
 	ctx := context.Background()
-	rec := &pathRecorder{next: InProcessTransport(e.handler(), "pat")}
+	rec := &pathRecorder{next: checkedTransport(t, InProcessTransport(e.handler(), "pat"))}
 	c, err := gen.NewClientWithResponses("http://inproc", gen.WithHTTPClient(&http.Client{Transport: rec}))
 	if err != nil {
 		t.Fatal(err)

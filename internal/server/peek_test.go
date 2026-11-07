@@ -55,7 +55,7 @@ func TestPeekOnTheWire(t *testing.T) {
 		t.Fatalf("include_own=maybe: status %d, want 400", got)
 	}
 
-	rec := &urlRecorder{next: InProcessTransport(s.handler(), "pat")}
+	rec := &urlRecorder{next: checkedTransport(t, InProcessTransport(s.handler(), "pat"))}
 	cl, err := gen.NewClientWithResponses("http://inproc", gen.WithHTTPClient(&http.Client{Transport: rec}))
 	if err != nil {
 		t.Fatal(err)

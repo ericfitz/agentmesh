@@ -317,7 +317,7 @@ func TestWatchClientGoneReleasesHandler(t *testing.T) {
 	s := newSessionEnv(t, nil)
 	rec := &recordingHandler{next: s.handler(), done: make(chan struct{})}
 	cl, err := gen.NewClientWithResponses("http://inproc",
-		gen.WithHTTPClient(&http.Client{Transport: InProcessTransport(rec, "pat")}))
+		gen.WithHTTPClient(&http.Client{Transport: checkedTransport(t, InProcessTransport(rec, "pat"))}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +461,9 @@ func (c *countingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // Decision (Eric, 2026-10-21): Milestone 4 item 6 (Close's empty-id guard).
 func TestSessionOddIdsOnRemote(t *testing.T) {
 	s := newSessionEnv(t, nil)
-	ct := &countingTransport{next: InProcessTransport(s.handler(), "pat")}
+	// The empty and slash-bearing ids reach no operation (the router's 404), so
+	// responses may match none.
+	ct := &countingTransport{next: checkedTransportAllowUnrouted(t, InProcessTransport(s.handler(), "pat"))}
 	cl, err := gen.NewClientWithResponses("http://inproc", gen.WithHTTPClient(&http.Client{Transport: ct}))
 	if err != nil {
 		t.Fatal(err)

@@ -178,6 +178,7 @@ func TestAuthEndToEnd(t *testing.T) {
 			if bearer != "" {
 				opts = append(opts, gen.WithRequestEditorFn(remote.WithBearer(bearer)))
 			}
+			opts = append(opts, gen.WithHTTPClient(&http.Client{Transport: check.Transport(http.DefaultTransport, func(err error) { t.Errorf("response validation: %v", err) })}))
 			cl, err := gen.NewClientWithResponses(base, opts...)
 			if err != nil {
 				t.Fatal(err)

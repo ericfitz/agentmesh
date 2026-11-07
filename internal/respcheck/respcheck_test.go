@@ -292,6 +292,21 @@ func TestTransportEdges(t *testing.T) {
 			t.Fatalf("resp %v err %v", resp, err)
 		}
 	})
+	t.Run("read_error_contract", func(t *testing.T) {
+		// The contract of Transport.RoundTrip itself, not through http.Client:
+		// a body that cannot be read returns (nil, err) and reports nothing.
+		before := col.n()
+		tr := c.Transport(rtFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: errBody{}}, nil
+		}), col.report)
+		resp, err := tr.RoundTrip(get("http://x/things/a"))
+		if resp != nil || err == nil || !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("RoundTrip = (%v, %v), want (nil, boom)", resp, err)
+		}
+		if col.n() != before {
+			t.Fatalf("a read failure reported %d violations", col.n()-before)
+		}
+	})
 }
 
 func TestProxyGzipClient(t *testing.T) {

@@ -166,7 +166,7 @@ func (e *env) identity(name string, admin bool) {
 func (e *env) client(identity string) *gen.ClientWithResponses {
 	e.t.Helper()
 	c, err := gen.NewClientWithResponses("http://inproc",
-		gen.WithHTTPClient(&http.Client{Transport: InProcessTransport(e.handler(), identity)}))
+		gen.WithHTTPClient(&http.Client{Transport: checkedTransport(e.t, InProcessTransport(e.handler(), identity))}))
 	if err != nil {
 		e.t.Fatalf("NewClientWithResponses: %v", err)
 	}
@@ -177,7 +177,20 @@ func (e *env) client(identity string) *gen.ClientWithResponses {
 // cannot build.
 func (e *env) raw(identity string, req *http.Request) *http.Response {
 	e.t.Helper()
-	resp, err := InProcessTransport(e.handler(), identity).RoundTrip(req)
+	return e.roundTrip(checkedTransportAllowUnrouted(e.t, InProcessTransport(e.handler(), identity)), req)
+}
+
+// rawUnvalidated is raw without response validation, for a request the
+// document does not promise an answer to (a body sent to a bodiless
+// operation, which limitBody may refuse with 413: ruling 2).
+func (e *env) rawUnvalidated(identity string, req *http.Request) *http.Response {
+	e.t.Helper()
+	return e.roundTrip(InProcessTransport(e.handler(), identity), req)
+}
+
+func (e *env) roundTrip(rt http.RoundTripper, req *http.Request) *http.Response {
+	e.t.Helper()
+	resp, err := rt.RoundTrip(req)
 	if err != nil {
 		e.t.Fatalf("RoundTrip %s %s: %v", req.Method, req.URL, err)
 	}

@@ -19,11 +19,16 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -34,6 +39,8 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/auth/token"
+	"github.com/ericfitz/agentmesh/internal/respcheck"
+	"github.com/ericfitz/agentmesh/internal/server"
 	"github.com/ericfitz/agentmesh/internal/sessionstate"
 )
 
@@ -61,6 +68,33 @@ type fixture struct {
 	regSam        result
 	regKimNoToken result
 	regKimControl result
+
+	// proxy is the validating reverse proxy every client call crosses (issue
+	// #33, ruling 9): the issuer the server advertises is the proxy's URL, so
+	// the token exchange crosses it too. target is the server's own address,
+	// set once its listening line gives the port.
+	proxy      *httptest.Server
+	check      *respcheck.Checker
+	target     atomic.Pointer[url.URL]
+	violations violationLog
+}
+
+// violationLog is a mutex-guarded list of response-validation failures.
+type violationLog struct {
+	mu   sync.Mutex
+	list []string
+}
+
+func (v *violationLog) add(err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.list = append(v.list, err.Error())
+}
+
+func (v *violationLog) all() []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]string(nil), v.list...)
 }
 
 // result is the outcome of one finished command.
@@ -69,7 +103,7 @@ type result struct {
 	stdout, err string
 }
 
-func (f *fixture) serverURL() string { return "http://127.0.0.1:" + f.port }
+func (f *fixture) serverURL() string { return f.proxy.URL }
 
 func environFor(home string) []string {
 	return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
@@ -157,6 +191,20 @@ func runMain(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "e2e: the server exited %d after SIGTERM, want 0\nstderr: %s\n", c, fx.srvErr.String())
 		code = 1
 	}
+	// The proxy is closed (stopServer): every response was validated.
+	if v := fx.violations.all(); len(v) != 0 {
+		fmt.Fprintf(os.Stderr, "e2e: %d response validation failures:\n", len(v))
+		for _, e := range v {
+			fmt.Fprintln(os.Stderr, "  "+e)
+		}
+		code = 1
+	}
+	// No e2e step sends a request outside the document, so an unrouted one is
+	// a mistyped path that the checker counted and never reported.
+	if n := fx.check.Skipped(); n != 0 {
+		fmt.Fprintf(os.Stderr, "e2e: %d responses matched no operation of the document, want 0\n", n)
+		code = 1
+	}
 	return code
 }
 
@@ -174,7 +222,21 @@ func startFixture(root string) (*fixture, error) {
 			return nil, err
 		}
 	}
-	f.srv = exec.Command(binPath, "server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1")
+	check, err := respcheck.New(server.Spec())
+	if err != nil {
+		return nil, err
+	}
+	f.check = check
+	f.proxy = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t := f.target.Load()
+		if t == nil {
+			http.Error(w, "the server is not listening yet", http.StatusServiceUnavailable)
+			return
+		}
+		f.check.Proxy(t, f.violations.add).ServeHTTP(w, r)
+	}))
+	f.proxy.Start()
+	f.srv = exec.Command(binPath, "server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "issuer="+f.proxy.URL)
 	f.srv.Env = environFor(filepath.Join(root, "home-server"))
 	f.srv.Stdout, f.srv.Stderr = f.srvOut, f.srvErr
 	if err := f.srv.Start(); err != nil {
@@ -194,6 +256,7 @@ func startFixture(root string) (*fixture, error) {
 				return f, fmt.Errorf("listening address %q: %w", m[1], err)
 			}
 			f.port = port
+			f.target.Store(&url.URL{Scheme: "http", Host: "127.0.0.1:" + port})
 			break
 		}
 		select {
@@ -238,6 +301,7 @@ func startFixture(root string) (*fixture, error) {
 // stopServer sends SIGTERM and returns the server's exit code (-1: it had to
 // be killed). It is safe to call twice.
 func (f *fixture) stopServer() int {
+	defer f.proxy.Close() // after the server is down; Close waits for in-flight proxy calls
 	select {
 	case <-f.srvDone:
 		return f.srvCode

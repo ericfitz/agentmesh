@@ -90,7 +90,11 @@ func TestEveryFrameworkErrorIsProblem(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			resp := e.raw(c.identity, c.req())
+			send := e.raw
+			if c.name == "oversized on open operation" {
+				send = e.rawUnvalidated // out of contract: the document declares no 413 on a bodiless operation
+			}
+			resp := send(c.identity, c.req())
 			p := readProblem(t, resp)
 			if resp.StatusCode != c.status || string(p.Code) != c.code {
 				t.Fatalf("got %d %s (%v), want %d %s", resp.StatusCode, p.Code, p.Detail, c.status, c.code)
@@ -155,7 +159,7 @@ func TestNilAuthenticatorRefuses(t *testing.T) {
 	e := newEnv(t, envOptions{})
 	e.identity("pat", false)
 	h := New(e.core, Options{})
-	rt := InProcessTransport(h, "pat")
+	rt := checkedTransport(t, InProcessTransport(h, "pat"))
 	resp, err := rt.RoundTrip(newReq(t, "GET", "/v1/channels", nil))
 	if err != nil {
 		t.Fatal(err)
