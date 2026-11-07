@@ -20,6 +20,9 @@ const taskListMsg = "%s is a task list; use task_create, task_update, task_claim
 // (Decision 49). A task row has no access row and gets none (a task must
 // never become eligible for memory expiry).
 func (s Service) Get(ctx context.Context, identity string, id int64) (bus.Message, error) {
+	if err := rules.NonNegative("id", id); err != nil {
+		return bus.Message{}, err
+	}
 	var out bus.Message
 	err := s.Store.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
 		p, err := access.Resolve(ctx, tx, identity)
@@ -55,6 +58,9 @@ func (s Service) Get(ctx context.Context, identity string, id int64) (bus.Messag
 // included (v1 MemoryRevisions). It needs read on the memory's channel and is
 // not_found when the memory has no rows.
 func (s Service) Revisions(ctx context.Context, identity string, id int64) ([]bus.Message, error) {
+	if err := rules.NonNegative("id", id); err != nil {
+		return nil, err
+	}
 	var out []bus.Message
 	err := s.Store.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
 		p, err := access.Resolve(ctx, tx, identity)
@@ -179,6 +185,19 @@ func (s Service) Edit(ctx context.Context, identity string, in bus.EditMemoryInp
 	if in.IfRevision < 0 {
 		return bus.EditResult{}, core.E(bus.CodeValidation, "if_revision must be positive")
 	}
+	if err := rules.NonNegative("id", in.ID); err != nil {
+		return bus.EditResult{}, err
+	}
+	if in.Type != nil {
+		if err := rules.CheckLabel("type", *in.Type); err != nil {
+			return bus.EditResult{}, err
+		}
+	}
+	if in.Metadata != nil {
+		if err := rules.CheckMetadata(*in.Metadata); err != nil {
+			return bus.EditResult{}, err
+		}
+	}
 	if in.Subject == nil && in.Content == nil && in.Type == nil && in.Metadata == nil && in.Tags == nil {
 		return bus.EditResult{}, core.E(bus.CodeValidation, "nothing to change: give at least one of subject, content, type, metadata or tags")
 	}
@@ -290,6 +309,9 @@ func (s Service) Edit(ctx context.Context, identity string, in bus.EditMemoryInp
 // touching the Store again (Decision 46). It charges one operation and no
 // bytes after the commit.
 func (s Service) Delete(ctx context.Context, identity string, in bus.DeleteMemoryInput) error {
+	if err := rules.NonNegative("id", in.ID); err != nil {
+		return err
+	}
 	payload := map[string]any{"delete": in.ID}
 	var replayed bool
 	err := s.Store.Tx(ctx, func(ctx context.Context, tx store.Tx) error {

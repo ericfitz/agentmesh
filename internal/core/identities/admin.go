@@ -66,6 +66,11 @@ func (s Service) ResetCredential(ctx context.Context, name string) (int, error) 
 }
 
 func resetCredential(ctx context.Context, tx store.Tx, name string) (int, error) {
+	if name != "" {
+		if err := store.NameRule(name); err != nil {
+			return 0, core.E(bus.CodeValidation, "identity %s", err)
+		}
+	}
 	if err := requireRegistered(ctx, tx, name); err != nil {
 		return 0, err
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/channels"
+	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -40,6 +41,9 @@ const errInvalidToken = "enrollment token is invalid"
 // conflict or, for the same key, success; a failed run leaves nothing, since
 // everything is one transaction.
 func (s Service) Register(ctx context.Context, mode Mode, in RegisterInput) (RegisterResult, error) {
+	if err := rules.CheckToken("enrollment_token", in.EnrollmentToken); err != nil {
+		return RegisterResult{}, err
+	}
 	// An unset or unrecognized mode refuses every register and says why; it
 	// never opens (Decision 21, Eric, 2026-10-23). Only server.New called
 	// directly can reach it: the configuration always resolves a mode.

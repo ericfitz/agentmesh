@@ -15,6 +15,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/access"
+	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -88,6 +89,9 @@ func (s Service) Require(ctx context.Context, tx store.Tx, identity, sessionID s
 // session is p's own), not_found otherwise, the same answer for a session that
 // does not exist. It checks nothing about the row's state.
 func (s Service) Owned(ctx context.Context, tx store.Tx, p access.Principal, sessionID string) (store.Session, error) {
+	if err := rules.CheckToken("session", sessionID); err != nil {
+		return store.Session{}, err
+	}
 	if err := s.Access.Require(ctx, tx, p, access.Session{ID: sessionID}, access.Use); err != nil {
 		return store.Session{}, err
 	}

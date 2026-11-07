@@ -248,7 +248,11 @@ func TestWatchClampsTimeoutToCap(t *testing.T) {
 		b, s := recvOpen(h, "pat", "dev")
 		_, err := b.Watch(context.Background(), ab2bus.WatchInput{Session: s.ID, Timeout: -1})
 		codeOf(t, err, ab2bus.CodeValidation)
-		o := awaitWatch(t, startWatch(context.Background(), b, ab2bus.WatchInput{Session: s.ID, Timeout: 10 * time.Minute}), 3*time.Second)
+		// Above the 240 s ceiling the timeout is refused; below it, above the
+		// configured cap, it clamps (issue #34).
+		_, err = b.Watch(context.Background(), ab2bus.WatchInput{Session: s.ID, Timeout: 10 * time.Minute})
+		codeOf(t, err, ab2bus.CodeValidation)
+		o := awaitWatch(t, startWatch(context.Background(), b, ab2bus.WatchInput{Session: s.ID, Timeout: 5 * time.Second}), 3*time.Second)
 		if o.err != nil || o.res.Woke || o.at < time.Second || o.at > 1500*time.Millisecond {
 			t.Fatalf("result = %+v, %v after %s; want a timeout between 1s and 1.5s", o.res, o.err, o.at)
 		}

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"github.com/ericfitz/agentmesh/internal/core/rules"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/store"
@@ -79,8 +80,14 @@ func ACLFromBus(in []bus.ACLEntry) ([]store.ACLEntry, error) {
 	if in == nil {
 		return nil, nil
 	}
+	if err := rules.CheckItems("acl", len(in)); err != nil {
+		return nil, err
+	}
 	out := make([]store.ACLEntry, 0, len(in))
 	for _, e := range in {
+		if len(e.Permissions) > len(store.AllPermissions) {
+			return nil, E(bus.CodeValidation, "at most %d permissions per ACL entry", len(store.AllPermissions))
+		}
 		var perms []store.Permission
 		for _, p := range e.Permissions {
 			sp := store.Permission(p)

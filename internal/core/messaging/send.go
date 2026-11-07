@@ -67,6 +67,20 @@ func (s Service) planSend(ctx context.Context, tx store.Tx, identity string, in 
 	if in.Channel == "" || in.Content == "" {
 		return sendPlan{}, core.E(bus.CodeValidation, "channel and content are required")
 	}
+	if err := rules.CheckLabel("type", in.Type); err != nil {
+		return sendPlan{}, err
+	}
+	if err := rules.CheckMetadata(in.Metadata); err != nil {
+		return sendPlan{}, err
+	}
+	if err := rules.CheckToken("session", in.Session); err != nil {
+		return sendPlan{}, err
+	}
+	if in.ReplyTo != nil {
+		if err := rules.NonNegative("reply_to", *in.ReplyTo); err != nil {
+			return sendPlan{}, err
+		}
+	}
 	subject, err := rules.NormalizeSubject(in.Subject)
 	if err != nil {
 		return sendPlan{}, err // a rule's *bus.Error, already validation

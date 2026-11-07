@@ -92,6 +92,92 @@ func checkBlockerCount(field string, ids []int64) error {
 	return nil
 }
 
+// checkOwnerName refuses an owner that is not a legal name; "" clears the
+// owner and passes.
+func checkOwnerName(owner string) error {
+	if owner == "" {
+		return nil
+	}
+	if err := store.NameRule(owner); err != nil {
+		return core.E(bus.CodeValidation, "owner %s", err)
+	}
+	return nil
+}
+
+// checkIDs refuses a negative id in a list, naming the field.
+func checkIDs(field string, ids []int64) error {
+	for _, id := range ids {
+		if err := rules.NonNegative(field, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkCreateBounds is the shape of a create that needs no Store: the
+// metadata and the ids.
+func checkCreateBounds(in bus.TaskCreateInput) error {
+	if err := rules.CheckMetadata(in.Metadata); err != nil {
+		return err
+	}
+	for _, f := range []struct {
+		name string
+		v    int64
+	}{{"parent", in.Parent}, {"before", in.Before}, {"after", in.After}} {
+		if err := rules.NonNegative(f.name, f.v); err != nil {
+			return err
+		}
+	}
+	return checkIDs("blocked_by", in.BlockedBy)
+}
+
+// checkPatchBounds is the shape of a patch that needs no Store: the ids, the
+// owner and status strings and the patch's own metadata (the merged map is
+// bounded again in applyPatch).
+func checkPatchBounds(p bus.TaskPatch) error {
+	if err := rules.NonNegative("task_id", p.ID); err != nil {
+		return err
+	}
+	if p.Delete {
+		return nil // a delete combined with anything is refused by applyPatch
+	}
+	if p.Status != nil {
+		if err := rules.CheckLabel("status", *p.Status); err != nil {
+			return err
+		}
+	}
+	if p.Owner != nil {
+		if err := checkOwnerName(*p.Owner); err != nil {
+			return err
+		}
+	}
+	if err := rules.CheckMetadata(p.Metadata); err != nil {
+		return err
+	}
+	if p.Parent != nil {
+		if err := rules.NonNegative("parent", *p.Parent); err != nil {
+			return err
+		}
+	}
+	if p.LeasedUntil != nil {
+		if err := rules.NonNegative("leased_until", *p.LeasedUntil); err != nil {
+			return err
+		}
+	}
+	for _, f := range []struct {
+		name string
+		v    int64
+	}{{"before", p.Before}, {"after", p.After}} {
+		if err := rules.NonNegative(f.name, f.v); err != nil {
+			return err
+		}
+	}
+	if err := checkIDs("add_blocked_by", p.AddBlockedBy); err != nil {
+		return err
+	}
+	return checkIDs("remove_blocked_by", p.RemoveBlockedBy)
+}
+
 // dedupeIDs returns ids with duplicates removed, order preserved.
 func dedupeIDs(ids []int64) []int64 {
 	if len(ids) == 0 {

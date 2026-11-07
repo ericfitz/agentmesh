@@ -138,6 +138,20 @@ func Defaults() Config {
 	}
 }
 
+// The largest value each setting accepts. The spec states them as the
+// maximum of the field the setting clamps (issue #34), so the core refuses
+// above them instead of clamping.
+const (
+	// ReceiveCountCeiling is the largest receive_max_count, and the largest
+	// count of a receive or a history request.
+	ReceiveCountCeiling = 10000
+	// WatchSecondsCeiling is the largest watch_max_seconds, and the longest
+	// timeout of a watch request, in seconds.
+	WatchSecondsCeiling = 240
+	// MessageKiBCeiling is the largest max_message_kib.
+	MessageKiBCeiling = 1024
+)
+
 // Validate applies the v1 bounds and the v2 additions; the error names the
 // offending setting.
 func (c Config) Validate() error {
@@ -149,17 +163,17 @@ func (c Config) Validate() error {
 		{"session_lease_seconds", c.SessionLeaseSeconds, 1, 86400},
 		{"lease_skew_seconds", c.LeaseSkewSeconds, 0, 300},
 		{"session_retention_hours", c.SessionRetentionHours, 1, 8760},
-		{"watch_max_seconds", c.WatchMaxSeconds, 1, 240},
+		{"watch_max_seconds", c.WatchMaxSeconds, 1, WatchSecondsCeiling},
 		{"watch_merge_seconds", c.WatchMergeSeconds, 0, 60},
 		{"maintenance_interval_seconds", c.MaintenanceIntervalSeconds, 1, 3600},
 		{"message_retention_hours", c.MessageRetentionHours, MessageFloorHours, 8760},
 		{"tombstone_min_hours", c.TombstoneMinHours, TombstoneFloorHours, 720},
 		{"receipt_retention_minutes", c.ReceiptRetentionMinutes, 1, 1440},
-		{"max_message_kib", c.MaxMessageKiB, 1, 1024},
+		{"max_message_kib", c.MaxMessageKiB, 1, MessageKiBCeiling},
 		{"send_messages_per_second", c.SendMessagesPerSecond, 1, 10000},
 		{"send_kib_per_second", c.SendKiBPerSecond, 64, 65536},
 		{"receive_default_count", c.ReceiveDefaultCount, 1, 1000},
-		{"receive_max_count", c.ReceiveMaxCount, 1, 10000},
+		{"receive_max_count", c.ReceiveMaxCount, 1, ReceiveCountCeiling},
 		{"result_default_kib", c.ResultDefaultKiB, 1, 4096},
 		{"sqlite_budget_mib", c.SQLiteBudgetMiB, 64, 1048576},
 		{"postgres_budget_mib", c.PostgresBudgetMiB, 64, 1048576},

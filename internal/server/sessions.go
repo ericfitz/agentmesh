@@ -174,9 +174,8 @@ func identityToGen(i ab2bus.IdentityInfo) gen.Identity {
 // implementation-defined out of range (arm64 saturates, amd64 gives
 // math.MinInt64), so the same request would be a clamp on one platform and a
 // "negative" validation on the other. NaN and the infinities are validation;
-// anything a Duration cannot hold saturates at its end, where the core clamps
-// the top to the configured cap (Decision 42) and rejects the bottom as
-// negative.
+// anything a Duration cannot hold saturates at its end, where the core
+// rejects the top as above its ceiling and the bottom as negative.
 func watchTimeout(seconds float64) (time.Duration, error) {
 	if math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		return 0, ab2bus.Errorf(ab2bus.CodeValidation, false, "timeout must be a finite number of seconds")

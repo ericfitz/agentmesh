@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
@@ -148,6 +149,33 @@ func prepare(in bus.SearchInput, haveEmbedder bool) (prepared, error) {
 	if strings.TrimSpace(in.Query) == "" {
 		return prepared{}, core.E(bus.CodeValidation, "query is required")
 	}
+	if utf8.RuneCountInString(in.Query) > rules.MaxQueryRunes {
+		return prepared{}, core.E(bus.CodeValidation, "query must be at most %d characters", rules.MaxQueryRunes)
+	}
+	for _, f := range []struct{ field, name string }{{"channel", in.Channel}, {"sender", in.Sender}} {
+		if f.name == "" {
+			continue
+		}
+		if err := store.NameRule(f.name); err != nil {
+			return prepared{}, core.E(bus.CodeValidation, "%s %s", f.field, err)
+		}
+	}
+	for _, f := range []struct {
+		field string
+		v     *int64
+	}{{"since", in.Since}, {"until", in.Until}} {
+		if f.v == nil {
+			continue
+		}
+		if err := rules.NonNegative(f.field, *f.v); err != nil {
+			return prepared{}, err
+		}
+	}
+	if in.Thread != nil {
+		if err := rules.AtLeastOne("thread", *in.Thread); err != nil {
+			return prepared{}, err
+		}
+	}
 	q := query.Parse(in.Query)
 	if q.Empty() {
 		return prepared{}, core.E(bus.CodeValidation, "query must contain a word; * alone matches nothing")
@@ -170,7 +198,9 @@ func prepare(in bus.SearchInput, haveEmbedder bool) (prepared, error) {
 	if p.count == 0 {
 		p.count = rules.SearchPageDefault
 	}
-	p.count = min(p.count, rules.SearchPageMax)
+	if p.count > rules.SearchPageMax {
+		return prepared{}, core.E(bus.CodeValidation, "count must be at most %d", rules.SearchPageMax)
+	}
 	if in.Cursor != "" {
 		o, err := strconv.Atoi(in.Cursor)
 		if err != nil || o < 0 {

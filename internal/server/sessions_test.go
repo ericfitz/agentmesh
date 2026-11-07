@@ -111,12 +111,19 @@ func TestWatchTimeoutWire(t *testing.T) {
 	id := s.session.Id
 
 	start := time.Now()
-	r, err := cl.WatchWithResponse(ctx, id, &gen.WatchParams{Timeout: ptrTo(600.0)})
+	// Between the configured cap (1 s here) and the ceiling (240 s) the
+	// timeout clamps to the cap; above the ceiling it is refused (issue #34).
+	r, err := cl.WatchWithResponse(ctx, id, &gen.WatchParams{Timeout: ptrTo(5.0)})
 	if err != nil || r.StatusCode() != 204 {
-		t.Fatalf("timeout=600: %v %v", err, r)
+		t.Fatalf("timeout=5: %v %v", err, r)
 	}
 	if d := time.Since(start); d < time.Second || d > 1500*time.Millisecond {
-		t.Errorf("timeout=600 took %v, want between 1s and 1.5s", d)
+		t.Errorf("timeout=5 took %v, want between 1s and 1.5s", d)
+	}
+
+	r, err = cl.WatchWithResponse(ctx, id, &gen.WatchParams{Timeout: ptrTo(600.0)})
+	if err != nil || r.StatusCode() != 400 || len(r.Body) == 0 || problemOf(t, r.Body).Code != "validation" {
+		t.Fatalf("timeout=600: %v %s", err, r.Body)
 	}
 
 	r, err = cl.WatchWithResponse(ctx, id, &gen.WatchParams{Timeout: ptrTo(-1.0)})
@@ -154,7 +161,8 @@ func TestWatchTimeoutWire(t *testing.T) {
 // be answered the same on every platform. A float to int64 conversion out of
 // range is implementation-defined (arm64 saturates, amd64 gives MinInt64), so
 // NaN and the infinities are validation, anything above the cap is clamped to
-// it (Decision 42) and anything below zero is validation, whatever the CPU.
+// it (Decision 42) up to the 240 s ceiling, anything above the ceiling or
+// below zero is validation, whatever the CPU (issue #34).
 // Decision (Eric, 2026-10-21): Milestone 4 item 4 (watch timeout as fractional seconds).
 func TestWatchTimeoutRangeWire(t *testing.T) {
 	s := newSessionEnv(t, func(c *core.Config) { c.WatchMaxSeconds = 1 })
@@ -163,9 +171,10 @@ func TestWatchTimeoutRangeWire(t *testing.T) {
 		query  string
 		status int // 400 is problem+json validation, 204 waited the cap
 	}{
+		{"5", 204}, {"240", 204}, {"240.5", 400},
 		{"NaN", 400}, {"Inf", 400}, {"-Inf", 400}, {"infinity", 400},
 		{"-1e300", 400}, {"-1e19", 400},
-		{"1e10", 204}, {"1e19", 204}, {"1e300", 204}, {"9223372036.9", 204},
+		{"1e10", 400}, {"1e19", 400}, {"1e300", 400}, {"9223372036.9", 400},
 	} {
 		start := time.Now()
 		resp := s.raw("pat", newReq(t, "GET", "/v1/sessions/"+id+"/watch?timeout="+tc.query, nil))

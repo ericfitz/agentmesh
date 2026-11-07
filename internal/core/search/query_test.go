@@ -26,7 +26,8 @@ func TestPrepareValidation(t *testing.T) {
 		{"default mode no embedder", bus.SearchInput{Query: "a"}, false, "", "text", 100, 0},
 		{"default mode embedder", bus.SearchInput{Query: "a"}, true, "", "both", 100, 0},
 		{"zero count defaults", bus.SearchInput{Query: "a", Count: 0}, false, "", "text", 100, 0},
-		{"count capped", bus.SearchInput{Query: "a", Count: 5000, Cursor: "7"}, false, "", "text", 1000, 7},
+		{"count above the maximum", bus.SearchInput{Query: "a", Count: 5000, Cursor: "7"}, false, bus.CodeValidation, "", 0, 0},
+		{"count at the maximum", bus.SearchInput{Query: "a", Count: 1000, Cursor: "7"}, false, "", "text", 1000, 7},
 		{"explicit semantic", bus.SearchInput{Query: "a", Mode: "semantic", Count: 3}, false, "", "semantic", 3, 0},
 	}
 	for _, c := range cases {

@@ -17,6 +17,19 @@ import (
 // After. The result is trimmed in fetch order, so the rows nearest the
 // caller's cursor survive.
 func (s Service) History(ctx context.Context, identity string, in bus.HistoryInput) ([]bus.Message, error) {
+	if in.Count > core.ReceiveCountCeiling {
+		return nil, core.E(bus.CodeValidation, "count must be at most %d", core.ReceiveCountCeiling)
+	}
+	for _, f := range []struct {
+		name string
+		v    *int64
+	}{{"after", in.After}, {"before", in.Before}} {
+		if f.v != nil {
+			if err := rules.NonNegative(f.name, *f.v); err != nil {
+				return nil, err
+			}
+		}
+	}
 	var out []bus.Message
 	err := s.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
 		out = nil

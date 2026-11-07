@@ -17,6 +17,9 @@ import (
 // must not fail because the write could not happen (the next read, update or
 // maintenance pass reclaims).
 func (s Service) Get(ctx context.Context, identity string, id int64) (bus.Task, error) {
+	if err := rules.NonNegative("task_id", id); err != nil {
+		return bus.Task{}, err
+	}
 	for pass := 0; ; pass++ {
 		var (
 			t         task
@@ -67,6 +70,12 @@ func (s Service) Get(ctx context.Context, identity string, id int64) (bus.Task, 
 func (s Service) List(ctx context.Context, identity string, in bus.TaskListInput) ([]bus.TaskSummary, error) {
 	if in.Channel == "" {
 		return nil, core.E(bus.CodeValidation, "channel is required")
+	}
+	if err := rules.CheckLabel("status", in.Status); err != nil {
+		return nil, err
+	}
+	if err := checkOwnerName(in.Owner); err != nil {
+		return nil, err
 	}
 	if in.Status != "" && !isTaskStatus(in.Status) {
 		return nil, core.E(bus.CodeValidation, "status must be pending, in_progress, or completed")

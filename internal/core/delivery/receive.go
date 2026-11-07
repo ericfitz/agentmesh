@@ -121,6 +121,23 @@ func (s Service) Receive(ctx context.Context, identity string, in bus.ReceiveInp
 	if count < 0 {
 		return bus.ReceiveResult{}, core.E(bus.CodeValidation, "count must not be negative")
 	}
+	if count > core.ReceiveCountCeiling {
+		return bus.ReceiveResult{}, core.E(bus.CodeValidation, "count must be at most %d", core.ReceiveCountCeiling)
+	}
+	if err := rules.CheckToken("session", in.Session); err != nil {
+		return bus.ReceiveResult{}, err
+	}
+	if err := rules.CheckToken("ack", in.Ack); err != nil {
+		return bus.ReceiveResult{}, err
+	}
+	if err := rules.CheckItems("channels", len(in.Channels)); err != nil {
+		return bus.ReceiveResult{}, err
+	}
+	for _, name := range in.Channels {
+		if err := store.NameRule(name); err != nil {
+			return bus.ReceiveResult{}, core.E(bus.CodeValidation, "channel %s", err)
+		}
+	}
 	if count == 0 {
 		count = s.Cfg.ReceiveDefaultCount
 	}

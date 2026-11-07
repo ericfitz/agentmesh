@@ -7,6 +7,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/access"
+	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -27,13 +28,19 @@ func (s Service) Open(ctx context.Context, identity string, in bus.OpenSessionIn
 	if in.ResumeToken != "" && !validToken(in.ResumeToken) {
 		return bus.Session{}, core.E(bus.CodeValidation, "resume_token is malformed")
 	}
+	if err := rules.CheckItems("cursors", len(in.Cursors)); err != nil {
+		return bus.Session{}, err
+	}
 	seen := make(map[string]bool, len(in.Cursors))
 	for _, oc := range in.Cursors {
 		if oc.Channel == "" {
 			return bus.Session{}, core.E(bus.CodeValidation, "cursor channel is required")
 		}
-		if oc.Seq < 0 {
-			return bus.Session{}, core.E(bus.CodeValidation, "cursor for %q: seq must not be negative", oc.Channel)
+		if err := store.NameRule(oc.Channel); err != nil {
+			return bus.Session{}, core.E(bus.CodeValidation, "cursor channel %s", err)
+		}
+		if err := rules.NonNegative("cursor seq", oc.Seq); err != nil {
+			return bus.Session{}, err
 		}
 		if seen[oc.Channel] {
 			return bus.Session{}, core.E(bus.CodeValidation, "cursor for %q is offered twice", oc.Channel)

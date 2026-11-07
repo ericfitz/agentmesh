@@ -8,6 +8,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/access"
+	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -82,6 +83,9 @@ func applyPatch(ts []task, cur task, p bus.TaskPatch, as string, now int64, owne
 			} else {
 				merged[k] = v
 			}
+		}
+		if err := rules.CheckMetadata(merged); err != nil {
+			return task{}, err
 		}
 		if len(merged) == 0 {
 			merged = nil
@@ -226,6 +230,9 @@ func applyPatch(ts []task, cur task, p bus.TaskPatch, as string, now int64, owne
 // the patch, the size gate, the rate limit, the write. The limiter is charged
 // after the commit.
 func (s Service) Update(ctx context.Context, identity string, p bus.TaskPatch) (bus.TaskUpdateResult, error) {
+	if err := checkPatchBounds(p); err != nil {
+		return bus.TaskUpdateResult{}, err
+	}
 	key := p.IdempotencyKey
 	p.IdempotencyKey = ""
 	var (

@@ -124,6 +124,8 @@ var ruleAllowed = map[string]map[string]int{
 	// Task fields judged as state or query filters, never a principal.
 	"internal/core/tasks/doc.go taskContent":      {"Owner": 1},  // serializes the task's owner field
 	"internal/core/tasks/doc.go loadTasks":        {"Owner": 1},  // parses the task's owner field
+	"internal/core/tasks/doc.go checkPatchBounds": {"Owner": 2},  // the patch's owner string goes through the name rule: a length check, no decision
+	"internal/core/tasks/read.go List":            {"Owner": 1},  // the list filter's owner string goes through the name rule: a length check, no decision
 	"internal/core/tasks/read.go summaries":       {"Owner": 4},  // in.Owner is a query filter; the summary copies the field
 	"internal/core/tasks/reclaim.go abandonedSet": {"Owner": 4},  // t.Owner == "" is state; the owner's sessions decide liveness
 	"internal/core/tasks/snapshot.go Snapshot":    {"Owner": 1},  // copies the task's owner into the snapshot's assignee: a converter (kind N)

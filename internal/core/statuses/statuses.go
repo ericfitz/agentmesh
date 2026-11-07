@@ -20,6 +20,9 @@ import (
 // commit order, the last wins; a failed call leaves nothing behind; a second
 // prune deletes nothing.
 func (s Service) Set(ctx context.Context, identity string, in bus.SetAgentStatusInput) (bus.AgentStatus, error) {
+	if err := rules.CheckLabel("tag", string(in.Tag)); err != nil {
+		return bus.AgentStatus{}, err
+	}
 	if err := rules.CheckStatusTag(in.Tag); err != nil {
 		return bus.AgentStatus{}, err
 	}
@@ -151,6 +154,9 @@ func (s Service) List(ctx context.Context, identity string) ([]bus.AgentStatusEn
 // identity's next set). An unknown or out-of-scope identity is not_found. The
 // result is never nil.
 func (s Service) History(ctx context.Context, identity, of string) ([]bus.AgentStatus, error) {
+	if err := store.NameRule(of); err != nil {
+		return nil, core.E(bus.CodeValidation, "identity %s", err)
+	}
 	out := []bus.AgentStatus{}
 	err := s.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
 		out = []bus.AgentStatus{}

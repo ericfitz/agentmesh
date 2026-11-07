@@ -19,6 +19,9 @@ func (c *Core) CheckReceipt(ctx context.Context, tx store.Tx, identity, key stri
 	if key == "" {
 		return false, "", nil
 	}
+	if err := rules.CheckToken("Idempotency-Key", key); err != nil {
+		return false, "", err
+	}
 	fp, err = rules.Fingerprint(payload)
 	if err != nil {
 		return false, "", bus.Internal(err)
