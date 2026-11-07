@@ -1178,8 +1178,8 @@ block_wire_roundtrip_fires() {
 		'ReplyTo: m.ReplyTo, Revision: m.Revision,' \
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/Message
 	mutate_unit_block wire-gen-type-unpaired internal/gen/gen.go \
-		'// Problem defines model for Problem.' \
-		$'// Extra defines model for Extra.\ntype Extra struct {\n\tA string\n}\n\n// Problem defines model for Problem.' \
+		'// BridgeState defines model for Bridge.State.' \
+		$'// Extra defines model for Extra.\ntype Extra struct {\n\tA string\n}\n\n// BridgeState defines model for Bridge.State.' \
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/coverage
 	mutate_unit_block wire-exception-stale internal/server/wire_roundtrip_test.go \
 		'var exceptions = map[string]exception{' \
