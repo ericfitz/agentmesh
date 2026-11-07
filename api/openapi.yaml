@@ -35,8 +35,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WellKnown"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /.well-known/oauth-authorization-server:
     get:
       operationId: authorizationServerMetadata
@@ -52,8 +54,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthorizationServerMetadata"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /.well-known/openid-configuration:
     get:
       operationId: openidConfiguration
@@ -68,8 +72,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthorizationServerMetadata"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /v1/discover:
     get:
       operationId: discover
@@ -82,8 +88,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Discovery"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
   /v1/health:
     get:
       operationId: health
@@ -98,8 +106,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/sessions:
     post:
       operationId: openSession
@@ -117,8 +133,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Session"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/sessions/{session}:
     delete:
       operationId: closeSession
@@ -129,8 +159,20 @@ paths:
       responses:
         "204":
           description: Session closed.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/sessions/{session}/receive:
     post:
       operationId: receive
@@ -150,8 +192,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReceiveResult"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/sessions/{session}/watch:
     get:
       operationId: watch
@@ -187,14 +243,22 @@ paths:
                 $ref: "#/components/schemas/Wake"
         "204":
           description: Timed out, nothing new.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
-          description: Replaced by a newer watch on the same session.
-          content:
-            application/problem+json:
-              schema:
-                $ref: "#/components/schemas/Problem"
-        default:
-          $ref: "#/components/responses/Problem"
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/sessions/{session}/peek:
     get:
       operationId: peek
@@ -215,8 +279,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Peek"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/identities:
     get:
       operationId: listIdentities
@@ -230,8 +306,16 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Identity"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/sessions/{session}/status:
     post:
       operationId: setAgentStatus
@@ -255,8 +339,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentStatus"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/agent-statuses:
     get:
       operationId: listAgentStatuses
@@ -274,8 +376,16 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AgentStatusEntry"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/identities/{identity}/statuses:
     get:
       operationId: agentStatusHistory
@@ -298,8 +408,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/AgentStatus"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/channels:
     get:
       operationId: listChannels
@@ -313,8 +433,16 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Channel"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: createChannel
       tags: [channels]
@@ -333,8 +461,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChannelInfo"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/channels/{channel}:
     delete:
       operationId: deleteChannel
@@ -345,8 +487,20 @@ paths:
       responses:
         "204":
           description: Channel deleted.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     patch:
       operationId: renameChannel
       tags: [channels, admin]
@@ -362,8 +516,22 @@ paths:
       responses:
         "204":
           description: Channel renamed.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/channels/{channel}/acl:
     get:
       operationId: getACL
@@ -379,8 +547,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ACLEntry"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     put:
       operationId: setACL
       tags: [channels]
@@ -398,8 +576,22 @@ paths:
       responses:
         "204":
           description: ACL replaced.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/channels/{channel}/subscription:
     put:
       operationId: subscribe
@@ -416,8 +608,22 @@ paths:
       responses:
         "204":
           description: Subscribed.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: unsubscribe
       tags: [channels]
@@ -427,8 +633,20 @@ paths:
       responses:
         "204":
           description: Unsubscribed.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/tag-subscriptions:
     get:
       operationId: listTagSubscriptions
@@ -444,8 +662,16 @@ paths:
                   type: array
                   items:
                     type: string
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: subscribeTags
       tags: [channels]
@@ -460,8 +686,20 @@ paths:
       responses:
         "204":
           description: Subscribed.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: unsubscribeTags
       tags: [channels]
@@ -480,8 +718,18 @@ paths:
       responses:
         "204":
           description: Unsubscribed.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/channels/{channel}/messages:
     post:
       operationId: sendMessage
@@ -502,8 +750,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SendResult"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "410":
+          $ref: "#/components/responses/Gone"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: history
       tags: [messages]
@@ -552,8 +820,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Message"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/search:
     get:
       operationId: search
@@ -624,8 +902,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SearchResult"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/memories/{id}:
     get:
       operationId: getMemory
@@ -639,8 +927,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Message"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: deleteMemory
       tags: [memories]
@@ -650,8 +948,22 @@ paths:
       responses:
         "204":
           description: Memory deleted.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/memories/{id}/revisions:
     get:
       operationId: listMemoryRevisions
@@ -667,8 +979,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Message"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     post:
       operationId: editMemory
       tags: [memories]
@@ -688,8 +1010,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/EditResult"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/channels/{channel}/tasks:
     post:
       operationId: createTask
@@ -710,8 +1050,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Task"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: listTasks
       tags: [tasks]
@@ -736,8 +1094,18 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/TaskSummary"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/tasks/{id}:
     get:
       operationId: getTask
@@ -751,8 +1119,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Task"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     patch:
       operationId: updateTask
       tags: [tasks]
@@ -772,8 +1150,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskUpdateResult"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/tasks/{id}/claim:
     post:
       operationId: claimTask
@@ -794,8 +1190,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskUpdateResult"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/tasks/{id}/release:
     post:
       operationId: releaseTask
@@ -810,8 +1224,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskUpdateResult"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/status:
     get:
       operationId: adminStatus
@@ -823,8 +1253,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Status"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/usage:
     get:
       operationId: adminUsage
@@ -840,8 +1278,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Usage"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/token:
     post:
       operationId: token
@@ -870,6 +1316,8 @@ paths:
           $ref: "#/components/responses/OAuthError"
         "401":
           $ref: "#/components/responses/OAuthError"
+        "413":
+          $ref: "#/components/responses/OAuthError"
         "500":
           $ref: "#/components/responses/OAuthError"
         "503":
@@ -886,8 +1334,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/JWKS"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/auth/register:
     post:
       operationId: register
@@ -909,8 +1361,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Registration"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/reset:
     post:
       operationId: adminReset
@@ -927,8 +1389,18 @@ paths:
       responses:
         "204":
           description: The server's data was reset.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/identities/{identity}/reset-credential:
     post:
       operationId: resetCredential
@@ -947,8 +1419,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CredentialReset"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/signing-keys:
     get:
       operationId: listSigningKeys
@@ -965,8 +1449,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SigningKeyList"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/signing-keys/rotate:
     post:
       operationId: rotateSigningKey
@@ -992,8 +1484,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SigningKeyRotation"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/identities/by-email:
     post:
       operationId: createIdentityByEmail
@@ -1013,8 +1515,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HumanIdentity"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/identities:
     post:
       operationId: createAgentIdentity
@@ -1037,8 +1551,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AgentIdentity"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/scopes:
     post:
       operationId: createScope
@@ -1058,8 +1586,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Scope"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: listScopes
       tags: [admin]
@@ -1070,8 +1610,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ScopeList"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/scopes/{scope}:
     parameters:
       - $ref: "#/components/parameters/ScopeParam"
@@ -1085,8 +1633,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Scope"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/scopes/{scope}/done:
     post:
       operationId: doneScope
@@ -1107,8 +1665,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Scope"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/bridges:
     post:
       operationId: createBridge
@@ -1130,8 +1702,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeCreated"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     get:
       operationId: listBridges
       tags: [admin]
@@ -1142,8 +1730,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeList"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
   /v1/admin/bridges/{channel}:
     parameters:
       - $ref: "#/components/parameters/ChannelParam"
@@ -1157,16 +1753,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Bridge"
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
     delete:
       operationId: removeBridge
       tags: [admin]
       responses:
         "204":
           description: The Slack channel is archived and the bridge is deleted.
-        default:
-          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalServerError"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
 components:
   securitySchemes:
     bearerAuth:
@@ -1210,12 +1826,169 @@ components:
       schema:
         type: string
   responses:
-    Problem:
-      description: RFC 9457 problem details.
+    BadRequest:
+      description: >-
+        The request is malformed or fails validation: a parameter, header or
+        body the server cannot read or that breaks the schema. code: validation.
       content:
         application/problem+json:
           schema:
-            $ref: "#/components/schemas/Problem"
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [validation]
+    Unauthorized:
+      description: >-
+        The bearer is missing, invalid or expired. code: unauthenticated.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [unauthenticated]
+    Forbidden:
+      description: >-
+        The caller is authenticated but may not do this, or is not registered.
+        code: forbidden (the access rule refuses the action) or not_registered
+        (the bearer names no registered identity).
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [forbidden, not_registered]
+    NotFound:
+      description: >-
+        The named channel, session, memory, task, scope, bridge or identity does
+        not exist, or is outside the caller's scope. code: not_found.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [not_found]
+    Conflict:
+      description: >-
+        The request conflicts with current state: a taken name, a closed scope,
+        a live bridge, a reused idempotency key, a precondition that no longer
+        holds, or a watch replaced by a newer one on the same session. code:
+        conflict, or replaced for a watch.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [conflict, replaced]
+    Gone:
+      description: >-
+        The session is closed or its lease has lapsed. code: session_closed or
+        session_lapsed.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [session_lapsed, session_closed]
+    PayloadTooLarge:
+      description: >-
+        The request body exceeds the server limit. A body sent to an operation
+        without a request body is refused the same way and is outside the
+        contract. code: payload_too_large.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [payload_too_large]
+    UnprocessableEntity:
+      description: >-
+        A configured write inspector rejected the content. code:
+        inspection_rejected.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [inspection_rejected]
+    TooManyRequests:
+      description: >-
+        The caller exceeded a rate limit; retry after the number of seconds in
+        Retry-After. code: rate_limited.
+      headers:
+        Retry-After:
+          required: true
+          description: Whole seconds to wait before retrying, at least 1.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [rate_limited]
+    InternalServerError:
+      description: >-
+        The server failed in a way the caller cannot correct. code: internal.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [internal]
+    ServiceUnavailable:
+      description: >-
+        The store or a dependency is unavailable; the request may be retried.
+        code: unavailable.
+      content:
+        application/problem+json:
+          schema:
+            x-go-type: Problem
+            allOf:
+              - $ref: "#/components/schemas/Problem"
+              - type: object
+                properties:
+                  code:
+                    enum: [unavailable]
     OAuthError:
       description: >-
         RFC 6749 section 5.2 error; only the token endpoint answers it (spec
@@ -1253,7 +2026,7 @@ components:
         code:
           type: string
           description: agentmesh extension member (RFC 9457 section 3.2).
-          # open note: write-inspection 5
+          # inspection_rejected is declared per operation (issue #33)
           enum:
             - validation
             - not_found

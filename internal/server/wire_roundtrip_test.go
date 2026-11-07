@@ -140,7 +140,7 @@ type exception struct {
 
 var exceptions = map[string]exception{
 	"Problem": {Type: reflect.TypeFor[gen.Problem](), Fields: []string{"Code", "Detail", "Instance", "Retryable", "Status", "Title", "Type"},
-		Reason: "errors cross as RFC 9457 problems: WriteProblem writes (internal/server), errorOf reads (internal/bus/remote, function errorOf)"},
+		Reason: "errors cross as RFC 9457 problems: WriteProblem writes (internal/server), errorOf reads the body at any status (internal/bus/remote, function errorOf)"},
 	"OAuthError": {Type: reflect.TypeFor[gen.OAuthError](), Fields: []string{"Error", "ErrorDescription"},
 		Reason: "the token endpoint answers the RFC 6749 error body (internal/server/oauth.go); internal/bus/remote/auth.go reads it (function oauthErrorOf), not a Bus domain type"},
 	"Discovery": {Type: reflect.TypeFor[gen.Discovery](), Fields: []string{"ApiVersions", "AuthMethods", "AuthorizationServer", "Capabilities", "Issuers", "OpenidConfiguration", "ProtocolVersion", "ServerVersion"},
@@ -178,6 +178,7 @@ const (
 var plumbingPatterns = []struct{ Prefix, Suffix, Reason string }{
 	{Suffix: "Response", Reason: "typed client and strict-server response wrappers (also *JSONResponse)"},
 	{Suffix: "Options", Reason: "generated server options"},
+	{Suffix: "Headers", Reason: "generated response-header structs (the 429 Retry-After)"},
 	{Suffix: "ParamError", Reason: "generated parameter-binding errors (OAuthError is a model and stays enumerated)"},
 	{Suffix: "HeaderError", Reason: "generated parameter-binding errors"},
 	{Suffix: "FormatError", Reason: "generated parameter-binding errors"},

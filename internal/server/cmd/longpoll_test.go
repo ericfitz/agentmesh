@@ -158,7 +158,7 @@ func TestOddChannelNameOverTCP(t *testing.T) {
 	if err := json.Unmarshal(sr.Body, &p); err != nil {
 		t.Fatalf("a/b: body %q is not a problem document: %v", sr.Body, err)
 	}
-	if sr.StatusCode() != http.StatusNotFound || p.Code != gen.NotFound ||
+	if sr.StatusCode() != http.StatusNotFound || p.Code != gen.ProblemCodeNotFound ||
 		p.Detail == nil || *p.Detail != `channel "a/b" does not exist` {
 		t.Fatalf("a/b: status %d body %s, want not_found naming the channel", sr.StatusCode(), sr.Body)
 	}

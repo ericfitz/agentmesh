@@ -136,7 +136,7 @@ func TestMemoryRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, g.StatusCode(), g.Body, http.StatusNotFound, gen.NotFound)
+	wantProblem(t, g.StatusCode(), g.Body, http.StatusNotFound, gen.ProblemCodeNotFound)
 	rv, err := f.c.ListMemoryRevisionsWithResponse(ctx, f.memoryID)
 	if err != nil || rv.JSON200 == nil || len(*rv.JSON200) == 0 {
 		t.Fatalf("revisions after delete: %+v, %v", rv, err)
@@ -152,7 +152,7 @@ func TestTaskRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, r.StatusCode(), r.Body, http.StatusBadRequest, gen.Validation)
+	wantProblem(t, r.StatusCode(), r.Body, http.StatusBadRequest, gen.ProblemCodeValidation)
 
 	cr, err := f.c.CreateTaskWithResponse(ctx, "work", &gen.CreateTaskParams{}, gen.TaskCreateRequest{Subject: "one"})
 	if err != nil || cr.JSON201 == nil {
@@ -165,7 +165,7 @@ func TestTaskRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, l.StatusCode(), l.Body, http.StatusBadRequest, gen.Validation)
+	wantProblem(t, l.StatusCode(), l.Body, http.StatusBadRequest, gen.ProblemCodeValidation)
 	l, err = f.c.ListTasksWithResponse(ctx, "work", &gen.ListTasksParams{})
 	if err != nil || l.JSON200 == nil || len(*l.JSON200) != 1 {
 		t.Fatalf("list: %+v, %v", l, err)
@@ -188,7 +188,7 @@ func TestTaskRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, u.StatusCode(), u.Body, http.StatusBadRequest, gen.Validation)
+	wantProblem(t, u.StatusCode(), u.Body, http.StatusBadRequest, gen.ProblemCodeValidation)
 
 	done := "completed"
 	u, err = f.c.UpdateTaskWithResponse(ctx, id, &gen.UpdateTaskParams{}, gen.TaskPatch{Status: &done})

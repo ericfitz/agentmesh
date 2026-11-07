@@ -457,7 +457,7 @@ func TestProblemRoundTripsAsJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(in), &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.Code != gen.Replaced || p.Status != 409 {
+	if p.Code != gen.ProblemCodeReplaced || p.Status != 409 {
 		t.Fatalf("%+v", p)
 	}
 }

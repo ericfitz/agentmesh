@@ -36,8 +36,7 @@ func StatusFor(code bus.Code) int {
 	case bus.CodeRateLimited:
 		return http.StatusTooManyRequests
 	case bus.CodeInspectionRejected:
-		// open note: write-inspection 5 (the 422 reaches clients through each
-		// operation's default problem response).
+		// Declared per operation as UnprocessableEntity (issue #33).
 		return http.StatusUnprocessableEntity
 	case bus.CodePayloadTooLarge:
 		return http.StatusRequestEntityTooLarge

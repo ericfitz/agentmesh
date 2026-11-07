@@ -210,7 +210,7 @@ func TestWatchReplacedAcrossProcesses(t *testing.T) {
 
 	oa := waitOutcome(t, wa, 6*time.Second, "watch A")
 	if oa.resp.StatusCode() != http.StatusConflict || oa.resp.ApplicationproblemJSON409 == nil ||
-		oa.resp.ApplicationproblemJSON409.Code != gen.Replaced {
+		oa.resp.ApplicationproblemJSON409.Code != gen.ProblemCodeReplaced {
 		t.Fatalf("watch A: status %d body %s, want 409 replaced", oa.resp.StatusCode(), oa.resp.Body)
 	}
 	// 3 s, not 1.5 (see TestWatchWakesAcrossProcesses): the helpers poll every
