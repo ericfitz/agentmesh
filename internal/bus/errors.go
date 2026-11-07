@@ -44,6 +44,9 @@ const (
 	// CodeInspectionRejected: the write inspector refused the content (ADR
 	// 0013); not retryable.
 	CodeInspectionRejected Code = "inspection_rejected"
+	// CodePayloadTooLarge: the request body exceeds the server's limit; not
+	// retryable (HTTP layer only, issue #33).
+	CodePayloadTooLarge Code = "payload_too_large"
 )
 
 var validCodes = map[Code]bool{
@@ -51,6 +54,7 @@ var validCodes = map[Code]bool{
 	CodeNotRegistered: true, CodeRateLimited: true, CodeReplaced: true,
 	CodeSessionLapsed: true, CodeSessionClosed: true, CodeUnavailable: true, CodeInternal: true,
 	CodeUnauthenticated: true, CodeInspectionRejected: true,
+	CodePayloadTooLarge: true,
 }
 
 // ValidCode reports whether c is one of the codes above.

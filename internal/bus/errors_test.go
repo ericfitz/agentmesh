@@ -52,6 +52,12 @@ func TestValidCodeKnowsUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestValidCodeKnowsPayloadTooLarge(t *testing.T) {
+	if !ValidCode(CodePayloadTooLarge) || CodePayloadTooLarge != "payload_too_large" {
+		t.Fatalf("CodePayloadTooLarge = %q, valid %v", CodePayloadTooLarge, ValidCode(CodePayloadTooLarge))
+	}
+}
+
 func TestValidCodeKnowsInspectionRejected(t *testing.T) {
 	if !ValidCode(CodeInspectionRejected) || CodeInspectionRejected != "inspection_rejected" {
 		t.Fatalf("CodeInspectionRejected = %q, valid %v", CodeInspectionRejected, ValidCode(CodeInspectionRejected))

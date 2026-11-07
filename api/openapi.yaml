@@ -1268,6 +1268,7 @@ components:
             - internal
             - unauthenticated
             - inspection_rejected
+            - payload_too_large
         retryable:
           type: boolean
           description: agentmesh extension member (RFC 9457 section 3.2).

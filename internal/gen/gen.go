@@ -303,6 +303,7 @@ const (
 	Internal           ProblemCode = "internal"
 	NotFound           ProblemCode = "not_found"
 	NotRegistered      ProblemCode = "not_registered"
+	PayloadTooLarge    ProblemCode = "payload_too_large"
 	RateLimited        ProblemCode = "rate_limited"
 	Replaced           ProblemCode = "replaced"
 	SessionClosed      ProblemCode = "session_closed"
@@ -326,6 +327,8 @@ func (e ProblemCode) Valid() bool {
 	case NotFound:
 		return true
 	case NotRegistered:
+		return true
+	case PayloadTooLarge:
 		return true
 	case RateLimited:
 		return true

@@ -174,7 +174,7 @@ func limitBody(next http.Handler, limit int64) http.Handler {
 					writeOAuthError(w, oauthFail(http.StatusRequestEntityTooLarge, "invalid_request", "request body exceeds %d bytes", limit))
 					return
 				}
-				WriteProblem(w, r, http.StatusRequestEntityTooLarge, bus.CodeValidation,
+				WriteProblem(w, r, http.StatusRequestEntityTooLarge, bus.CodePayloadTooLarge,
 					fmt.Sprintf("request body exceeds %d bytes", limit), false)
 				return
 			}

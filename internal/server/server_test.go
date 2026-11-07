@@ -70,23 +70,23 @@ func TestEveryFrameworkErrorIsProblem(t *testing.T) {
 			r := newReq(t, "POST", "/v1/channels", bytes.NewReader(big))
 			r.ContentLength = int64(len(big))
 			return r
-		}, 413, "validation", ""},
+		}, 413, "payload_too_large", ""},
 		{"oversized chunked", "pat", func() *http.Request {
 			r := newReq(t, "POST", "/v1/channels", io.NopCloser(bytes.NewReader(big)))
 			r.ContentLength = -1
 			r.TransferEncoding = []string{"chunked"}
 			return r
-		}, 413, "validation", ""},
+		}, 413, "payload_too_large", ""},
 		{"oversized on open operation", "", func() *http.Request {
 			r := newReq(t, "GET", "/v1/discover", io.NopCloser(bytes.NewReader(big)))
 			r.ContentLength = -1
 			return r
-		}, 413, "validation", ""},
+		}, 413, "payload_too_large", ""},
 		{"oversized without identity", "", func() *http.Request {
 			r := newReq(t, "POST", "/v1/channels", io.NopCloser(bytes.NewReader(big)))
 			r.ContentLength = -1
 			return r
-		}, 413, "validation", ""},
+		}, 413, "payload_too_large", ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -97,6 +97,9 @@ func TestEveryFrameworkErrorIsProblem(t *testing.T) {
 			}
 			if p.Status != c.status {
 				t.Errorf("problem status member %d", p.Status)
+			}
+			if c.status == 413 && p.Retryable {
+				t.Errorf("413 retryable = %v, want false", p.Retryable)
 			}
 			if c.detail != "" && (p.Detail == nil || !strings.Contains(*p.Detail, c.detail)) {
 				t.Errorf("detail %v does not contain %q", p.Detail, c.detail)

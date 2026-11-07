@@ -39,6 +39,8 @@ func StatusFor(code bus.Code) int {
 		// open note: write-inspection 5 (the 422 reaches clients through each
 		// operation's default problem response).
 		return http.StatusUnprocessableEntity
+	case bus.CodePayloadTooLarge:
+		return http.StatusRequestEntityTooLarge
 	case bus.CodeUnavailable:
 		return http.StatusServiceUnavailable
 	default:
@@ -97,7 +99,7 @@ func writeProblemBody(w http.ResponseWriter, p gen.Problem) {
 }
 
 // validatorCode maps the request validator's status to a code. 413 never
-// reaches it: limitBody writes it first.
+// reaches it: limitBody writes it first (as payload_too_large).
 func validatorCode(status int) bus.Code {
 	switch status {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
