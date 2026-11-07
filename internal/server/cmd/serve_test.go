@@ -596,7 +596,7 @@ func TestServeSigningKeysAdminAPI(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set(identityHeader, "root")
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := checkedClient(t, nil).Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}

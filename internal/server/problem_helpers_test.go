@@ -3,46 +3,52 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/ericfitz/agentmesh/internal/gen"
 	"github.com/ericfitz/agentmesh/internal/respcheck"
 )
 
+var (
+	specCheckOnce sync.Once
+	specChecker   *respcheck.Checker
+	specCheckErr  error
+)
+
+// specCheck is the package's one Checker over the embedded document (one
+// router for every test; skip counts are per transport).
+func specCheck(t testing.TB) *respcheck.Checker {
+	t.Helper()
+	specCheckOnce.Do(func() { specChecker, specCheckErr = respcheck.New(Spec()) })
+	if specCheckErr != nil {
+		t.Fatalf("respcheck.New: %v", specCheckErr)
+	}
+	return specChecker
+}
+
 // checkedTransport wraps next so every response is validated against the
-// embedded document; a violation fails t. A request that matches no operation
-// is counted, never reported (ErrNoRoute), so the route-guard tests, which
-// send such requests on purpose, are fine; any other test must not send one:
-// checkedTransport asserts at cleanup that none was routed nowhere. A test that
-// does uses checkedTransportAllowUnrouted.
+// embedded document; violations fail t at its cleanup. A request that matches
+// no operation is counted, never reported (ErrNoRoute): checkedTransport
+// asserts at cleanup that none was, so a mistyped path fails. A test that
+// sends such requests on purpose uses checkedTransportAllowUnrouted.
 func checkedTransport(t testing.TB, next http.RoundTripper) http.RoundTripper {
 	t.Helper()
-	rt, c := checkedTransportCounting(t, next)
+	tr := specCheck(t).Transport(next, respcheck.Report(t))
 	t.Cleanup(func() {
-		if n := c.Skipped(); n != 0 {
+		if n := tr.Skipped(); n != 0 {
 			t.Errorf("%d responses matched no operation of the document, want 0 (a mistyped path?)", n)
 		}
 	})
-	return rt
+	return tr
 }
 
 // checkedTransportAllowUnrouted is checkedTransport for a test that sends
-// requests no operation matches (ruling 8): the route guards.
+// requests no operation matches (ruling 8): the route guards, the framework
+// errors, the empty ids.
 func checkedTransportAllowUnrouted(t testing.TB, next http.RoundTripper) http.RoundTripper {
 	t.Helper()
-	rt, _ := checkedTransportCounting(t, next)
-	return rt
-}
-
-func checkedTransportCounting(t testing.TB, next http.RoundTripper) (http.RoundTripper, *respcheck.Checker) {
-	t.Helper()
-	// One router per transport: the checker's skip counter is per transport,
-	// so a test's assertion is its own.
-	c, err := respcheck.New(Spec())
-	if err != nil {
-		t.Fatalf("respcheck.New: %v", err)
-	}
-	return c.Transport(next, func(err error) { t.Errorf("response validation: %v", err) }), c
+	return specCheck(t).Transport(next, respcheck.Report(t))
 }
 
 // problemOf decodes an application/problem+json body and fails the test when

@@ -2,7 +2,6 @@ package bus
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -12,7 +11,6 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/dbtest"
 	"github.com/ericfitz/agentmesh/internal/gen"
-	"github.com/ericfitz/agentmesh/internal/respcheck"
 	"github.com/ericfitz/agentmesh/internal/server"
 )
 
@@ -106,28 +104,21 @@ func TestTransportInUse(t *testing.T) {
 	})
 }
 
-// TestInprocResponseCheckWired proves the in-process paths are behind the
-// response validator: inprocTransport must return a *respcheck.Transport over
-// the in-process transport, so a helper that unwraps it fails here.
+// TestInprocResponseCheckWired proves a call made through newBus crosses the
+// response validator: the checker's count rises. Reverting newBus (or the
+// inprocTransport helper) to the raw in-process transport fails it.
 func TestInprocResponseCheckWired(t *testing.T) {
 	if transport != "inproc" {
 		t.Skip("the local transport has no wire")
 	}
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		h := newHarness(t, e, harnessOptions{})
-		rt, ok := inprocTransport(h, "pat").(*respcheck.Transport)
-		if !ok {
-			t.Fatalf("inprocTransport returned %T, want *respcheck.Transport", inprocTransport(h, "pat"))
+		before := check.Checked()
+		if _, err := h.as("pat").ListChannels(context.Background()); err != nil {
+			t.Fatalf("ListChannels: %v", err)
 		}
-		if rt.Checker != check {
-			t.Fatalf("the transport's Checker is not the suite's")
-		}
-		cn, ok := rt.Next.(countEmptySegment)
-		if !ok {
-			t.Fatalf("the validator wraps %T, want the empty-segment counter over the in-process transport", rt.Next)
-		}
-		if got := fmt.Sprintf("%T", cn.next); got != "server.inprocTransport" {
-			t.Fatalf("the validator wraps %s, want server.inprocTransport", got)
+		if got := check.Checked() - before; got < 1 {
+			t.Fatalf("a ListChannels through newBus was checked %d times, want at least 1: newBus bypasses the response validator", got)
 		}
 	})
 }

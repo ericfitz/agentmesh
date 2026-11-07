@@ -127,6 +127,7 @@ func identityClient(t *testing.T, addr, identity string, opts ...gen.ClientOptio
 		r.Header.Set(identityHeader, identity)
 		return nil
 	}))
+	opts = append([]gen.ClientOption{gen.WithHTTPClient(checkedClient(t, nil))}, opts...)
 	c, err := gen.NewClientWithResponses("http://"+addr, opts...)
 	if err != nil {
 		t.Fatal(err)

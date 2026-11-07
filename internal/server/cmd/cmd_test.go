@@ -134,10 +134,7 @@ func httpDo(t *testing.T, hc *http.Client, method, url, token string) (int, []by
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	if hc == nil {
-		hc = http.DefaultClient
-	}
-	resp, err := hc.Do(req)
+	resp, err := checkedClient(t, hc).Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, url, err)
 	}
@@ -159,9 +156,7 @@ func problemCode(t *testing.T, body []byte) string {
 
 func genClient(t *testing.T, base string, hc *http.Client, opts ...gen.ClientOption) *gen.ClientWithResponses {
 	t.Helper()
-	if hc != nil {
-		opts = append(opts, gen.WithHTTPClient(hc))
-	}
+	opts = append(opts, gen.WithHTTPClient(checkedClient(t, hc)))
 	c, err := gen.NewClientWithResponses(base, opts...)
 	if err != nil {
 		t.Fatal(err)
@@ -366,7 +361,7 @@ func TestRunRefusesEveryProtectedOperation(t *testing.T) {
 			if body != nil {
 				req.Header.Set("Content-Type", "application/json")
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := checkedClient(t, nil).Do(req)
 			if err != nil {
 				t.Fatalf("%s %s: %v", method, path, err)
 			}
@@ -394,7 +389,7 @@ func TestRunRefusesEveryProtectedOperation(t *testing.T) {
 				} else if c := problemCode(t, raw); c != "unauthenticated" {
 					t.Errorf("health with a bad bearer: code %q: %s", c, raw)
 				}
-				noBearer, err := http.Get(url)
+				noBearer, err := checkedClient(t, nil).Get(url)
 				if err != nil {
 					t.Fatal(err)
 				}

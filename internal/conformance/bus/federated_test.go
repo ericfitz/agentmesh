@@ -102,6 +102,7 @@ func TestFederatedEndToEnd(t *testing.T) {
 			if bearer != "" {
 				opts = append(opts, gen.WithRequestEditorFn(remote.WithBearer(bearer)))
 			}
+			opts = append(opts, gen.WithHTTPClient(tcpClient(t)))
 			cl, err := gen.NewClientWithResponses(base, opts...)
 			if err != nil {
 				t.Fatal(err)

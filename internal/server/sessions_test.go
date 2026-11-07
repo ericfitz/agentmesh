@@ -495,7 +495,7 @@ func TestSessionOddIdsOnRemote(t *testing.T) {
 	}
 
 	req := newReq(t, "DELETE", "/v1/sessions/", nil)
-	resp := s.raw("pat", req)
+	resp := s.rawAllowUnrouted("pat", req)
 	p := readProblem(t, resp)
 	if resp.StatusCode != 404 || p.Code != "not_found" {
 		t.Fatalf("raw DELETE /v1/sessions/: %d %v", resp.StatusCode, p)

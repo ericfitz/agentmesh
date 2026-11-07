@@ -178,7 +178,7 @@ func TestAuthEndToEnd(t *testing.T) {
 			if bearer != "" {
 				opts = append(opts, gen.WithRequestEditorFn(remote.WithBearer(bearer)))
 			}
-			opts = append(opts, gen.WithHTTPClient(&http.Client{Transport: check.Transport(http.DefaultTransport, func(err error) { t.Errorf("response validation: %v", err) })}))
+			opts = append(opts, gen.WithHTTPClient(tcpClient(t)))
 			cl, err := gen.NewClientWithResponses(base, opts...)
 			if err != nil {
 				t.Fatal(err)
@@ -445,7 +445,7 @@ func TestAuthEndToEnd(t *testing.T) {
 			_, err = root.bus.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
 			codeOf(t, err, ab2bus.CodeConflict)
 
-			resp, err := http.Get(base + "/v1/auth/jwks")
+			resp, err := tcpClient(t).Get(base + "/v1/auth/jwks")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -539,7 +539,7 @@ func getChannels(t *testing.T, base, bearer string) (int, string) {
 	if bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := tcpClient(t).Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -51,6 +51,18 @@ func kidOf(t *testing.T, k crypto.Signer) string {
 // ignores the in-process key anyway).
 func (e *env) do(method, path, contentType, bearer string, body string) *http.Response {
 	e.t.Helper()
+	return e.doVia(e.raw, method, path, contentType, bearer, body)
+}
+
+// doAllowUnrouted is do for a request that matches no operation on purpose
+// (the token route guards).
+func (e *env) doAllowUnrouted(method, path, contentType, bearer string, body string) *http.Response {
+	e.t.Helper()
+	return e.doVia(e.rawAllowUnrouted, method, path, contentType, bearer, body)
+}
+
+func (e *env) doVia(raw func(string, *http.Request) *http.Response, method, path, contentType, bearer string, body string) *http.Response {
+	e.t.Helper()
 	var rd io.Reader
 	if body != "" {
 		rd = strings.NewReader(body)
@@ -62,7 +74,7 @@ func (e *env) do(method, path, contentType, bearer string, body string) *http.Re
 	if bearer != "" {
 		req.Header.Set("Authorization", bearer)
 	}
-	return e.raw("", req)
+	return raw("", req)
 }
 
 func jwkJSON(t *testing.T, k crypto.Signer) map[string]any {
@@ -740,7 +752,7 @@ func TestTokenEndpointPreHandlerRefusals(t *testing.T) {
 	const formCT = "application/x-www-form-urlencoded"
 	for _, m := range []string{"GET", "PUT", "DELETE", "PATCH"} {
 		t.Run(m, func(t *testing.T) {
-			resp := e.do(m, "/v1/auth/token", "", "", "")
+			resp := e.doAllowUnrouted(m, "/v1/auth/token", "", "", "")
 			if allow := resp.Header.Get("Allow"); allow != "POST" {
 				t.Errorf("Allow = %q", allow)
 			}
@@ -748,15 +760,15 @@ func TestTokenEndpointPreHandlerRefusals(t *testing.T) {
 		})
 	}
 	t.Run("oversize", func(t *testing.T) {
-		resp := e.do("POST", "/v1/auth/token", formCT, "", "grant_type="+strings.Repeat("a", 3<<20))
+		resp := e.doAllowUnrouted("POST", "/v1/auth/token", formCT, "", "grant_type="+strings.Repeat("a", 3<<20))
 		wantOAuthError(t, resp, 413, "invalid_request", "request body exceeds", "")
 	})
 	t.Run("trailing-slash", func(t *testing.T) {
-		resp := e.do("POST", "/v1/auth/token/", formCT, "", "grant_type=client_credentials")
+		resp := e.doAllowUnrouted("POST", "/v1/auth/token/", formCT, "", "grant_type=client_credentials")
 		wantOAuthError(t, resp, 404, "invalid_request", "no such endpoint; the token endpoint is /v1/auth/token", "")
 	})
 	t.Run("other-paths-keep-problem-json", func(t *testing.T) {
-		resp := e.do("POST", "/v1/auth/tokens", formCT, "", "x=1")
+		resp := e.doAllowUnrouted("POST", "/v1/auth/tokens", formCT, "", "x=1")
 		if p := readProblem(t, resp); resp.StatusCode != 404 || p.Code != "not_found" {
 			t.Fatalf("%d %+v", resp.StatusCode, p)
 		}

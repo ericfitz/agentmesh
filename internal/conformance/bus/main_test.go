@@ -21,14 +21,13 @@ import (
 var check *respcheck.Checker
 
 // emptySegment counts the requests sent with an empty path segment
-// (/v1/sessions//receive, DELETE /v1/channels/): the suites probe an empty id on purpose, the
-// document's router answers 404 to it, and it matches no operation. They are
-// the only requests allowed to be unrouted.
+// (/v1/sessions//receive, DELETE /v1/channels/): the suites probe an empty id
+// on purpose, the document's router answers 404 to it, and it matches no
+// operation. They are the only requests allowed to be unrouted.
 var emptySegment atomic.Int64
 
-// countEmptySegment counts requests whose path has an empty segment (an
-// inner one or a trailing slash) before
-// handing them to next.
+// countEmptySegment counts requests whose path has an empty segment (an inner
+// one or a trailing slash) before handing them to next.
 type countEmptySegment struct{ next http.RoundTripper }
 
 func (c countEmptySegment) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -41,7 +40,15 @@ func (c countEmptySegment) RoundTrip(req *http.Request) (*http.Response, error) 
 // inprocTransport is the in-process transport for identity, behind the
 // response validator: a violation fails the harness's test.
 func inprocTransport(h *harness, identity string) http.RoundTripper {
-	return check.Transport(countEmptySegment{server.InProcessTransport(handlerFor(h), identity)}, func(err error) { h.t.Errorf("response validation: %v", err) })
+	return check.Transport(countEmptySegment{server.InProcessTransport(handlerFor(h), identity)}, respcheck.Report(h.t))
+}
+
+// tcpClient is an HTTP client for a real server over TCP, behind the response
+// validator (violations fail t at its cleanup, never from a goroutine that
+// outlives it).
+func tcpClient(t testing.TB) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: check.Transport(http.DefaultTransport, respcheck.Report(t))}
 }
 
 func TestMain(m *testing.M) {
@@ -71,6 +78,10 @@ func TestMain(m *testing.M) {
 	code := dbtest.Run(m)
 	// A mistyped path is ErrNoRoute, counted and never reported: the only
 	// unrouted requests are the empty-segment probes, so the two counts match.
+	if late := respcheck.Late(); code == 0 && len(late) != 0 {
+		fmt.Fprintf(os.Stderr, "response validation: %d violations after their test finished, first: %v\n", len(late), late[0])
+		code = 1
+	}
 	if n, want := check.Skipped(), emptySegment.Load(); code == 0 && n != want {
 		fmt.Fprintf(os.Stderr, "response validation: %d responses matched no operation, want %d (the empty-segment probes)\n", n, want)
 		code = 1

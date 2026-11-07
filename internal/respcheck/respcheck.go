@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"sync"
 	"sync/atomic"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -28,6 +29,7 @@ var ErrNoRoute = errors.New("respcheck: no operation matches the request")
 type Checker struct {
 	router  routers.Router
 	skipped atomic.Int64
+	checked atomic.Int64
 }
 
 // New builds a Checker over doc. A document with no servers matches any host.
@@ -43,6 +45,7 @@ func New(doc *openapi3.T) (*Checker, error) {
 // ErrNoRoute (counted) when req matches no operation, else the validation
 // error naming method, path, operationId, status and the reason, else nil.
 func (c *Checker) Check(req *http.Request, status int, header http.Header, body []byte) error {
+	c.checked.Add(1)
 	route, pathParams, err := c.router.FindRoute(req)
 	if err != nil {
 		c.skipped.Add(1)
@@ -72,12 +75,26 @@ func (c *Checker) Check(req *http.Request, status int, header http.Header, body 
 // Skipped is the number of responses whose request matched no operation.
 func (c *Checker) Skipped() int64 { return c.skipped.Load() }
 
+// Checked is the number of responses handed to Check, routed or not. A test
+// reads it before and after a call to prove the call crossed the validator.
+func (c *Checker) Checked() int64 { return c.checked.Load() }
+
 // Transport is an http.RoundTripper that checks every response it returns.
 type Transport struct {
 	Next    http.RoundTripper
 	Checker *Checker
 	Report  func(error)
+
+	skipped atomic.Int64
+	checked atomic.Int64
 }
+
+// Skipped is the number of this transport's responses whose request matched
+// no operation (the Checker's count is shared by every transport over it).
+func (t *Transport) Skipped() int64 { return t.skipped.Load() }
+
+// Checked is the number of responses this transport has checked.
+func (t *Transport) Checked() int64 { return t.checked.Load() }
 
 // Transport wraps next; report receives every violation (never ErrNoRoute).
 func (c *Checker) Transport(next http.RoundTripper, report func(error)) *Transport {
@@ -106,7 +123,12 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func (t *Transport) report(err error) {
-	if err != nil && !errors.Is(err, ErrNoRoute) && t.Report != nil {
+	t.checked.Add(1)
+	if errors.Is(err, ErrNoRoute) {
+		t.skipped.Add(1)
+		return
+	}
+	if err != nil && t.Report != nil {
 		t.Report(err)
 	}
 }
@@ -139,5 +161,58 @@ func (c *Checker) Proxy(target *url.URL, report func(error)) http.Handler {
 			}
 			return nil
 		},
+	}
+}
+
+// TB is the part of testing.TB that Report needs (the package does not import
+// testing).
+type TB interface {
+	Helper()
+	Errorf(format string, args ...any)
+	Cleanup(func())
+}
+
+var (
+	lateMu sync.Mutex
+	late   []error
+)
+
+// Late returns the violations that arrived after their test had finished
+// (a watch or long-poll goroutine outliving it). A suite's TestMain fails when
+// the list is not empty.
+func Late() []error {
+	lateMu.Lock()
+	defer lateMu.Unlock()
+	return append([]error(nil), late...)
+}
+
+// Report returns a report callback for Transport and Proxy that never calls
+// t after the test is complete: violations are collected and failed in t's
+// Cleanup; one arriving later goes to Late.
+func Report(t TB) func(error) {
+	t.Helper()
+	var (
+		mu   sync.Mutex
+		list []error
+		done bool
+	)
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		done = true
+		for _, err := range list {
+			t.Errorf("response validation: %v", err)
+		}
+	})
+	return func(err error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !done {
+			list = append(list, err)
+			return
+		}
+		lateMu.Lock()
+		late = append(late, err)
+		lateMu.Unlock()
 	}
 }

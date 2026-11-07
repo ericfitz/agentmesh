@@ -177,6 +177,14 @@ func (e *env) client(identity string) *gen.ClientWithResponses {
 // cannot build.
 func (e *env) raw(identity string, req *http.Request) *http.Response {
 	e.t.Helper()
+	return e.roundTrip(checkedTransport(e.t, InProcessTransport(e.handler(), identity)), req)
+}
+
+// rawAllowUnrouted is raw for a request that matches no operation on purpose
+// (the route guards, framework errors): its response is still validated when
+// it does match one.
+func (e *env) rawAllowUnrouted(identity string, req *http.Request) *http.Response {
+	e.t.Helper()
 	return e.roundTrip(checkedTransportAllowUnrouted(e.t, InProcessTransport(e.handler(), identity)), req)
 }
 

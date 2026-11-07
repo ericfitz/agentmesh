@@ -56,43 +56,46 @@ func TestEveryFrameworkErrorIsProblem(t *testing.T) {
 		status   int
 		code     string
 		detail   string
+		// outOfContract: the request is one the document promises no answer to
+		// (a body sent to a bodiless operation), so its response is not validated.
+		outOfContract bool
 	}
 	cases := []tc{
-		{"unknown path", "pat", func() *http.Request { return newReq(t, "GET", "/v1/nope", nil) }, 404, "not_found", ""},
-		{"wrong method", "pat", func() *http.Request { return newReq(t, "PATCH", "/v1/sessions/x", nil) }, 404, "not_found", "method not allowed"},
-		{"bad query", "pat", func() *http.Request { return newReq(t, "GET", "/v1/sessions/s/watch?timeout=abc", nil) }, 400, "validation", ""},
-		{"wrong type", "pat", func() *http.Request { return newReq(t, "POST", "/v1/channels", strings.NewReader(`{"name":1}`)) }, 400, "validation", ""},
-		{"not json", "pat", func() *http.Request { return newReq(t, "POST", "/v1/channels", strings.NewReader(`not json`)) }, 400, "validation", ""},
+		{"unknown path", "pat", func() *http.Request { return newReq(t, "GET", "/v1/nope", nil) }, 404, "not_found", "", false},
+		{"wrong method", "pat", func() *http.Request { return newReq(t, "PATCH", "/v1/sessions/x", nil) }, 404, "not_found", "method not allowed", false},
+		{"bad query", "pat", func() *http.Request { return newReq(t, "GET", "/v1/sessions/s/watch?timeout=abc", nil) }, 400, "validation", "", false},
+		{"wrong type", "pat", func() *http.Request { return newReq(t, "POST", "/v1/channels", strings.NewReader(`{"name":1}`)) }, 400, "validation", "", false},
+		{"not json", "pat", func() *http.Request { return newReq(t, "POST", "/v1/channels", strings.NewReader(`not json`)) }, 400, "validation", "", false},
 		{"enum outside", "pat", func() *http.Request {
 			return newReq(t, "POST", "/v1/channels", strings.NewReader(`{"name":"a","kind":"dm"}`))
-		}, 400, "validation", ""},
+		}, 400, "validation", "", false},
 		{"oversized with length", "pat", func() *http.Request {
 			r := newReq(t, "POST", "/v1/channels", bytes.NewReader(big))
 			r.ContentLength = int64(len(big))
 			return r
-		}, 413, "payload_too_large", ""},
+		}, 413, "payload_too_large", "", false},
 		{"oversized chunked", "pat", func() *http.Request {
 			r := newReq(t, "POST", "/v1/channels", io.NopCloser(bytes.NewReader(big)))
 			r.ContentLength = -1
 			r.TransferEncoding = []string{"chunked"}
 			return r
-		}, 413, "payload_too_large", ""},
+		}, 413, "payload_too_large", "", false},
 		{"oversized on open operation", "", func() *http.Request {
 			r := newReq(t, "GET", "/v1/discover", io.NopCloser(bytes.NewReader(big)))
 			r.ContentLength = -1
 			return r
-		}, 413, "payload_too_large", ""},
+		}, 413, "payload_too_large", "", true},
 		{"oversized without identity", "", func() *http.Request {
 			r := newReq(t, "POST", "/v1/channels", io.NopCloser(bytes.NewReader(big)))
 			r.ContentLength = -1
 			return r
-		}, 413, "payload_too_large", ""},
+		}, 413, "payload_too_large", "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			send := e.raw
-			if c.name == "oversized on open operation" {
-				send = e.rawUnvalidated // out of contract: the document declares no 413 on a bodiless operation
+			send := e.rawAllowUnrouted // the unknown path and wrong method match no operation
+			if c.outOfContract {
+				send = e.rawUnvalidated // the document declares no 413 on a bodiless operation
 			}
 			resp := send(c.identity, c.req())
 			p := readProblem(t, resp)

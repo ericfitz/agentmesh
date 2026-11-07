@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"net"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +37,7 @@ func TestServerServesBothEngines(t *testing.T) {
 		}
 
 		get := func(path string) (int, string) {
-			resp, err := http.Get("http://" + addr + path)
+			resp, err := tcpClient(t).Get("http://" + addr + path)
 			if err != nil {
 				t.Fatalf("GET %s: %v", path, err)
 			}

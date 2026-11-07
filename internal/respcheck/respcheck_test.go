@@ -384,3 +384,55 @@ func TestCheckConcurrent(t *testing.T) {
 		t.Fatalf("bad %d skipped %d", bad.Load(), c.Skipped())
 	}
 }
+
+type fakeTB struct {
+	cleanups []func()
+	errs     []string
+}
+
+func (f *fakeTB) Helper()                   { /* no-op: the fake has no frames to hide */ }
+func (f *fakeTB) Cleanup(fn func())         { f.cleanups = append(f.cleanups, fn) }
+func (f *fakeTB) Errorf(s string, a ...any) { f.errs = append(f.errs, fmt.Sprintf(s, a...)) }
+func (f *fakeTB) finish() {
+	for _, fn := range f.cleanups {
+		fn()
+	}
+}
+
+func TestReportDefersToCleanupAndNeverTouchesFinishedTest(t *testing.T) {
+	tb := &fakeTB{}
+	report := respcheck.Report(tb)
+	report(errors.New("one"))
+	if len(tb.errs) != 0 {
+		t.Fatalf("Errorf called before cleanup: %v", tb.errs)
+	}
+	tb.finish()
+	if len(tb.errs) != 1 || !strings.Contains(tb.errs[0], "one") {
+		t.Fatalf("errs = %v, want the one violation", tb.errs)
+	}
+	before := len(respcheck.Late())
+	report(errors.New("after"))
+	if len(tb.errs) != 1 {
+		t.Fatalf("a violation after the test called Errorf: %v", tb.errs)
+	}
+	if got := respcheck.Late(); len(got) != before+1 {
+		t.Fatalf("Late() = %v, want the late violation", got)
+	}
+}
+
+func TestCheckedCounters(t *testing.T) {
+	c := newChecker(t)
+	tr := c.Transport(rtFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 204, Header: http.Header{}}, nil
+	}), nil)
+	for _, path := range []string{"http://x/things/a", "http://x/nope"} {
+		resp, err := (&http.Client{Transport: tr}).Get(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+	}
+	if tr.Checked() != 2 || tr.Skipped() != 1 || c.Checked() != 2 || c.Skipped() != 1 {
+		t.Fatalf("transport %d/%d checker %d/%d, want 2/1 each", tr.Checked(), tr.Skipped(), c.Checked(), c.Skipped())
+	}
+}

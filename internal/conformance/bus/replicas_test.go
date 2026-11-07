@@ -82,7 +82,7 @@ func startReplica(t *testing.T, ctx context.Context, name string, e dbtest.Engin
 		}
 	}
 	var err error
-	if r.client, err = gen.NewClientWithResponses(r.base); err != nil {
+	if r.client, err = gen.NewClientWithResponses(r.base, gen.WithHTTPClient(tcpClient(t))); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -91,7 +91,7 @@ func startReplica(t *testing.T, ctx context.Context, name string, e dbtest.Engin
 // clientWith is a client for r carrying bearer.
 func (r *replica) clientWith(t *testing.T, bearer string) *gen.ClientWithResponses {
 	t.Helper()
-	c, err := gen.NewClientWithResponses(r.base, gen.WithRequestEditorFn(remote.WithBearer(bearer)))
+	c, err := gen.NewClientWithResponses(r.base, gen.WithRequestEditorFn(remote.WithBearer(bearer)), gen.WithHTTPClient(tcpClient(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

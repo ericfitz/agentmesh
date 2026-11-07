@@ -84,7 +84,7 @@ func TestWatchClientDisconnectOverTCP(t *testing.T) {
 	}
 
 	hc := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
-	c := identityClient(t, addr, "pat", gen.WithHTTPClient(hc))
+	c := identityClient(t, addr, "pat", gen.WithHTTPClient(checkedClient(t, hc)))
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	timeout := 5.0
