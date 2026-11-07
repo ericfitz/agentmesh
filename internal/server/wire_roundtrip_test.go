@@ -70,7 +70,19 @@ var pairs = []pair{
 	pairOf("Scope", remote.FromGenScope, ok(scopeToGen)),
 	pairOf("Bridge", remote.FromGenBridge, ok(bridgeToGen)),
 	pairOf("SigningKey", remote.FromGenSigningKey, ok(signingKeyToGen)),
-	pairOf("AgentStatus", ok(remote.FromGenAgentStatus), ok(genAgentStatus)),
+	pairOf("AgentStatus", ok(remote.FromGenAgentStatus), ok(agentStatusToGen)),
+	pairOf("OpenSessionRequestObject", ok(openSessionInput), ok(remote.OpenSessionRequest)),
+	pairOf("Session", ok(remote.FromGenSession), ok(sessionToGen)),
+	pairOf("CloseSessionRequestObject", ok(closeSessionInput), ok(remote.CloseSessionRequest)),
+	pairOf("ReceiveRequestObject", ok(receiveInput), ok(remote.ReceiveRequest)),
+	pairOf("ReceiveResult", remote.FromGenReceiveResult, ok(receiveResultToGen)),
+	pairOf("WatchRequestObject", watchInput, ok(remote.WatchRequest)),
+	pairOf("Wake", ok(remote.FromGenWake), ok(wakeToGen)),
+	pairOf("PeekRequestObject", ok(peekInput), ok(remote.PeekRequest)),
+	pairOf("Peek", ok(remote.FromGenPeek), ok(peekToGen)),
+	pairOf("Identity", remote.FromGenIdentity, ok(identityToGen)),
+	pairOf("SetAgentStatusRequestObject", ok(setAgentStatusInput), ok(remote.SetAgentStatusRequest)),
+	pairOf("AgentStatusEntry", remote.FromGenAgentStatusEntry, ok(agentStatusEntryToGen)),
 }
 
 // exception names a member a converter pair may not carry, with the reason.
@@ -90,6 +102,8 @@ var exceptions = map[string]exception{}
 var enumValues = map[string]any{
 	"gen.MessageSenderKind":     gen.MessageSenderKind(bus.IdentityAgent),
 	"bus.IdentityKind":          bus.IdentityHuman,
+	"gen.IdentityKind":          gen.IdentityKind(bus.IdentityAgent),
+	"gen.AgentStatusEntryKind":  gen.AgentStatusEntryKind(bus.IdentityHuman),
 	"gen.HealthStatus":          gen.HealthStatusOk,
 	"bus.HealthStatus":          bus.HealthOK,
 	"gen.HealthTier":            gen.HealthTier(bus.TierAdmin),
@@ -173,6 +187,9 @@ func fill(t *testing.T, v reflect.Value, path string, c *counter, used map[strin
 // lookupEnum finds the enumValues entry for a member: its path first, then its
 // type. A hit is recorded in used.
 func lookupEnum(path string, ty reflect.Type, used map[string]bool) (any, bool) {
+	if ty.Kind() == reflect.Pointer {
+		return nil, false // the lookup happens at the element
+	}
 	if e, found := enumValues[path]; found {
 		used[path] = true
 		return e, true

@@ -12,7 +12,8 @@ import (
 // odd session id is judged by the server, never refused here; the one
 // exception is Close's empty id (below).
 
-func (b *Bus) Open(ctx context.Context, in ab2bus.OpenSessionInput) (ab2bus.Session, error) {
+// OpenSessionRequest builds the request for Open; Body is always set.
+func OpenSessionRequest(in ab2bus.OpenSessionInput) gen.OpenSessionRequestObject {
 	body := gen.OpenSessionJSONRequestBody{Hint: strPtr(in.Hint), ResumeToken: strPtr(in.ResumeToken)}
 	if len(in.Cursors) > 0 {
 		cs := make([]gen.OfferedCursor, len(in.Cursors))
@@ -21,17 +22,11 @@ func (b *Bus) Open(ctx context.Context, in ab2bus.OpenSessionInput) (ab2bus.Sess
 		}
 		body.Cursors = &cs
 	}
-	r, err := b.c.OpenSessionWithResponse(ctx, body)
-	if err != nil {
-		return ab2bus.Session{}, errorOf(ctx, 0, nil, nil, err)
-	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
-		return ab2bus.Session{}, err
-	}
-	if r.JSON201 == nil {
-		return ab2bus.Session{}, unparsable(r.StatusCode())
-	}
-	s := r.JSON201
+	return gen.OpenSessionRequestObject{Body: &body}
+}
+
+// FromGenSession converts a wire session to the domain type.
+func FromGenSession(s gen.Session) ab2bus.Session {
 	out := ab2bus.Session{
 		ID: s.Id, Identity: s.Identity, DisplayName: s.DisplayName,
 		ResumeToken: s.ResumeToken, Resumed: s.Resumed,
@@ -42,7 +37,21 @@ func (b *Bus) Open(ctx context.Context, in ab2bus.OpenSessionInput) (ab2bus.Sess
 	for _, p := range s.Pending {
 		out.Pending = append(out.Pending, ab2bus.PendingChannel{Channel: p.Channel, Pending: p.Pending})
 	}
-	return out, nil
+	return out
+}
+
+func (b *Bus) Open(ctx context.Context, in ab2bus.OpenSessionInput) (ab2bus.Session, error) {
+	r, err := b.c.OpenSessionWithResponse(ctx, *OpenSessionRequest(in).Body)
+	if err != nil {
+		return ab2bus.Session{}, errorOf(ctx, 0, nil, nil, err)
+	}
+	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+		return ab2bus.Session{}, err
+	}
+	if r.JSON201 == nil {
+		return ab2bus.Session{}, unparsable(r.StatusCode())
+	}
+	return FromGenSession(*r.JSON201), nil
 }
 
 // Close judges the empty session id itself: core Close answers validation for
@@ -54,14 +63,22 @@ func (b *Bus) Close(ctx context.Context, in ab2bus.CloseSessionInput) error {
 	if in.Session == "" {
 		return ab2bus.Errorf(ab2bus.CodeValidation, false, "session is required")
 	}
-	r, err := b.c.CloseSessionWithResponse(ctx, in.Session, &gen.CloseSessionParams{IdempotencyKey: key(in.IdempotencyKey)})
+	req := CloseSessionRequest(in)
+	r, err := b.c.CloseSessionWithResponse(ctx, req.Session, &req.Params)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
 	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
 }
 
-func (b *Bus) Receive(ctx context.Context, in ab2bus.ReceiveInput) (ab2bus.ReceiveResult, error) {
+// CloseSessionRequest builds the request for Close.
+func CloseSessionRequest(in ab2bus.CloseSessionInput) gen.CloseSessionRequestObject {
+	return gen.CloseSessionRequestObject{Session: in.Session, Params: gen.CloseSessionParams{IdempotencyKey: key(in.IdempotencyKey)}}
+}
+
+// ReceiveRequest builds the request for Receive; Body is always set, and its
+// optional members are absent for their zero values.
+func ReceiveRequest(in ab2bus.ReceiveInput) gen.ReceiveRequestObject {
 	body := gen.ReceiveJSONRequestBody{Ack: strPtr(in.Ack), Channels: slicePtr(in.Channels)}
 	if in.Count != 0 {
 		body.Count = &in.Count
@@ -69,17 +86,12 @@ func (b *Bus) Receive(ctx context.Context, in ab2bus.ReceiveInput) (ab2bus.Recei
 	if in.IncludeOwn {
 		body.IncludeOwn = ptr(true)
 	}
-	r, err := b.c.ReceiveWithResponse(ctx, in.Session, body)
-	if err != nil {
-		return ab2bus.ReceiveResult{}, errorOf(ctx, 0, nil, nil, err)
-	}
-	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
-		return ab2bus.ReceiveResult{}, err
-	}
-	if r.JSON200 == nil {
-		return ab2bus.ReceiveResult{}, unparsable(r.StatusCode())
-	}
-	w := r.JSON200
+	return gen.ReceiveRequestObject{Session: in.Session, Body: &body}
+}
+
+// FromGenReceiveResult converts a wire batch; a message with an unknown
+// sender kind is an internal error.
+func FromGenReceiveResult(w gen.ReceiveResult) (ab2bus.ReceiveResult, error) {
 	out := ab2bus.ReceiveResult{
 		Batch: w.Batch, Redelivered: w.Redelivered, AckIgnored: w.AckIgnored,
 		Notice: deref(w.Notice), Instruction: deref(w.Instruction),
@@ -97,12 +109,39 @@ func (b *Bus) Receive(ctx context.Context, in ab2bus.ReceiveInput) (ab2bus.Recei
 	return out, nil
 }
 
-func (b *Bus) Watch(ctx context.Context, in ab2bus.WatchInput) (ab2bus.WatchResult, error) {
-	params := &gen.WatchParams{After: int64Ptr(in.After), Timeout: seconds(in.Timeout)}
+func (b *Bus) Receive(ctx context.Context, in ab2bus.ReceiveInput) (ab2bus.ReceiveResult, error) {
+	req := ReceiveRequest(in)
+	r, err := b.c.ReceiveWithResponse(ctx, req.Session, *req.Body)
+	if err != nil {
+		return ab2bus.ReceiveResult{}, errorOf(ctx, 0, nil, nil, err)
+	}
+	if err := errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil); err != nil {
+		return ab2bus.ReceiveResult{}, err
+	}
+	if r.JSON200 == nil {
+		return ab2bus.ReceiveResult{}, unparsable(r.StatusCode())
+	}
+	return FromGenReceiveResult(*r.JSON200)
+}
+
+// WatchRequest builds the request for Watch; each parameter is absent for its
+// zero value.
+func WatchRequest(in ab2bus.WatchInput) gen.WatchRequestObject {
+	params := gen.WatchParams{After: int64Ptr(in.After), Timeout: seconds(in.Timeout)}
 	if in.IncludeOwn {
 		params.IncludeOwn = ptr(true)
 	}
-	r, err := b.c.WatchWithResponse(ctx, in.Session, params)
+	return gen.WatchRequestObject{Session: in.Session, Params: params}
+}
+
+// FromGenWake converts a wake; a 200 is a wake, so Woke is true.
+func FromGenWake(w gen.Wake) ab2bus.WatchResult {
+	return ab2bus.WatchResult{Woke: true, Seq: w.Seq, Count: w.Count, Channels: w.Channels}
+}
+
+func (b *Bus) Watch(ctx context.Context, in ab2bus.WatchInput) (ab2bus.WatchResult, error) {
+	req := WatchRequest(in)
+	r, err := b.c.WatchWithResponse(ctx, req.Session, &req.Params)
 	if err != nil {
 		return ab2bus.WatchResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -119,7 +158,7 @@ func (b *Bus) Watch(ctx context.Context, in ab2bus.WatchInput) (ab2bus.WatchResu
 	if r.JSON200 == nil {
 		return ab2bus.WatchResult{}, unparsable(r.StatusCode())
 	}
-	return ab2bus.WatchResult{Woke: true, Seq: r.JSON200.Seq, Count: r.JSON200.Count, Channels: r.JSON200.Channels}, nil
+	return FromGenWake(*r.JSON200), nil
 }
 
 func (b *Bus) Identities(ctx context.Context) ([]ab2bus.IdentityInfo, error) {
@@ -135,19 +174,29 @@ func (b *Bus) Identities(ctx context.Context) ([]ab2bus.IdentityInfo, error) {
 	}
 	out := make([]ab2bus.IdentityInfo, 0, len(*r.JSON200))
 	for _, i := range *r.JSON200 {
-		kind, err := fromGenIdentityKind("kind", string(i.Kind))
+		info, err := FromGenIdentity(i)
 		if err != nil {
 			return nil, err
-		}
-		info := ab2bus.IdentityInfo{Name: i.Name, Kind: kind, Admin: i.Admin}
-		if i.Status != nil {
-			st := FromGenAgentStatus(*i.Status)
-			info.Status = &st
-		}
-		for _, s := range i.Sessions {
-			info.Sessions = append(info.Sessions, ab2bus.SessionInfo{ID: s.Id, Identity: s.Identity, DisplayName: s.DisplayName, OpenedAt: s.OpenedAt})
 		}
 		out = append(out, info)
 	}
 	return out, nil
+}
+
+// FromGenIdentity converts a wire identity; an unknown kind is an internal
+// error.
+func FromGenIdentity(i gen.Identity) (ab2bus.IdentityInfo, error) {
+	kind, err := fromGenIdentityKind("kind", string(i.Kind))
+	if err != nil {
+		return ab2bus.IdentityInfo{}, err
+	}
+	info := ab2bus.IdentityInfo{Name: i.Name, Kind: kind, Admin: i.Admin}
+	if i.Status != nil {
+		st := FromGenAgentStatus(*i.Status)
+		info.Status = &st
+	}
+	for _, s := range i.Sessions {
+		info.Sessions = append(info.Sessions, ab2bus.SessionInfo{ID: s.Id, Identity: s.Identity, DisplayName: s.DisplayName, OpenedAt: s.OpenedAt})
+	}
+	return info, nil
 }

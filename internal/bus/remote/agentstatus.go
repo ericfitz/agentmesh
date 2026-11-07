@@ -24,12 +24,33 @@ func derefStr(p *string) string {
 	return *p
 }
 
+// FromGenAgentStatusEntry converts a wire status entry; an unknown kind is an
+// internal error.
+func FromGenAgentStatusEntry(e gen.AgentStatusEntry) (ab2bus.AgentStatusEntry, error) {
+	kind, err := fromGenIdentityKind("kind", string(e.Kind))
+	if err != nil {
+		return ab2bus.AgentStatusEntry{}, err
+	}
+	return ab2bus.AgentStatusEntry{Identity: e.Identity, Kind: kind, Live: e.Live, Status: FromGenAgentStatus(e.Status)}, nil
+}
+
+// SetAgentStatusRequest builds the request for SetAgentStatus; Body is always
+// set and problem is absent when empty.
+func SetAgentStatusRequest(in ab2bus.SetAgentStatusInput) gen.SetAgentStatusRequestObject {
+	body := gen.SetAgentStatusJSONRequestBody{Tag: string(in.Tag), Text: in.Text, Problem: strPtr(in.Problem)}
+	return gen.SetAgentStatusRequestObject{
+		Session: in.Session,
+		Params:  gen.SetAgentStatusParams{IdempotencyKey: key(in.IdempotencyKey)},
+		Body:    &body,
+	}
+}
+
 func (b *Bus) SetAgentStatus(ctx context.Context, in ab2bus.SetAgentStatusInput) (ab2bus.AgentStatus, error) {
 	if in.Session == "" {
 		return ab2bus.AgentStatus{}, ab2bus.Errorf(ab2bus.CodeValidation, false, "session is required")
 	}
-	body := gen.SetAgentStatusJSONRequestBody{Tag: string(in.Tag), Text: in.Text, Problem: strPtr(in.Problem)}
-	r, err := b.c.SetAgentStatusWithResponse(ctx, in.Session, &gen.SetAgentStatusParams{IdempotencyKey: key(in.IdempotencyKey)}, body)
+	req := SetAgentStatusRequest(in)
+	r, err := b.c.SetAgentStatusWithResponse(ctx, req.Session, &req.Params, *req.Body)
 	if err != nil {
 		return ab2bus.AgentStatus{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -55,11 +76,11 @@ func (b *Bus) AgentStatuses(ctx context.Context) ([]ab2bus.AgentStatusEntry, err
 	}
 	out := make([]ab2bus.AgentStatusEntry, 0, len(*r.JSON200))
 	for _, e := range *r.JSON200 {
-		kind, err := fromGenIdentityKind("kind", string(e.Kind))
+		entry, err := FromGenAgentStatusEntry(e)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, ab2bus.AgentStatusEntry{Identity: e.Identity, Kind: kind, Live: e.Live, Status: FromGenAgentStatus(e.Status)})
+		out = append(out, entry)
 	}
 	return out, nil
 }

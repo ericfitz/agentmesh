@@ -92,7 +92,7 @@ var ruleAllowed = map[string]map[string]int{
 	"internal/server/scopes.go CreateAgentIdentity":         {"Scope": 6},               // wire copy of the request's and result's scope (kind N)
 	"internal/server/scopes.go GetScope":                    {"Scope": 1},               // the path parameter naming the scope (kind N)
 	"internal/server/scopes.go DoneScope":                   {"Scope": 1},               // the path parameter naming the scope (kind N)
-	"internal/server/sessions.go ListIdentities":            {"Admin": 1},               // wire copy of the identity's flag (kind N)
+	"internal/server/sessions.go identityToGen":             {"Admin": 1},               // wire copy of the identity's flag (kind N)
 	"internal/slackbridge/service.go toBus":                 {"Scope": 1},               // converter
 	"internal/slackbridge/outbound.go drainOne":             {"Scope": 1},               // the bridge's scope as the post's display prefix
 	"internal/slackbridge/lifecycle.go lifecycleOne":        {"Scope": 1},               // loads the bridge's scope row: state

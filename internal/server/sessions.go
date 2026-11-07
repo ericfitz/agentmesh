@@ -16,6 +16,15 @@ import (
 // away releases the handler.
 
 func (a *api) OpenSession(ctx context.Context, req gen.OpenSessionRequestObject) (gen.OpenSessionResponseObject, error) {
+	s, err := a.sessions.Open(ctx, IdentityFrom(ctx), openSessionInput(req))
+	if err != nil {
+		return nil, err
+	}
+	return gen.OpenSession201JSONResponse(sessionToGen(s)), nil
+}
+
+// openSessionInput reads the optional body: no body is an empty input.
+func openSessionInput(req gen.OpenSessionRequestObject) ab2bus.OpenSessionInput {
 	var in ab2bus.OpenSessionInput
 	if b := req.Body; b != nil {
 		in.Hint = derefOr(b.Hint)
@@ -24,10 +33,11 @@ func (a *api) OpenSession(ctx context.Context, req gen.OpenSessionRequestObject)
 			in.Cursors = append(in.Cursors, ab2bus.OfferedCursor{Channel: c.Channel, Seq: c.Seq})
 		}
 	}
-	s, err := a.sessions.Open(ctx, IdentityFrom(ctx), in)
-	if err != nil {
-		return nil, err
-	}
+	return in
+}
+
+// sessionToGen is the wire form of a session; both arrays are [], never null.
+func sessionToGen(s ab2bus.Session) gen.Session {
 	out := gen.Session{
 		DisplayName: s.DisplayName, Id: s.ID, Identity: s.Identity,
 		ResumeToken: s.ResumeToken, Resumed: s.Resumed,
@@ -40,18 +50,30 @@ func (a *api) OpenSession(ctx context.Context, req gen.OpenSessionRequestObject)
 	for _, r := range s.RejectedCursors {
 		out.RejectedCursors = append(out.RejectedCursors, gen.RejectedCursor{Channel: r.Channel, Reason: gen.RejectedCursorReason(r.Reason)})
 	}
-	return gen.OpenSession201JSONResponse(out), nil
+	return out
 }
 
 func (a *api) CloseSession(ctx context.Context, req gen.CloseSessionRequestObject) (gen.CloseSessionResponseObject, error) {
-	in := ab2bus.CloseSessionInput{Session: req.Session, IdempotencyKey: derefOr(req.Params.IdempotencyKey)}
-	if err := a.sessions.Close(ctx, IdentityFrom(ctx), in); err != nil {
+	if err := a.sessions.Close(ctx, IdentityFrom(ctx), closeSessionInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.CloseSession204Response{}, nil
 }
 
+func closeSessionInput(req gen.CloseSessionRequestObject) ab2bus.CloseSessionInput {
+	return ab2bus.CloseSessionInput{Session: req.Session, IdempotencyKey: derefOr(req.Params.IdempotencyKey)}
+}
+
 func (a *api) Receive(ctx context.Context, req gen.ReceiveRequestObject) (gen.ReceiveResponseObject, error) {
+	r, err := a.delivery.Receive(ctx, IdentityFrom(ctx), receiveInput(req))
+	if err != nil {
+		return nil, err
+	}
+	return gen.Receive200JSONResponse(receiveResultToGen(r)), nil
+}
+
+// receiveInput reads the optional body: no body is the defaults.
+func receiveInput(req gen.ReceiveRequestObject) ab2bus.ReceiveInput {
 	in := ab2bus.ReceiveInput{Session: req.Session}
 	if b := req.Body; b != nil {
 		in.Ack = derefOr(b.Ack)
@@ -59,10 +81,12 @@ func (a *api) Receive(ctx context.Context, req gen.ReceiveRequestObject) (gen.Re
 		in.Channels = derefOr(b.Channels)
 		in.IncludeOwn = derefOr(b.IncludeOwn)
 	}
-	r, err := a.delivery.Receive(ctx, IdentityFrom(ctx), in)
-	if err != nil {
-		return nil, err
-	}
+	return in
+}
+
+// receiveResultToGen is the wire form of a batch: gaps and messages are [],
+// instruction and notice are absent when empty.
+func receiveResultToGen(r ab2bus.ReceiveResult) gen.ReceiveResult {
 	out := gen.ReceiveResult{
 		AckIgnored: r.AckIgnored, Batch: r.Batch, Redelivered: r.Redelivered,
 		Instruction: optStr(r.Instruction), Notice: optStr(r.Notice),
@@ -75,21 +99,13 @@ func (a *api) Receive(ctx context.Context, req gen.ReceiveRequestObject) (gen.Re
 	for _, m := range r.Messages {
 		out.Messages = append(out.Messages, toGenMessage(m))
 	}
-	return gen.Receive200JSONResponse(out), nil
+	return out
 }
 
 func (a *api) Watch(ctx context.Context, req gen.WatchRequestObject) (gen.WatchResponseObject, error) {
-	in := ab2bus.WatchInput{
-		Session:    req.Session,
-		After:      derefOr(req.Params.After),
-		IncludeOwn: derefOr(req.Params.IncludeOwn),
-	}
-	if t := req.Params.Timeout; t != nil {
-		d, err := watchTimeout(float64(*t))
-		if err != nil {
-			return nil, err
-		}
-		in.Timeout = d
+	in, err := watchInput(req)
+	if err != nil {
+		return nil, err
 	}
 	r, err := a.delivery.Watch(ctx, IdentityFrom(ctx), in)
 	if err != nil {
@@ -98,11 +114,33 @@ func (a *api) Watch(ctx context.Context, req gen.WatchRequestObject) (gen.WatchR
 	if !r.Woke {
 		return gen.Watch204Response{}, nil
 	}
+	return gen.Watch200JSONResponse(wakeToGen(r)), nil
+}
+
+// watchInput validates the timeout (watchTimeout) and builds the input.
+func watchInput(req gen.WatchRequestObject) (ab2bus.WatchInput, error) {
+	in := ab2bus.WatchInput{
+		Session:    req.Session,
+		After:      derefOr(req.Params.After),
+		IncludeOwn: derefOr(req.Params.IncludeOwn),
+	}
+	if t := req.Params.Timeout; t != nil {
+		d, err := watchTimeout(float64(*t))
+		if err != nil {
+			return ab2bus.WatchInput{}, err
+		}
+		in.Timeout = d
+	}
+	return in, nil
+}
+
+// wakeToGen is the wire form of a wake; channels is [], never null.
+func wakeToGen(r ab2bus.WatchResult) gen.Wake {
 	chans := r.Channels
 	if chans == nil {
 		chans = []string{}
 	}
-	return gen.Watch200JSONResponse(gen.Wake{Seq: r.Seq, Count: r.Count, Channels: chans}), nil
+	return gen.Wake{Seq: r.Seq, Count: r.Count, Channels: chans}
 }
 
 func (a *api) ListIdentities(ctx context.Context, _ gen.ListIdentitiesRequestObject) (gen.ListIdentitiesResponseObject, error) {
@@ -112,17 +150,23 @@ func (a *api) ListIdentities(ctx context.Context, _ gen.ListIdentitiesRequestObj
 	}
 	out := make(gen.ListIdentities200JSONResponse, 0, len(ids))
 	for _, i := range ids {
-		g := gen.Identity{Name: i.Name, Kind: gen.IdentityKind(i.Kind), Admin: i.Admin, Sessions: make([]gen.SessionInfo, 0, len(i.Sessions))}
-		for _, s := range i.Sessions {
-			g.Sessions = append(g.Sessions, gen.SessionInfo{Id: s.ID, Identity: s.Identity, DisplayName: s.DisplayName, OpenedAt: s.OpenedAt})
-		}
-		if i.Status != nil {
-			st := genAgentStatus(*i.Status)
-			g.Status = &st
-		}
-		out = append(out, g)
+		out = append(out, identityToGen(i))
 	}
 	return out, nil
+}
+
+// identityToGen is the wire form of an identity; sessions is [], status is
+// absent when the identity has none.
+func identityToGen(i ab2bus.IdentityInfo) gen.Identity {
+	g := gen.Identity{Name: i.Name, Kind: gen.IdentityKind(i.Kind), Admin: i.Admin, Sessions: make([]gen.SessionInfo, 0, len(i.Sessions))}
+	for _, s := range i.Sessions {
+		g.Sessions = append(g.Sessions, gen.SessionInfo{Id: s.ID, Identity: s.Identity, DisplayName: s.DisplayName, OpenedAt: s.OpenedAt})
+	}
+	if i.Status != nil {
+		st := agentStatusToGen(*i.Status)
+		g.Status = &st
+	}
+	return g
 }
 
 // watchTimeout converts the wire's fractional seconds to a Duration without
