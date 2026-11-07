@@ -221,13 +221,18 @@ paths:
             type: integer
             format: int64
             default: 0
+            minimum: 0
+            maximum: 9223372036854775807
         - name: timeout
           in: query
           required: false
-          description: Seconds to wait; fractional allowed; 0 or absent means the server cap.
+          description: >-
+            Seconds to wait; fractional allowed; 0 or absent means the server cap. At most 240 seconds, the largest value of watch_max_seconds; above the configured watch_max_seconds the server waits at most that long.
           schema:
             type: number
             format: double
+            minimum: 0
+            maximum: 240
         - name: include_own
           in: query
           required: false
@@ -399,6 +404,9 @@ paths:
           required: true
           schema:
             type: string
+            maxLength: 384
+          description: >-
+            At most 384 characters: the percent-encoded length (the server counts 128 decoded bytes).
       responses:
         "200":
           description: The stored revisions.
@@ -573,6 +581,8 @@ paths:
               type: array
               items:
                 $ref: "#/components/schemas/ACLEntry"
+              maxItems: 256
+              description: At most 256 items.
       responses:
         "204":
           description: ACL replaced.
@@ -714,6 +724,12 @@ paths:
             minItems: 1
             items:
               type: string
+              maxLength: 33
+              pattern: ^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$|^[A-Za-z0-9-]+(:[A-Za-z0-9-]*)?\*$
+              description: >-
+                At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
+            maxItems: 10
+          description: At most 10 items.
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       responses:
         "204":
@@ -783,17 +799,27 @@ paths:
           schema:
             type: integer
             format: int64
+            minimum: 0
+            maximum: 9223372036854775807
         - name: after
           in: query
           required: false
           schema:
             type: integer
             format: int64
+            minimum: 0
+            maximum: 9223372036854775807
         - name: count
           in: query
           required: false
           schema:
             type: integer
+            format: int32
+            minimum: 0
+            maximum: 10000
+            x-go-type: int
+          description: >-
+            At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
         - name: thread
           in: query
           required: false
@@ -802,6 +828,7 @@ paths:
             type: integer
             format: int64
             minimum: 1
+            maximum: 9223372036854775807
         - name: tags
           in: query
           required: false
@@ -811,6 +838,12 @@ paths:
             type: array
             items:
               type: string
+              maxLength: 33
+              pattern: ^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$|^[A-Za-z0-9-]+(:[A-Za-z0-9-]*)?\*$
+              description: >-
+                At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
+            maxItems: 10
+          description: At most 10 items.
       responses:
         "200":
           description: Messages of the channel.
@@ -842,6 +875,8 @@ paths:
           required: false
           schema:
             type: string
+            maxLength: 1024
+          description: At most 1024 code points.
         - name: mode
           in: query
           required: false
@@ -853,29 +888,39 @@ paths:
           required: false
           schema:
             type: string
+            maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         - name: sender
           in: query
           required: false
           schema:
             type: string
+            maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         - name: since
           in: query
           required: false
           schema:
             type: integer
             format: int64
+            minimum: 0
+            maximum: 9223372036854775807
         - name: until
           in: query
           required: false
           schema:
             type: integer
             format: int64
+            minimum: 0
+            maximum: 9223372036854775807
         - name: thread
           in: query
           required: false
           schema:
             type: integer
             format: int64
+            minimum: 1
+            maximum: 9223372036854775807
         - name: tags
           in: query
           required: false
@@ -885,16 +930,30 @@ paths:
             type: array
             items:
               type: string
+              maxLength: 33
+              pattern: ^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$|^[A-Za-z0-9-]+(:[A-Za-z0-9-]*)?\*$
+              description: >-
+                At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
+            maxItems: 10
+          description: At most 10 items.
         - name: count
           in: query
           required: false
           schema:
             type: integer
+            format: int32
+            minimum: 0
+            maximum: 1000
+            x-go-type: int
+          description: At most 1000.
         - name: cursor
           in: query
           required: false
           schema:
             type: string
+            maxLength: 19
+            pattern: ^[0-9]+$
+          description: At most 19 code points (digits).
       responses:
         "200":
           description: Search hits.
@@ -1080,11 +1139,16 @@ paths:
           required: false
           schema:
             type: string
+            maxLength: 256
+          description: >-
+            At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
         - name: owner
           in: query
           required: false
           schema:
             type: string
+            maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
       responses:
         "200":
           description: Task summaries in tree order.
@@ -1411,6 +1475,9 @@ paths:
           required: true
           schema:
             type: string
+            maxLength: 384
+          description: >-
+            At most 384 characters: the percent-encoded length (the server counts 128 decoded bytes).
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       responses:
         "200":
@@ -1801,18 +1868,27 @@ components:
       required: true
       schema:
         type: string
+        maxLength: 3072
+      description: >-
+        At most 3072 characters: the percent-encoded length (the server counts 1024 decoded bytes).
     ChannelParam:
       name: channel
       in: path
       required: true
       schema:
         type: string
+        maxLength: 384
+      description: >-
+        At most 384 characters: the percent-encoded length (the server counts 128 decoded bytes).
     ScopeParam:
       name: scope
       in: path
       required: true
       schema:
         type: string
+        maxLength: 384
+      description: >-
+        At most 384 characters: the percent-encoded length (the server counts 128 decoded bytes).
     IdParam:
       name: id
       in: path
@@ -1820,13 +1896,17 @@ components:
       schema:
         type: integer
         format: int64
+        minimum: 0
+        maximum: 9223372036854775807
     IdempotencyKeyParam:
       name: Idempotency-Key
       in: header
       required: false
-      description: Absent or empty means no receipt (Decision 66).
+      description: >-
+        Absent or empty means no receipt (Decision 66). At most 1024 bytes.
       schema:
         type: string
+        maxLength: 1024
   responses:
     BadRequest:
       description: >-
@@ -2170,21 +2250,33 @@ components:
       properties:
         channel:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         seq:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
     OpenSessionRequest:
       type: object
       additionalProperties: false
       properties:
         hint:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         resume_token:
           type: string
+          minLength: 43
+          maxLength: 43
+          pattern: ^[A-Za-z0-9_-]{43}$
+          description: Exactly 43 code points of base64url.
         cursors:
           type: array
           items:
             $ref: "#/components/schemas/OfferedCursor"
+          maxItems: 256
+          description: At most 256 items.
     RejectedCursor:
       type: object
       required: [channel, reason]
@@ -2231,12 +2323,24 @@ components:
       properties:
         ack:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         count:
           type: integer
+          format: int32
+          minimum: 0
+          maximum: 10000
+          x-go-type: int
+          description: >-
+            At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
         channels:
           type: array
           items:
             type: string
+            maxLength: 128
+            description: At most 128 bytes (the server counts bytes).
+          maxItems: 256
+          description: At most 256 items.
         include_own:
           type: boolean
     Gap:
@@ -2359,12 +2463,16 @@ components:
         tag:
           type: string
           description: >-
-            One of idle, planning, implementing, reviewing, waiting, blocked,
-            needs-human. offline is set by the server.
+            One of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server. At most 256 code points.
+          maxLength: 256
         text:
           type: string
+          maxLength: 200
+          description: At most 200 code points.
         problem:
           type: string
+          maxLength: 200
+          description: At most 200 code points.
     AgentStatus:
       type: object
       required: [identity, revision, tag, text, session, display_name, set_at]
@@ -2449,11 +2557,16 @@ components:
       properties:
         identity:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         permissions:
           type: array
           items:
             type: string
             enum: [read, write, admin]
+          maxItems: 3
+          minItems: 1
+          description: At least 1 and at most 3 items.
     CreateChannelRequest:
       type: object
       additionalProperties: false
@@ -2461,6 +2574,8 @@ components:
       properties:
         name:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         kind:
           type: string
           enum: [ordinary, memory, tasks]
@@ -2468,8 +2583,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ACLEntry"
+          maxItems: 256
+          description: At most 256 items.
         scope:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
     RenameChannelRequest:
       type: object
       additionalProperties: false
@@ -2477,6 +2596,8 @@ components:
       properties:
         name:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
     SubscribeRequest:
       type: object
       additionalProperties: false
@@ -2493,6 +2614,12 @@ components:
           type: array
           items:
             type: string
+            maxLength: 33
+            pattern: ^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$|^[A-Za-z0-9-]+(:[A-Za-z0-9-]*)?\*$
+            description: >-
+              At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
+          maxItems: 10
+          description: At most 10 items.
     SendRequest:
       type: object
       additionalProperties: false
@@ -2500,23 +2627,45 @@ components:
       properties:
         subject:
           type: string
+          maxLength: 200
+          description: At most 200 code points.
         content:
           type: string
+          maxLength: 1048576
+          description: >-
+            At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
         type:
           type: string
+          maxLength: 256
+          description: At most 256 code points.
         reply_to:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         metadata:
           type: object
           additionalProperties:
             type: string
+            maxLength: 1024
+            description: At most 1024 code points.
+          maxProperties: 32
+          description: >-
+            At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
         tags:
           type: array
           items:
             type: string
+            maxLength: 32
+            pattern: ^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$
+            description: >-
+              At most 32 code points of letters, digits and hyphen with one optional colon; the server lowercases tags.
+          maxItems: 10
+          description: At most 10 items.
         session:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
     SendResult:
       type: object
       required: [seq]
@@ -2562,20 +2711,39 @@ components:
           format: int64
           minimum: 1
           description: The revision the caller read; the edit fails with conflict if the live revision differs.
+          maximum: 9223372036854775807
         subject:
           type: string
+          maxLength: 200
+          description: At most 200 code points.
         content:
           type: string
+          maxLength: 1048576
+          description: >-
+            At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
         type:
           type: string
+          maxLength: 256
+          description: At most 256 code points.
         metadata:
           type: object
           additionalProperties:
             type: string
+            maxLength: 1024
+            description: At most 1024 code points.
+          maxProperties: 32
+          description: >-
+            At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
         tags:
           type: array
           items:
             type: string
+            maxLength: 32
+            pattern: ^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$
+            description: >-
+              At most 32 code points of letters, digits and hyphen with one optional colon; the server lowercases tags.
+          maxItems: 10
+          description: At most 10 items.
     EditResult:
       type: object
       required: [seq, memory_id, revision, replaced]
@@ -2690,64 +2858,116 @@ components:
       properties:
         subject:
           type: string
+          minLength: 1
+          maxLength: 256
+          description: At least 1 and at most 256 code points.
         description:
           type: string
+          maxLength: 1048576
+          description: >-
+            At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
         parent:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         before:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         after:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         blocked_by:
           type: array
           items:
             type: integer
             format: int64
+            minimum: 0
+            maximum: 9223372036854775807
+          maxItems: 64
+          description: At most 64 items.
         metadata:
           type: object
           additionalProperties:
             type: string
+            maxLength: 1024
+            description: At most 1024 code points.
+          maxProperties: 32
+          description: >-
+            At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
     TaskPatch:
       type: object
       additionalProperties: false
       properties:
         status:
           type: string
+          maxLength: 256
+          description: >-
+            At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
         owner:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         subject:
           type: string
+          maxLength: 256
+          description: At most 256 code points.
         description:
           type: string
+          maxLength: 1048576
+          description: >-
+            At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
         parent:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         before:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         after:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         add_blocked_by:
           type: array
           items:
             type: integer
             format: int64
+            minimum: 0
+            maximum: 9223372036854775807
+          maxItems: 64
+          description: At most 64 items.
         remove_blocked_by:
           type: array
           items:
             type: integer
             format: int64
+            minimum: 0
+            maximum: 9223372036854775807
+          maxItems: 64
+          description: At most 64 items.
         leased_until:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
         metadata:
           type: object
           additionalProperties:
             type: string
+            maxLength: 1024
+            description: At most 1024 code points.
+          maxProperties: 32
+          description: >-
+            At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
         delete:
           type: boolean
     TaskUpdateResult:
@@ -2768,6 +2988,8 @@ components:
         leased_until:
           type: integer
           format: int64
+          minimum: 0
+          maximum: 9223372036854775807
     Notice:
       type: object
       required: [kind, message, set_at]
@@ -2949,28 +3171,52 @@ components:
       properties:
         grant_type:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         client_assertion_type:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         client_assertion:
           type: string
+          maxLength: 16384
+          description: At most 16384 bytes.
         client_id:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         scope:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         subject_token:
           type: string
+          maxLength: 16384
+          description: At most 16384 bytes.
         subject_token_type:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         requested_token_type:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         audience:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         resource:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
         actor_token:
           type: string
+          maxLength: 16384
+          description: At most 16384 bytes.
         actor_token_type:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
     OAuthError:
       type: object
       description: RFC 6749 section 5.2 error body.
@@ -2996,6 +3242,8 @@ components:
     JWK:
       type: object
       additionalProperties: true
+      maxProperties: 16
+      description: At most 16 keys.
     JWKS:
       type: object
       required: [keys]
@@ -3011,10 +3259,14 @@ components:
       properties:
         identity:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         public_key_jwk:
           $ref: "#/components/schemas/JWK"
         enrollment_token:
           type: string
+          maxLength: 1024
+          description: At most 1024 bytes.
     Registration:
       type: object
       required: [identity, kid, algorithm, created]
@@ -3035,6 +3287,8 @@ components:
       properties:
         email:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
     HumanIdentity:
       type: object
       required: [identity, created]
@@ -3108,8 +3362,12 @@ components:
       properties:
         name:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         scope:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
     AgentIdentity:
       type: object
       required: [identity, created, enrollment_token, expires_at]
@@ -3132,6 +3390,8 @@ components:
       properties:
         name:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
     DoneScopeRequest:
       type: object
       additionalProperties: false
@@ -3184,8 +3444,14 @@ components:
       properties:
         channel:
           type: string
+          maxLength: 128
+          description: At most 128 bytes (the server counts bytes).
         slack_name:
           type: string
+          maxLength: 80
+          pattern: ^[a-z0-9_-]{1,80}$
+          description: >-
+            At most 80 code points of lowercase letters, digits, underscore and hyphen.
     Bridge:
       type: object
       required: [channel, scope, slack_name, state, created_at]

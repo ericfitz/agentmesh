@@ -436,8 +436,8 @@ func TestPathParametersDecodeOnce(t *testing.T) {
 		t.Errorf("empty segment: status %d: %s", rec.Code, rec.Body)
 	}
 
-	rec = do(t, h, "DELETE", "/v1/tag-subscriptions?pattern=env%3A%2A%2Cx&pattern=deploy", "", tok)
-	if rec.Code != 204 || len(s.patterns) != 2 || s.patterns[0] != "env:*,x" || s.patterns[1] != "deploy" {
+	rec = do(t, h, "DELETE", "/v1/tag-subscriptions?pattern=env%3A%2A&pattern=deploy", "", tok)
+	if rec.Code != 204 || len(s.patterns) != 2 || s.patterns[0] != "env:*" || s.patterns[1] != "deploy" {
 		t.Errorf("tag patterns: status %d bound %q: %s", rec.Code, s.patterns, rec.Body)
 	}
 	if _, err := c.UnsubscribeTagsWithResponse(context.Background(), &gen.UnsubscribeTagsParams{Pattern: []string{"env:*", "deploy"}}); err != nil {

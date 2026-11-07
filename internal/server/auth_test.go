@@ -983,6 +983,11 @@ func TestSignerUnavailableIsLogged(t *testing.T) {
 	})
 }
 
+// tokenFormRefused is what a client sees for a form field above its spec
+// bound: the validator refuses first (issue #34), so the handler's own
+// "<field> exceeds N bytes" check is a second layer the wire never reaches.
+const tokenFormRefused = "the request is not a well-formed application/x-www-form-urlencoded token request with a grant_type"
+
 func TestTokenFormBounds(t *testing.T) {
 	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
 	const formCT = "application/x-www-form-urlencoded"
@@ -1011,7 +1016,7 @@ func TestTokenFormBounds(t *testing.T) {
 	} {
 		t.Run(c.field, func(t *testing.T) {
 			over := strings.Repeat("a", c.max+1)
-			wantOAuthError(t, post(map[string]string{c.field: over}), 400, "invalid_request", c.field+" exceeds "+strconv.Itoa(c.max)+" bytes", over)
+			wantOAuthError(t, post(map[string]string{c.field: over}), 400, "invalid_request", tokenFormRefused, over)
 			// At the bound the size check passes; the request fails later for
 			// another reason (never the size).
 			resp := post(map[string]string{c.field: strings.Repeat("a", c.max)})
@@ -1023,7 +1028,7 @@ func TestTokenFormBounds(t *testing.T) {
 	}
 	t.Run("grant_type", func(t *testing.T) {
 		v := url.Values{"grant_type": {strings.Repeat("g", MaxOAuthFieldBytes+1)}}
-		wantOAuthError(t, e.do("POST", "/v1/auth/token", formCT, "", v.Encode()), 400, "invalid_request", "grant_type exceeds 1024 bytes", "")
+		wantOAuthError(t, e.do("POST", "/v1/auth/token", formCT, "", v.Encode()), 400, "invalid_request", tokenFormRefused, "")
 	})
 }
 

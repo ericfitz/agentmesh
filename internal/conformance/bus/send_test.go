@@ -160,8 +160,12 @@ func TestSendValidationMessagesArePlain(t *testing.T) {
 			if !errors.As(err, &be) || be.Code != ab2bus.CodeValidation {
 				t.Fatalf("%s: err = %v, want a validation error", c.name, err)
 			}
-			if strings.HasPrefix(be.Message, "{") || strings.Contains(be.Message, `\"code\"`) || !strings.Contains(be.Message, c.want) {
-				t.Errorf("%s: message = %q, want plain text containing %q", c.name, be.Message, c.want)
+			want := c.want
+			if transport == "inproc" && c.name == "bad tag" {
+				want = "does not match pattern" // the spec's tag pattern answers first (issue #34)
+			}
+			if strings.HasPrefix(be.Message, "{") || strings.Contains(be.Message, `\"code\"`) || !strings.Contains(be.Message, want) {
+				t.Errorf("%s: message = %q, want plain text containing %q", c.name, be.Message, want)
 			}
 		}
 	})

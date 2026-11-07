@@ -61,19 +61,27 @@ func TestHistoryAuthBeforeInputValidation(t *testing.T) {
 			{"bad tag pattern", ab2bus.HistoryInput{Channel: "priv", Tags: []string{"bad tag"}}},
 		}
 		for _, c := range bad {
+			// On the wire the spec's bounds (count minimum, tag pattern) are
+			// checked by the validator before any rule runs, so every caller
+			// gets validation (issue #34); the auth-first order is the core's,
+			// and the local transport proves it.
+			wantNotRegistered, wantForbidden, wantNotFound := ab2bus.CodeNotRegistered, ab2bus.CodeForbidden, ab2bus.CodeNotFound
+			if transport == "inproc" {
+				wantNotRegistered, wantForbidden, wantNotFound = ab2bus.CodeValidation, ab2bus.CodeValidation, ab2bus.CodeValidation
+			}
 			_, err := newBus(h, "ghost").History(ctx, c.in)
-			if got := ab2bus.CodeOf(err); got != ab2bus.CodeNotRegistered {
-				t.Errorf("unregistered, %s: code = %q (%v), want not_registered", c.name, got, err)
+			if got := ab2bus.CodeOf(err); got != wantNotRegistered {
+				t.Errorf("unregistered, %s: code = %q (%v), want %s", c.name, got, err, wantNotRegistered)
 			}
 			_, err = h.as("kim").History(ctx, c.in)
-			if got := ab2bus.CodeOf(err); got != ab2bus.CodeForbidden {
-				t.Errorf("forbidden, %s: code = %q (%v), want forbidden", c.name, got, err)
+			if got := ab2bus.CodeOf(err); got != wantForbidden {
+				t.Errorf("forbidden, %s: code = %q (%v), want %s", c.name, got, err, wantForbidden)
 			}
 			unknown := c.in
 			unknown.Channel = "nope"
 			_, err = h.as("pat").History(ctx, unknown)
-			if got := ab2bus.CodeOf(err); got != ab2bus.CodeNotFound {
-				t.Errorf("unknown channel, %s: code = %q (%v), want not_found", c.name, got, err)
+			if got := ab2bus.CodeOf(err); got != wantNotFound {
+				t.Errorf("unknown channel, %s: code = %q (%v), want %s", c.name, got, err, wantNotFound)
 			}
 			_, err = h.as("pat").History(ctx, c.in)
 			if got := ab2bus.CodeOf(err); got != ab2bus.CodeValidation {

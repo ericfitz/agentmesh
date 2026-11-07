@@ -579,7 +579,10 @@ func (e SearchParamsMode) Valid() bool {
 
 // ACLEntry defines model for ACLEntry.
 type ACLEntry struct {
-	Identity    string                `json:"identity"`
+	// Identity At most 128 bytes (the server counts bytes).
+	Identity string `json:"identity"`
+
+	// Permissions At least 1 and at most 3 items.
 	Permissions []ACLEntryPermissions `json:"permissions"`
 }
 
@@ -715,22 +718,33 @@ type ClaimTaskRequest struct {
 
 // CreateAgentIdentityRequest defines model for CreateAgentIdentityRequest.
 type CreateAgentIdentityRequest struct {
-	Name  string  `json:"name"`
+	// Name At most 128 bytes (the server counts bytes).
+	Name string `json:"name"`
+
+	// Scope At most 128 bytes (the server counts bytes).
 	Scope *string `json:"scope,omitempty"`
 }
 
 // CreateBridgeRequest defines model for CreateBridgeRequest.
 type CreateBridgeRequest struct {
-	Channel   string  `json:"channel"`
+	// Channel At most 128 bytes (the server counts bytes).
+	Channel string `json:"channel"`
+
+	// SlackName At most 80 code points of lowercase letters, digits, underscore and hyphen.
 	SlackName *string `json:"slack_name,omitempty"`
 }
 
 // CreateChannelRequest defines model for CreateChannelRequest.
 type CreateChannelRequest struct {
-	Acl   *[]ACLEntry               `json:"acl,omitempty"`
-	Kind  *CreateChannelRequestKind `json:"kind,omitempty"`
-	Name  string                    `json:"name"`
-	Scope *string                   `json:"scope,omitempty"`
+	// Acl At most 256 items.
+	Acl  *[]ACLEntry               `json:"acl,omitempty"`
+	Kind *CreateChannelRequestKind `json:"kind,omitempty"`
+
+	// Name At most 128 bytes (the server counts bytes).
+	Name string `json:"name"`
+
+	// Scope At most 128 bytes (the server counts bytes).
+	Scope *string `json:"scope,omitempty"`
 }
 
 // CreateChannelRequestKind defines model for CreateChannelRequest.Kind.
@@ -738,11 +752,13 @@ type CreateChannelRequestKind string
 
 // CreateIdentityByEmailRequest defines model for CreateIdentityByEmailRequest.
 type CreateIdentityByEmailRequest struct {
+	// Email At most 128 bytes (the server counts bytes).
 	Email string `json:"email"`
 }
 
 // CreateScopeRequest defines model for CreateScopeRequest.
 type CreateScopeRequest struct {
+	// Name At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 }
 
@@ -780,14 +796,23 @@ type DoneScopeRequestRetire string
 
 // EditMemoryRequest Every field is optional and an omitted field keeps the live revision's value; a present empty subject, type, metadata or tags clears it. Content cannot be cleared (an empty content is a validation error). A request with no field is a validation error.
 type EditMemoryRequest struct {
+	// Content At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
 	Content *string `json:"content,omitempty"`
 
 	// IfRevision The revision the caller read; the edit fails with conflict if the live revision differs.
-	IfRevision *int64             `json:"if_revision,omitempty"`
-	Metadata   *map[string]string `json:"metadata,omitempty"`
-	Subject    *string            `json:"subject,omitempty"`
-	Tags       *[]string          `json:"tags,omitempty"`
-	Type       *string            `json:"type,omitempty"`
+	IfRevision *int64 `json:"if_revision,omitempty"`
+
+	// Metadata At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
+	Metadata *map[string]string `json:"metadata,omitempty"`
+
+	// Subject At most 200 code points.
+	Subject *string `json:"subject,omitempty"`
+
+	// Tags At most 10 items.
+	Tags *[]string `json:"tags,omitempty"`
+
+	// Type At most 256 code points.
+	Type *string `json:"type,omitempty"`
 }
 
 // EditResult defines model for EditResult.
@@ -891,7 +916,7 @@ type Identity struct {
 // IdentityKind defines model for Identity.Kind.
 type IdentityKind string
 
-// JWK defines model for JWK.
+// JWK At most 16 keys.
 type JWK map[string]interface{}
 
 // JWKS defines model for JWKS.
@@ -937,15 +962,21 @@ type OAuthError struct {
 
 // OfferedCursor defines model for OfferedCursor.
 type OfferedCursor struct {
+	// Channel At most 128 bytes (the server counts bytes).
 	Channel string `json:"channel"`
 	Seq     int64  `json:"seq"`
 }
 
 // OpenSessionRequest defines model for OpenSessionRequest.
 type OpenSessionRequest struct {
-	Cursors     *[]OfferedCursor `json:"cursors,omitempty"`
-	Hint        *string          `json:"hint,omitempty"`
-	ResumeToken *string          `json:"resume_token,omitempty"`
+	// Cursors At most 256 items.
+	Cursors *[]OfferedCursor `json:"cursors,omitempty"`
+
+	// Hint At most 128 bytes (the server counts bytes).
+	Hint *string `json:"hint,omitempty"`
+
+	// ResumeToken Exactly 43 code points of base64url.
+	ResumeToken *string `json:"resume_token,omitempty"`
 }
 
 // Peek defines model for Peek.
@@ -982,10 +1013,15 @@ type ProblemCode string
 
 // ReceiveRequest defines model for ReceiveRequest.
 type ReceiveRequest struct {
-	Ack        *string   `json:"ack,omitempty"`
-	Channels   *[]string `json:"channels,omitempty"`
-	Count      *int      `json:"count,omitempty"`
-	IncludeOwn *bool     `json:"include_own,omitempty"`
+	// Ack At most 1024 bytes.
+	Ack *string `json:"ack,omitempty"`
+
+	// Channels At most 256 items.
+	Channels *[]string `json:"channels,omitempty"`
+
+	// Count At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
+	Count      *int  `json:"count,omitempty"`
+	IncludeOwn *bool `json:"include_own,omitempty"`
 }
 
 // ReceiveResult defines model for ReceiveResult.
@@ -1001,9 +1037,14 @@ type ReceiveResult struct {
 
 // RegisterRequest defines model for RegisterRequest.
 type RegisterRequest struct {
+	// EnrollmentToken At most 1024 bytes.
 	EnrollmentToken *string `json:"enrollment_token,omitempty"`
-	Identity        string  `json:"identity"`
-	PublicKeyJwk    JWK     `json:"public_key_jwk"`
+
+	// Identity At most 128 bytes (the server counts bytes).
+	Identity string `json:"identity"`
+
+	// PublicKeyJwk At most 16 keys.
+	PublicKeyJwk JWK `json:"public_key_jwk"`
 }
 
 // Registration defines model for Registration.
@@ -1028,6 +1069,7 @@ type RejectedCursorReason string
 
 // RenameChannelRequest defines model for RenameChannelRequest.
 type RenameChannelRequest struct {
+	// Name At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 }
 
@@ -1069,13 +1111,24 @@ type SearchResult struct {
 
 // SendRequest defines model for SendRequest.
 type SendRequest struct {
-	Content  string             `json:"content"`
+	// Content At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
+	Content string `json:"content"`
+
+	// Metadata At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
 	Metadata *map[string]string `json:"metadata,omitempty"`
 	ReplyTo  *int64             `json:"reply_to,omitempty"`
-	Session  *string            `json:"session,omitempty"`
-	Subject  *string            `json:"subject,omitempty"`
-	Tags     *[]string          `json:"tags,omitempty"`
-	Type     *string            `json:"type,omitempty"`
+
+	// Session At most 1024 bytes.
+	Session *string `json:"session,omitempty"`
+
+	// Subject At most 200 code points.
+	Subject *string `json:"subject,omitempty"`
+
+	// Tags At most 10 items.
+	Tags *[]string `json:"tags,omitempty"`
+
+	// Type At most 256 code points.
+	Type *string `json:"type,omitempty"`
 }
 
 // SendResult defines model for SendResult.
@@ -1105,10 +1158,13 @@ type SessionInfo struct {
 
 // SetAgentStatusRequest defines model for SetAgentStatusRequest.
 type SetAgentStatusRequest struct {
+	// Problem At most 200 code points.
 	Problem *string `json:"problem,omitempty"`
 
-	// Tag One of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server.
-	Tag  string `json:"tag"`
+	// Tag One of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server. At most 256 code points.
+	Tag string `json:"tag"`
+
+	// Text At most 200 code points.
 	Text string `json:"text"`
 }
 
@@ -1179,6 +1235,7 @@ type SubscribeRequestFrom string
 
 // TagPatterns defines model for TagPatterns.
 type TagPatterns struct {
+	// Patterns At most 10 items.
 	Patterns []string `json:"patterns"`
 }
 
@@ -1210,29 +1267,50 @@ type Task struct {
 
 // TaskCreateRequest defines model for TaskCreateRequest.
 type TaskCreateRequest struct {
-	After       *int64             `json:"after,omitempty"`
-	Before      *int64             `json:"before,omitempty"`
-	BlockedBy   *[]int64           `json:"blocked_by,omitempty"`
-	Description *string            `json:"description,omitempty"`
-	Metadata    *map[string]string `json:"metadata,omitempty"`
-	Parent      *int64             `json:"parent,omitempty"`
-	Subject     string             `json:"subject"`
+	After  *int64 `json:"after,omitempty"`
+	Before *int64 `json:"before,omitempty"`
+
+	// BlockedBy At most 64 items.
+	BlockedBy *[]int64 `json:"blocked_by,omitempty"`
+
+	// Description At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
+	Description *string `json:"description,omitempty"`
+
+	// Metadata At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
+	Metadata *map[string]string `json:"metadata,omitempty"`
+	Parent   *int64             `json:"parent,omitempty"`
+
+	// Subject At least 1 and at most 256 code points.
+	Subject string `json:"subject"`
 }
 
 // TaskPatch defines model for TaskPatch.
 type TaskPatch struct {
-	AddBlockedBy    *[]int64           `json:"add_blocked_by,omitempty"`
-	After           *int64             `json:"after,omitempty"`
-	Before          *int64             `json:"before,omitempty"`
-	Delete          *bool              `json:"delete,omitempty"`
-	Description     *string            `json:"description,omitempty"`
-	LeasedUntil     *int64             `json:"leased_until,omitempty"`
-	Metadata        *map[string]string `json:"metadata,omitempty"`
-	Owner           *string            `json:"owner,omitempty"`
-	Parent          *int64             `json:"parent,omitempty"`
-	RemoveBlockedBy *[]int64           `json:"remove_blocked_by,omitempty"`
-	Status          *string            `json:"status,omitempty"`
-	Subject         *string            `json:"subject,omitempty"`
+	// AddBlockedBy At most 64 items.
+	AddBlockedBy *[]int64 `json:"add_blocked_by,omitempty"`
+	After        *int64   `json:"after,omitempty"`
+	Before       *int64   `json:"before,omitempty"`
+	Delete       *bool    `json:"delete,omitempty"`
+
+	// Description At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
+	Description *string `json:"description,omitempty"`
+	LeasedUntil *int64  `json:"leased_until,omitempty"`
+
+	// Metadata At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
+	Metadata *map[string]string `json:"metadata,omitempty"`
+
+	// Owner At most 128 bytes (the server counts bytes).
+	Owner  *string `json:"owner,omitempty"`
+	Parent *int64  `json:"parent,omitempty"`
+
+	// RemoveBlockedBy At most 64 items.
+	RemoveBlockedBy *[]int64 `json:"remove_blocked_by,omitempty"`
+
+	// Status At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
+	Status *string `json:"status,omitempty"`
+
+	// Subject At most 256 code points.
+	Subject *string `json:"subject,omitempty"`
 }
 
 // TaskSummary defines model for TaskSummary.
@@ -1263,18 +1341,41 @@ type TaskUpdateResult struct {
 
 // TokenRequest RFC 6749 section 4.4.2 and RFC 8693 section 2.1 token request. The grant is a plain string so that an unsupported one answers unsupported_grant_type (RFC 6749 section 5.2) rather than failing validation; the handler checks which parameters each grant needs.
 type TokenRequest struct {
-	ActorToken          *string `json:"actor_token,omitempty"`
-	ActorTokenType      *string `json:"actor_token_type,omitempty"`
-	Audience            *string `json:"audience,omitempty"`
-	ClientAssertion     *string `json:"client_assertion,omitempty"`
+	// ActorToken At most 16384 bytes.
+	ActorToken *string `json:"actor_token,omitempty"`
+
+	// ActorTokenType At most 1024 bytes.
+	ActorTokenType *string `json:"actor_token_type,omitempty"`
+
+	// Audience At most 1024 bytes.
+	Audience *string `json:"audience,omitempty"`
+
+	// ClientAssertion At most 16384 bytes.
+	ClientAssertion *string `json:"client_assertion,omitempty"`
+
+	// ClientAssertionType At most 1024 bytes.
 	ClientAssertionType *string `json:"client_assertion_type,omitempty"`
-	ClientId            *string `json:"client_id,omitempty"`
-	GrantType           string  `json:"grant_type"`
-	RequestedTokenType  *string `json:"requested_token_type,omitempty"`
-	Resource            *string `json:"resource,omitempty"`
-	Scope               *string `json:"scope,omitempty"`
-	SubjectToken        *string `json:"subject_token,omitempty"`
-	SubjectTokenType    *string `json:"subject_token_type,omitempty"`
+
+	// ClientId At most 128 bytes (the server counts bytes).
+	ClientId *string `json:"client_id,omitempty"`
+
+	// GrantType At most 1024 bytes.
+	GrantType string `json:"grant_type"`
+
+	// RequestedTokenType At most 1024 bytes.
+	RequestedTokenType *string `json:"requested_token_type,omitempty"`
+
+	// Resource At most 1024 bytes.
+	Resource *string `json:"resource,omitempty"`
+
+	// Scope At most 1024 bytes.
+	Scope *string `json:"scope,omitempty"`
+
+	// SubjectToken At most 16384 bytes.
+	SubjectToken *string `json:"subject_token,omitempty"`
+
+	// SubjectTokenType At most 1024 bytes.
+	SubjectTokenType *string `json:"subject_token_type,omitempty"`
 }
 
 // Usage defines model for Usage.
@@ -1361,13 +1462,13 @@ type UnprocessableEntity = Problem
 
 // CreateIdentityByEmailParams defines parameters for CreateIdentityByEmail.
 type CreateIdentityByEmailParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // ResetCredentialParams defines parameters for ResetCredential.
 type ResetCredentialParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1375,7 +1476,7 @@ type ResetCredentialParams struct {
 type AdminResetParams struct {
 	Scope *AdminResetParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
 
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1384,13 +1485,13 @@ type AdminResetParamsScope string
 
 // CreateScopeParams defines parameters for CreateScope.
 type CreateScopeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // DoneScopeParams defines parameters for DoneScope.
 type DoneScopeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1398,25 +1499,25 @@ type DoneScopeParams struct {
 type RotateSigningKeyParams struct {
 	RevokePrevious *bool `form:"revoke_previous,omitempty" json:"revoke_previous,omitempty"`
 
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // CreateChannelParams defines parameters for CreateChannel.
 type CreateChannelParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // DeleteChannelParams defines parameters for DeleteChannel.
 type DeleteChannelParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // RenameChannelParams defines parameters for RenameChannel.
 type RenameChannelParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1425,7 +1526,7 @@ type SetACLJSONBody = []ACLEntry
 
 // SetACLParams defines parameters for SetACL.
 type SetACLParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1433,67 +1534,85 @@ type SetACLParams struct {
 type HistoryParams struct {
 	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
 	After  *int64 `form:"after,omitempty" json:"after,omitempty"`
-	Count  *int   `form:"count,omitempty" json:"count,omitempty"`
+
+	// Count At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
+	Count *int `form:"count,omitempty" json:"count,omitempty"`
 
 	// Thread Only the message with this sequence number and the messages whose reply_to is it.
-	Thread *int64    `form:"thread,omitempty" json:"thread,omitempty"`
-	Tags   *[]string `form:"tags,omitempty" json:"tags,omitempty"`
+	Thread *int64 `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Tags At most 10 items.
+	Tags *[]string `form:"tags,omitempty" json:"tags,omitempty"`
 }
 
 // SendMessageParams defines parameters for SendMessage.
 type SendMessageParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // UnsubscribeParams defines parameters for Unsubscribe.
 type UnsubscribeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // SubscribeParams defines parameters for Subscribe.
 type SubscribeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // ListTasksParams defines parameters for ListTasks.
 type ListTasksParams struct {
+	// Status At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
-	Owner  *string `form:"owner,omitempty" json:"owner,omitempty"`
+
+	// Owner At most 128 bytes (the server counts bytes).
+	Owner *string `form:"owner,omitempty" json:"owner,omitempty"`
 }
 
 // CreateTaskParams defines parameters for CreateTask.
 type CreateTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // DeleteMemoryParams defines parameters for DeleteMemory.
 type DeleteMemoryParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // EditMemoryParams defines parameters for EditMemory.
 type EditMemoryParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // SearchParams defines parameters for Search.
 type SearchParams struct {
-	Q       *string           `form:"q,omitempty" json:"q,omitempty"`
-	Mode    *SearchParamsMode `form:"mode,omitempty" json:"mode,omitempty"`
-	Channel *string           `form:"channel,omitempty" json:"channel,omitempty"`
-	Sender  *string           `form:"sender,omitempty" json:"sender,omitempty"`
-	Since   *int64            `form:"since,omitempty" json:"since,omitempty"`
-	Until   *int64            `form:"until,omitempty" json:"until,omitempty"`
-	Thread  *int64            `form:"thread,omitempty" json:"thread,omitempty"`
-	Tags    *[]string         `form:"tags,omitempty" json:"tags,omitempty"`
-	Count   *int              `form:"count,omitempty" json:"count,omitempty"`
-	Cursor  *string           `form:"cursor,omitempty" json:"cursor,omitempty"`
+	// Q At most 1024 code points.
+	Q    *string           `form:"q,omitempty" json:"q,omitempty"`
+	Mode *SearchParamsMode `form:"mode,omitempty" json:"mode,omitempty"`
+
+	// Channel At most 128 bytes (the server counts bytes).
+	Channel *string `form:"channel,omitempty" json:"channel,omitempty"`
+
+	// Sender At most 128 bytes (the server counts bytes).
+	Sender *string `form:"sender,omitempty" json:"sender,omitempty"`
+	Since  *int64  `form:"since,omitempty" json:"since,omitempty"`
+	Until  *int64  `form:"until,omitempty" json:"until,omitempty"`
+	Thread *int64  `form:"thread,omitempty" json:"thread,omitempty"`
+
+	// Tags At most 10 items.
+	Tags *[]string `form:"tags,omitempty" json:"tags,omitempty"`
+
+	// Count At most 1000.
+	Count *int `form:"count,omitempty" json:"count,omitempty"`
+
+	// Cursor At most 19 code points (digits).
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // SearchParamsMode defines parameters for Search.
@@ -1501,7 +1620,7 @@ type SearchParamsMode string
 
 // CloseSessionParams defines parameters for CloseSession.
 type CloseSessionParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1512,7 +1631,7 @@ type PeekParams struct {
 
 // SetAgentStatusParams defines parameters for SetAgentStatus.
 type SetAgentStatusParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1520,40 +1639,41 @@ type SetAgentStatusParams struct {
 type WatchParams struct {
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 
-	// Timeout Seconds to wait; fractional allowed; 0 or absent means the server cap.
+	// Timeout Seconds to wait; fractional allowed; 0 or absent means the server cap. At most 240 seconds, the largest value of watch_max_seconds; above the configured watch_max_seconds the server waits at most that long.
 	Timeout    *float64 `form:"timeout,omitempty" json:"timeout,omitempty"`
 	IncludeOwn *bool    `form:"include_own,omitempty" json:"include_own,omitempty"`
 }
 
 // UnsubscribeTagsParams defines parameters for UnsubscribeTags.
 type UnsubscribeTagsParams struct {
+	// Pattern At most 10 items.
 	Pattern []string `form:"pattern" json:"pattern"`
 
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // SubscribeTagsParams defines parameters for SubscribeTags.
 type SubscribeTagsParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // UpdateTaskParams defines parameters for UpdateTask.
 type UpdateTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // ClaimTaskParams defines parameters for ClaimTask.
 type ClaimTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // ReleaseTaskParams defines parameters for ReleaseTask.
 type ReleaseTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66).
+	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -4309,7 +4429,7 @@ func NewHistoryRequest(server string, channel ChannelParam, params *HistoryParam
 
 		if params.Count != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "count", *params.Count, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "count", *params.Count, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -5085,7 +5205,7 @@ func NewSearchRequest(server string, params *SearchParams) (*http.Request, error
 
 		if params.Count != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "count", *params.Count, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "count", *params.Count, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int32"}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -17298,7 +17418,7 @@ func (siw *ServerInterfaceWrapper) History(w http.ResponseWriter, r *http.Reques
 
 	// ------------- Optional query parameter "count" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "count", r.URL.Query(), &params.Count, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "count", r.URL.Query(), &params.Count, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {
@@ -17936,7 +18056,7 @@ func (siw *ServerInterfaceWrapper) Search(w http.ResponseWriter, r *http.Request
 
 	// ------------- Optional query parameter "count" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "count", r.URL.Query(), &params.Count, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "count", r.URL.Query(), &params.Count, runtime.BindQueryParameterOptions{Type: "integer", Format: "int32"})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {

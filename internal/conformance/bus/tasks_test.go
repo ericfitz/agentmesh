@@ -884,7 +884,14 @@ func TestTaskBlockersRawCount(t *testing.T) {
 		raw := append(append([]int64{}, live...), live[0], live[1])
 		_, err := pat.Create(ctx, ab2bus.TaskCreateInput{Channel: "work", Subject: "x", BlockedBy: raw})
 		codeOf(t, err, ab2bus.CodeValidation)
-		if err == nil || !strings.Contains(err.Error(), "blocked_by accepts at most 64 tasks") {
+		// On the wire the validator's maxItems answers first, with its own text.
+		wantText := func(field string) string {
+			if transport == "inproc" {
+				return "maxItems: got 65, want 64"
+			}
+			return field + " accepts at most 64 tasks"
+		}
+		if err == nil || !strings.Contains(err.Error(), wantText("blocked_by")) {
 			t.Fatalf("create: %v", err)
 		}
 		target := mustTask(t)(pat.Create(ctx, ab2bus.TaskCreateInput{Channel: "work", Subject: "target"}))
@@ -894,7 +901,7 @@ func TestTaskBlockersRawCount(t *testing.T) {
 		} {
 			_, err := pat.Update(ctx, p)
 			codeOf(t, err, ab2bus.CodeValidation)
-			if err == nil || !strings.Contains(err.Error(), field+" accepts at most 64 tasks") {
+			if err == nil || !strings.Contains(err.Error(), wantText(field)) {
 				t.Fatalf("%s: %v", field, err)
 			}
 		}
