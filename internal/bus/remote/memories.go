@@ -38,22 +38,44 @@ func (b *Bus) GetMemory(ctx context.Context, id int64) (ab2bus.Message, error) {
 	return FromGenMessage(*r.JSON200)
 }
 
+// Edit sends the edit; a nil pointer member stays absent, an empty one clears.
 func (b *Bus) Edit(ctx context.Context, in ab2bus.EditMemoryInput) (ab2bus.EditResult, error) {
-	body := gen.EditMemoryRequest{
-		Content: in.Content, Subject: in.Subject, Type: in.Type,
-		Metadata: in.Metadata, Tags: slicePtr(in.Tags), IfRevision: int64Ptr(in.IfRevision),
-	}
-	r, err := b.c.EditMemoryWithResponse(ctx, in.ID, &gen.EditMemoryParams{IdempotencyKey: key(in.IdempotencyKey)}, body)
+	req := EditMemoryRequest(in)
+	r, err := b.c.EditMemoryWithResponse(ctx, req.Id, &req.Params, *req.Body)
 	if err := mtCheck(ctx, r, err, func(r *gen.EditMemoryResponse) bool { return r.JSON201 != nil }); err != nil {
 		return ab2bus.EditResult{}, err
 	}
-	e := r.JSON201
-	return ab2bus.EditResult{Seq: e.Seq, MemoryID: e.MemoryId, Revision: e.Revision, Replaced: e.Replaced}, nil
+	return FromGenEditResult(*r.JSON201), nil
 }
 
+// EditMemoryRequest builds the request for Edit; Body is always set. A nil
+// Tags stays absent and an empty one is sent (it clears); IfRevision 0 is absent.
+func EditMemoryRequest(in ab2bus.EditMemoryInput) gen.EditMemoryRequestObject {
+	return gen.EditMemoryRequestObject{
+		Id:     in.ID,
+		Params: gen.EditMemoryParams{IdempotencyKey: key(in.IdempotencyKey)},
+		Body: &gen.EditMemoryRequest{
+			Content: in.Content, Subject: in.Subject, Type: in.Type,
+			Metadata: in.Metadata, Tags: slicePtr(in.Tags), IfRevision: int64Ptr(in.IfRevision),
+		},
+	}
+}
+
+// FromGenEditResult converts a wire edit receipt to the domain type.
+func FromGenEditResult(e gen.EditResult) ab2bus.EditResult {
+	return ab2bus.EditResult{Seq: e.Seq, MemoryID: e.MemoryId, Revision: e.Revision, Replaced: e.Replaced}
+}
+
+// Delete tombstones the memory.
 func (b *Bus) Delete(ctx context.Context, in ab2bus.DeleteMemoryInput) error {
-	r, err := b.c.DeleteMemoryWithResponse(ctx, in.ID, &gen.DeleteMemoryParams{IdempotencyKey: key(in.IdempotencyKey)})
+	req := DeleteMemoryRequest(in)
+	r, err := b.c.DeleteMemoryWithResponse(ctx, req.Id, &req.Params)
 	return mtCheck(ctx, r, err, func(*gen.DeleteMemoryResponse) bool { return true })
+}
+
+// DeleteMemoryRequest builds the request for Delete.
+func DeleteMemoryRequest(in ab2bus.DeleteMemoryInput) gen.DeleteMemoryRequestObject {
+	return gen.DeleteMemoryRequestObject{Id: in.ID, Params: gen.DeleteMemoryParams{IdempotencyKey: key(in.IdempotencyKey)}}
 }
 
 func (b *Bus) Revisions(ctx context.Context, id int64) ([]ab2bus.Message, error) {

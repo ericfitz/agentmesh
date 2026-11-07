@@ -97,6 +97,14 @@ var pairs = []pair{
 	pairOf("HistoryRequestObject", ok(historyInput), ok(remote.HistoryRequest)),
 	pairOf("SearchRequestObject", ok(searchInput), ok(remote.SearchRequest)),
 	pairOf("SearchResult", remote.FromGenSearchResult, ok(searchResultToGen)),
+	pairOf("EditMemoryRequestObject", editMemoryInput, ok(remote.EditMemoryRequest)),
+	pairOf("EditResult", ok(remote.FromGenEditResult), ok(editResultToGen)),
+	pairOf("DeleteMemoryRequestObject", ok(deleteMemoryInput), ok(remote.DeleteMemoryRequest)),
+	pairOf("CreateTaskRequestObject", createTaskInput, ok(remote.CreateTaskRequest)),
+	pairOf("ListTasksRequestObject", ok(listTasksInput), ok(remote.ListTasksRequest)),
+	pairOf("UpdateTaskRequestObject", updateTaskInput, ok(remote.UpdateTaskRequest)),
+	pairOf("ClaimTaskRequestObject", ok(claimTaskInput), ok(remote.ClaimTaskRequest)),
+	pairOf("ReleaseTaskRequestObject", ok(releaseTaskInput), ok(remote.ReleaseTaskRequest)),
 }
 
 // exception names a member a converter pair may not carry, with the reason.

@@ -46,16 +46,11 @@ func taskResultToGen(r ab2bus.TaskUpdateResult) gen.TaskUpdateResult {
 	return out
 }
 
+// CreateTask maps the request to tasks.Service.Create.
 func (a *api) CreateTask(ctx context.Context, r gen.CreateTaskRequestObject) (gen.CreateTaskResponseObject, error) {
-	if r.Body == nil {
-		return nil, ab2bus.Errorf(ab2bus.CodeValidation, false, "the request body is required")
-	}
-	b := r.Body
-	in := ab2bus.TaskCreateInput{
-		Channel: r.Channel, Subject: b.Subject, Description: derefOr(b.Description),
-		Parent: derefOr(b.Parent), Before: derefOr(b.Before), After: derefOr(b.After),
-		BlockedBy: derefOr(b.BlockedBy), Metadata: derefOr(b.Metadata),
-		IdempotencyKey: idemKey(r.Params.IdempotencyKey),
+	in, err := createTaskInput(r)
+	if err != nil {
+		return nil, err
 	}
 	t, err := a.tasks.Create(ctx, IdentityFrom(ctx), in)
 	if err != nil {
@@ -64,10 +59,22 @@ func (a *api) CreateTask(ctx context.Context, r gen.CreateTaskRequestObject) (ge
 	return gen.CreateTask201JSONResponse(taskToGen(t)), nil
 }
 
+// createTaskInput reads the request; the body is required.
+func createTaskInput(r gen.CreateTaskRequestObject) (ab2bus.TaskCreateInput, error) {
+	if r.Body == nil {
+		return ab2bus.TaskCreateInput{}, ab2bus.Errorf(ab2bus.CodeValidation, false, "the request body is required")
+	}
+	b := r.Body
+	return ab2bus.TaskCreateInput{
+		Channel: r.Channel, Subject: b.Subject, Description: derefOr(b.Description),
+		Parent: derefOr(b.Parent), Before: derefOr(b.Before), After: derefOr(b.After),
+		BlockedBy: derefOr(b.BlockedBy), Metadata: derefOr(b.Metadata),
+		IdempotencyKey: idemKey(r.Params.IdempotencyKey),
+	}, nil
+}
+
 func (a *api) ListTasks(ctx context.Context, r gen.ListTasksRequestObject) (gen.ListTasksResponseObject, error) {
-	ts, err := a.tasks.List(ctx, IdentityFrom(ctx), ab2bus.TaskListInput{
-		Channel: r.Channel, Status: derefOr(r.Params.Status), Owner: derefOr(r.Params.Owner),
-	})
+	ts, err := a.tasks.List(ctx, IdentityFrom(ctx), listTasksInput(r))
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +83,13 @@ func (a *api) ListTasks(ctx context.Context, r gen.ListTasksRequestObject) (gen.
 		out[i] = taskSummaryToGen(s)
 	}
 	return out, nil
+}
+
+// listTasksInput reads the path and the query; an absent filter is "".
+func listTasksInput(r gen.ListTasksRequestObject) ab2bus.TaskListInput {
+	return ab2bus.TaskListInput{
+		Channel: r.Channel, Status: derefOr(r.Params.Status), Owner: derefOr(r.Params.Owner),
+	}
 }
 
 func taskSummaryToGen(s ab2bus.TaskSummary) gen.TaskSummary {
@@ -100,18 +114,11 @@ func (a *api) GetTask(ctx context.Context, r gen.GetTaskRequestObject) (gen.GetT
 	return gen.GetTask200JSONResponse(taskToGen(t)), nil
 }
 
+// UpdateTask maps the request to tasks.Service.Update.
 func (a *api) UpdateTask(ctx context.Context, r gen.UpdateTaskRequestObject) (gen.UpdateTaskResponseObject, error) {
-	if r.Body == nil {
-		return nil, ab2bus.Errorf(ab2bus.CodeValidation, false, "the request body is required")
-	}
-	b := r.Body
-	p := ab2bus.TaskPatch{
-		ID: r.Id, Status: b.Status, Owner: b.Owner, Subject: b.Subject, Description: b.Description,
-		Parent: b.Parent, Before: derefOr(b.Before), After: derefOr(b.After),
-		AddBlockedBy: derefOr(b.AddBlockedBy), RemoveBlockedBy: derefOr(b.RemoveBlockedBy),
-		LeasedUntil: b.LeasedUntil, Metadata: derefOr(b.Metadata),
-		Delete:         derefOr(b.Delete),
-		IdempotencyKey: idemKey(r.Params.IdempotencyKey),
+	p, err := updateTaskInput(r)
+	if err != nil {
+		return nil, err
 	}
 	res, err := a.tasks.Update(ctx, IdentityFrom(ctx), p)
 	if err != nil {
@@ -120,24 +127,51 @@ func (a *api) UpdateTask(ctx context.Context, r gen.UpdateTaskRequestObject) (ge
 	return gen.UpdateTask200JSONResponse(taskResultToGen(res)), nil
 }
 
-func (a *api) ClaimTask(ctx context.Context, r gen.ClaimTaskRequestObject) (gen.ClaimTaskResponseObject, error) {
-	in := ab2bus.TaskClaimInput{ID: r.Id, IdempotencyKey: idemKey(r.Params.IdempotencyKey)}
-	if r.Body != nil {
-		in.LeasedUntil = derefOr(r.Body.LeasedUntil)
+// updateTaskInput reads the request; the body is required. A nil pointer
+// member leaves the field unchanged.
+func updateTaskInput(r gen.UpdateTaskRequestObject) (ab2bus.TaskPatch, error) {
+	if r.Body == nil {
+		return ab2bus.TaskPatch{}, ab2bus.Errorf(ab2bus.CodeValidation, false, "the request body is required")
 	}
-	res, err := a.tasks.Claim(ctx, IdentityFrom(ctx), in)
+	b := r.Body
+	return ab2bus.TaskPatch{
+		ID: r.Id, Status: b.Status, Owner: b.Owner, Subject: b.Subject, Description: b.Description,
+		Parent: b.Parent, Before: derefOr(b.Before), After: derefOr(b.After),
+		AddBlockedBy: derefOr(b.AddBlockedBy), RemoveBlockedBy: derefOr(b.RemoveBlockedBy),
+		LeasedUntil: b.LeasedUntil, Metadata: derefOr(b.Metadata),
+		Delete:         derefOr(b.Delete),
+		IdempotencyKey: idemKey(r.Params.IdempotencyKey),
+	}, nil
+}
+
+// ClaimTask maps the request to tasks.Service.Claim; the body is optional.
+func (a *api) ClaimTask(ctx context.Context, r gen.ClaimTaskRequestObject) (gen.ClaimTaskResponseObject, error) {
+	res, err := a.tasks.Claim(ctx, IdentityFrom(ctx), claimTaskInput(r))
 	if err != nil {
 		return nil, err
 	}
 	return gen.ClaimTask200JSONResponse(taskResultToGen(res)), nil
 }
 
+// claimTaskInput reads the request; an absent body or lease is 0.
+func claimTaskInput(r gen.ClaimTaskRequestObject) ab2bus.TaskClaimInput {
+	in := ab2bus.TaskClaimInput{ID: r.Id, IdempotencyKey: idemKey(r.Params.IdempotencyKey)}
+	if r.Body != nil {
+		in.LeasedUntil = derefOr(r.Body.LeasedUntil)
+	}
+	return in
+}
+
+// ReleaseTask maps the request to tasks.Service.Release.
 func (a *api) ReleaseTask(ctx context.Context, r gen.ReleaseTaskRequestObject) (gen.ReleaseTaskResponseObject, error) {
-	res, err := a.tasks.Release(ctx, IdentityFrom(ctx), ab2bus.TaskReleaseInput{
-		ID: r.Id, IdempotencyKey: idemKey(r.Params.IdempotencyKey),
-	})
+	res, err := a.tasks.Release(ctx, IdentityFrom(ctx), releaseTaskInput(r))
 	if err != nil {
 		return nil, err
 	}
 	return gen.ReleaseTask200JSONResponse(taskResultToGen(res)), nil
+}
+
+// releaseTaskInput reads the path and the Idempotency-Key header.
+func releaseTaskInput(r gen.ReleaseTaskRequestObject) ab2bus.TaskReleaseInput {
+	return ab2bus.TaskReleaseInput{ID: r.Id, IdempotencyKey: idemKey(r.Params.IdempotencyKey)}
 }
