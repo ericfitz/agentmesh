@@ -24,6 +24,22 @@ func TestNormalizeEmail(t *testing.T) {
 	}
 }
 
+// The length counts the raw text, before the trim, as the spec's maxLength does.
+func TestNormalizeEmailCountsRawLength(t *testing.T) {
+	at := strings.Repeat("a", 126) + "@c" // 128 bytes
+	if _, err := NormalizeEmail(at); err != nil {
+		t.Fatalf("128 bytes refused: %v", err)
+	}
+	for _, padded := range []string{at + " ", " " + at, at + "\t"} {
+		_, err := NormalizeEmail(padded)
+		if err == nil {
+			t.Errorf("NormalizeEmail(%d bytes with padding) accepted", len(padded))
+			continue
+		}
+		wantCode(t, err, bus.CodeValidation)
+	}
+}
+
 func TestParseReferenceRejects(t *testing.T) {
 	for name, a := range map[string][6]string{
 		"unknown list":       {"owners", "corp", "a@b", "", "", ""},

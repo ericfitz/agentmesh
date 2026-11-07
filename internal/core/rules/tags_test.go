@@ -181,7 +181,7 @@ func TestTagSpecPatternsAgree(t *testing.T) {
 	patSpec := regexp.MustCompile(TagPatternSpecPattern)
 	corpus := []string{"env", "env:prod", "ENV:Prod", "env:", "env:*", "env*", "*", ":a", "a:b:c", "a b", "",
 		strings.Repeat("a", 32), strings.Repeat("a", 33), strings.Repeat("a", 31) + "*", strings.Repeat("a", 32) + "*",
-		strings.Repeat("a", 33) + "*", "a:" + strings.Repeat("b", 29), "a:" + strings.Repeat("b", 30), "a**", "a:b*", "a:b:*"}
+		strings.Repeat("a", 33) + "*", "a:" + strings.Repeat("b", 29), "a:" + strings.Repeat("b", 30), "a**", "a:b*", "a:b:*", "K", "K*", "ENV:\u212a"}
 	for _, s := range corpus {
 		_, err := NormalizeTags([]string{s})
 		if got := tagSpec.MatchString(s) && len(s) <= MaxTagLen; got != (err == nil) {

@@ -500,7 +500,8 @@ func checkMode(mode string) error {
 }
 
 // maxWaitSeconds bounds wait_seconds before it becomes a time.Duration; the
-// bus clamps it further to the configured watch maximum.
+// loop below caps each watch call at bus.MaxWatchTimeout and the server
+// clamps within that to the configured watch maximum.
 const maxWaitSeconds = 86400
 
 func waitDuration(sec float64) (time.Duration, error) {

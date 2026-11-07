@@ -54,8 +54,11 @@ func normalizeTagList(tags []string, valid func(string) bool, badFmt, capFmt str
 	}
 	out := make([]string, 0, len(tags))
 	for _, t := range tags {
+		// ASCII only, checked before lowercasing: U+212A (Kelvin) lowercases
+		// to "k", which the spec pattern refuses.
+		ascii := isASCII(t)
 		t = strings.ToLower(t)
-		if !valid(t) {
+		if !ascii || !valid(t) {
 			return nil, bus.Errorf(bus.CodeValidation, false, badFmt, t)
 		}
 		if !slices.Contains(out, t) {
@@ -150,3 +153,13 @@ func MatchedTags(sets []TagSet, seq int64, tags []string) []string {
 
 // TagsKey is the key a tag set is stored under: its sorted patterns joined by commas.
 func TagsKey(patterns []string) string { return strings.Join(patterns, ",") }
+
+// isASCII reports whether s holds only ASCII bytes.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}

@@ -12,6 +12,11 @@ import (
 // result passes store.NameRule, is not everyone or admins and has one '@' with
 // a non-empty part on each side. The error is validation.
 func NormalizeEmail(raw string) (string, error) {
+	// The length is counted on the raw text, before the trim and the
+	// lowercase, so it agrees with the spec's maxLength (ruling 14).
+	if len(raw) > store.MaxNameBytes {
+		return "", core.E(bus.CodeValidation, "email %q: %v", raw, store.NameRule(raw))
+	}
 	e := strings.ToLower(strings.TrimSpace(raw))
 	if err := store.NameRule(e); err != nil {
 		return "", core.E(bus.CodeValidation, "email %q: %v", raw, err)

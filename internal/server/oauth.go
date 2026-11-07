@@ -49,26 +49,19 @@ type tokenFormField struct {
 // fails when gen.TokenRequest gains one this table lacks).
 func tokenFormFields(b *gen.TokenRequest) []tokenFormField {
 	return []tokenFormField{
-		{"actor_token", deref(b.ActorToken), assertion.MaxTokenBytes},
-		{"actor_token_type", deref(b.ActorTokenType), MaxOAuthFieldBytes},
-		{"audience", deref(b.Audience), MaxOAuthFieldBytes},
-		{"client_assertion", deref(b.ClientAssertion), assertion.MaxTokenBytes},
-		{"client_assertion_type", deref(b.ClientAssertionType), MaxOAuthFieldBytes},
-		{"client_id", deref(b.ClientId), store.MaxNameBytes},
+		{"actor_token", derefOr(b.ActorToken), assertion.MaxTokenBytes},
+		{"actor_token_type", derefOr(b.ActorTokenType), MaxOAuthFieldBytes},
+		{"audience", derefOr(b.Audience), MaxOAuthFieldBytes},
+		{"client_assertion", derefOr(b.ClientAssertion), assertion.MaxTokenBytes},
+		{"client_assertion_type", derefOr(b.ClientAssertionType), MaxOAuthFieldBytes},
+		{"client_id", derefOr(b.ClientId), store.MaxNameBytes},
 		{"grant_type", b.GrantType, MaxOAuthFieldBytes},
-		{"requested_token_type", deref(b.RequestedTokenType), MaxOAuthFieldBytes},
-		{"resource", deref(b.Resource), MaxOAuthFieldBytes},
-		{"scope", deref(b.Scope), MaxOAuthFieldBytes},
-		{"subject_token", deref(b.SubjectToken), assertion.MaxTokenBytes},
-		{"subject_token_type", deref(b.SubjectTokenType), MaxOAuthFieldBytes},
+		{"requested_token_type", derefOr(b.RequestedTokenType), MaxOAuthFieldBytes},
+		{"resource", derefOr(b.Resource), MaxOAuthFieldBytes},
+		{"scope", derefOr(b.Scope), MaxOAuthFieldBytes},
+		{"subject_token", derefOr(b.SubjectToken), assertion.MaxTokenBytes},
+		{"subject_token_type", derefOr(b.SubjectTokenType), MaxOAuthFieldBytes},
 	}
-}
-
-func deref(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
 }
 
 // oauthError is a refused token request. It is a gen.TokenResponseObject, so a
