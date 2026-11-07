@@ -233,3 +233,7 @@ Resolved on 2026-10-20:
   That is why the body limit is the outermost middleware with its own
   read-ahead, and why Milestone 5's authentication middleware sits in front of
   the validator, not inside it.
+
+## Protocol client checks addendum (Eric's decision, 2026-11-06; issue #29)
+
+- The Consequences line "kept in step with the OpenAPI document by hand, whichever generator is chosen" is superseded as recorded in ADR 0001's addendum of the same date. The generator choice is unaffected.

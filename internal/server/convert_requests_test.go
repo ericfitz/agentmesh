@@ -130,7 +130,7 @@ func TestRequestConvertersNilBody(t *testing.T) {
 	if raw := mustMarshal(t, remote.UpdateTaskRequest(bus.TaskPatch{ID: 1}).Body); raw != `{}` {
 		t.Fatalf("UpdateTaskRequest zero patch must be {}: %s", raw)
 	}
-	// Task 6: zero inputs and the lists that must stay [] not null.
+	// Zero inputs and the lists that must stay [] not null.
 	if got := adminResetInput(gen.AdminResetRequestObject{}); got.Scope != bus.ResetData || got.IdempotencyKey != "" {
 		t.Fatalf("adminResetInput zero params must default to data: %+v", got)
 	}

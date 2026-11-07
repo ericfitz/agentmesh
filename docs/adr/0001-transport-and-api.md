@@ -385,3 +385,13 @@ internal/` then prints nothing).
 ## Pre-release (Eric's decision 2026-10-27)
 
 - "Protocol version will be 1.0.0, end of discussion." Until the first release, `info.version` of `api/openapi.yaml` and `internal/version.Protocol` stay `1.0.0`, and an addition ships in `1.0.0` without a bump. The minor-per-addition and patch-for-documentation rule of the addendum above applies after the first release.
+
+## Protocol client checks addendum (Eric's decision, 2026-11-06; issue #29)
+
+- Item 12 stands: the MCP tool schemas stay hand-written and the consumers use the domain types behind the `Bus`. The Consequences line "the hand-written MCP tool schemas must be kept in step with the OpenAPI schema by hand" is superseded by three checks:
+  - The consumer import rule (`scripts/m6-exit-checks.sh`, consumer group `internal/mcpserver`, `internal/mcpcli`, `internal/cli`, `internal/tui`): none imports `internal/core/...`, `internal/server/...`, `internal/store/...`, `internal/gen/...` or `internal/bus/local`; a Bus comes from `internal/client`. It runs under `make verify` (`--deps-only`).
+  - `TestWireRoundTrip` (`internal/server`): every generated wire type is paired with a domain type and round-trips through `internal/bus/remote` and `internal/server` with every member intact, the client's request builders returning `gen.<Op>RequestObject`; one exceptions table holds each intended gap with a reason, and a stale entry fails.
+  - `TestToolCoverage` (`internal/mcpserver`): the literal table of the 26 tools' Bus methods and of every Bus member as used or hidden with a reason.
+- Each check has a mutation in `scripts/check-gates-selftest.sh` (blocks 23, 33, 34 and 35).
+- Tool shapes stay free: no schema is generated from the spec and no tool has to match the API.
+- Implementation record (not a decision): the plan moved `TestAccessRuleSites` entries into the extracted wire converters. One count grew, an exception to the plan's "counts move, never grow": `internal/server/admin_auth.go AdminReset` went from 2 to 3 (`adminResetInput` holds 2, `AdminReset` 1, a pass-through of the converted scope to `identities.Service.Reset`).
