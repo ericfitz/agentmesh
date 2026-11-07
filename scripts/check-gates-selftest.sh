@@ -630,8 +630,9 @@ block_slackbridge_catchup_before_drain() {
 # --- 23. m6-exit-script-fires ----------------------------------------------------------
 # Docker-free and without running the e2e test. The Milestone 6 exit script:
 # the import rule per group (the leaf group's internal/core row, the consumer
-# group's internal/gen row and internal/store row, the client group's
-# internal/core/channels and internal/store/sqlite rows), the log form's refusal of a
+# group's rows for internal/bus/local, internal/core, internal/server,
+# internal/gen and internal/store on mcpserver, mcpcli, cli and tui, the client
+# group's internal/core/channels and internal/store/sqlite rows), the log form's refusal of a
 # missing or empty log, its counts on a synthetic log (and a deleted or failed
 # line), and the word check.
 M6_SEQUENCE_STEPS=(0-server 1-register 2-token 3-open-session 4-watch 5-send-from-another-identity 6-wake 7-receive 8-ack 9-stale-bearer-refreshes 10-mcp-over-stdio 11-stop-hook 12-watch-ends-only-by-signal)
@@ -673,6 +674,17 @@ block_m6_exit_script_fires() {
 	deps_probe "$label" internal/client/probe_m6.go "$m/internal/store/sqlite" "deps_violation=$m/internal/client imports $m/internal/store/sqlite" m6-exit-checks.sh
 	deps_probe "$label" internal/oidcclient/probe_m6.go "$m/internal/bus" "deps_violation=$m/internal/oidcclient imports $m/internal/bus" m6-exit-checks.sh
 	deps_probe "$label" internal/oidctest/probe_m6.go "$m/internal/bus" "deps_violation=$m/internal/oidctest imports $m/internal/bus" m6-exit-checks.sh
+	deps_probe "$label" internal/mcpserver/probe_m6.go "$m/internal/bus/local" "deps_violation=$m/internal/mcpserver imports $m/internal/bus/local" m6-exit-checks.sh
+	deps_probe "$label" internal/mcpserver/probe_m6.go "$m/internal/core/channels" "deps_violation=$m/internal/mcpserver imports $m/internal/core/channels" m6-exit-checks.sh
+	deps_probe "$label" internal/mcpserver/probe_m6.go "$m/internal/server" "deps_violation=$m/internal/mcpserver imports $m/internal/server" m6-exit-checks.sh
+	deps_probe "$label" internal/mcpcli/probe_m6.go "$m/internal/core/notify" "deps_violation=$m/internal/mcpcli imports $m/internal/core/notify" m6-exit-checks.sh
+	deps_probe "$label" internal/mcpcli/probe_m6.go "$m/internal/server/config" "deps_violation=$m/internal/mcpcli imports $m/internal/server/config" m6-exit-checks.sh
+	deps_probe "$label" internal/cli/probe_m6.go "$m/internal/bus/local" "deps_violation=$m/internal/cli imports $m/internal/bus/local" m6-exit-checks.sh
+	deps_probe "$label" internal/cli/probe_m6.go "$m/internal/core" "deps_violation=$m/internal/cli imports $m/internal/core" m6-exit-checks.sh
+	deps_probe "$label" internal/cli/probe_m6.go "$m/internal/server" "deps_violation=$m/internal/cli imports $m/internal/server" m6-exit-checks.sh
+	deps_probe "$label" internal/tui/probe_m6.go "$m/internal/gen" "deps_violation=$m/internal/tui imports $m/internal/gen" m6-exit-checks.sh
+	deps_probe "$label" internal/tui/probe_m6.go "$m/internal/store/sqlite" "deps_violation=$m/internal/tui imports $m/internal/store/sqlite" m6-exit-checks.sh
+	deps_probe "$label" internal/tui/probe_m6.go "$m/internal/bus/local" "deps_violation=$m/internal/tui imports $m/internal/bus/local" m6-exit-checks.sh
 	rc=0
 	bash "$wt/scripts/m6-exit-checks.sh" "$tmp/does-not-exist.log" >"$log" 2>&1 || rc=$?
 	if [ "$rc" -ne 2 ]; then problem "$label" "missing log: exit $rc, expected 2"; fi
@@ -1046,8 +1058,10 @@ block_agent_status_rules_fire() {
 # --- 33. m10-deps-rule-fires ----------------------------------------------------------
 # Docker-free. scripts/m10-exit-checks.sh --deps-only guards the MCP-only binary:
 # the clean tree passes with 13 modules, a probe that pulls local mode, a Store
-# engine or an unlisted module into the binary fails naming it, and the one
-# allowed core edge (internal/core/notify) stays allowed. The log form refuses a
+# engine or an unlisted module into the binary fails naming it, a direct
+# internal/cli import by internal/mcpcli fails (the other direct bans are m6's
+# consumer group), and the one allowed core edge (internal/core/notify) stays
+# allowed under m10. The log form refuses a
 # missing log, and its counts on a synthetic log (a deleted, failed or repeated
 # leaf line and a package FAIL) are checked.
 # open note: mcp-only-client 9
@@ -1093,7 +1107,7 @@ block_m10_deps_rule_fires() {
 	bash "$wt/scripts/m10-exit-checks.sh" --deps-only >"$log" 2>&1 || rc=$?
 	if [ "$rc" -ne 0 ]; then problem "$label" "internal/core/notify probe: exit $rc, expected 0: $(tail -n 3 "$log" | tr '\n' ' ')"; fi
 	rm -f "$wt/internal/mcpcli/probe_m10.go"
-	deps_probe "$label" internal/mcpcli/probe_m10.go "$m/internal/store" "deps_violation=$m/internal/mcpcli imports $m/internal/store [rule direct]" m10-exit-checks.sh
+	deps_probe "$label" internal/mcpcli/probe_m10.go "$m/internal/cli" "deps_violation=$m/internal/mcpcli imports $m/internal/cli [rule direct]" m10-exit-checks.sh
 	for args in "" "a.log b.log" "--deps-only extra"; do
 		rc=0
 		# shellcheck disable=SC2086 # the cases are word lists

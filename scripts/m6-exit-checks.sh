@@ -25,8 +25,12 @@
 #              ./internal/procs ./internal/sessionstate
 #       must not import internal/core, internal/server, internal/bus/local or
 #       internal/store/{sqlite,postgres,sqlstore}
-#   consumer group ./internal/mcpserver ./internal/cli
-#       must not import internal/gen or internal/store (and below)
+#   consumer group ./internal/mcpserver ./internal/mcpcli ./internal/cli ./internal/tui
+#       obtain a Bus only from internal/client (client.Open, Conn): must not
+#       import internal/core/..., internal/server/..., internal/store/...,
+#       internal/gen/... or internal/bus/local (issue #29; internal/tui is also
+#       allowlisted by m8; internal/mcpcli's internal/cli ban is m10's).
+#       --deps-only runs inside make verify.
 #   client group ./internal/client (the package alone, not internal/client/localmode)
 #       must not import internal/core or below (except internal/core/notify, a
 #       leaf), internal/server, internal/bus/local or
@@ -75,8 +79,8 @@ check_group() {
 import_check() {
 	check_group './internal/profile ./internal/repoconfig ./internal/credential ./internal/procs ./internal/sessionstate' \
 		"^$MOD/internal/(core|server)(/|\$)|^$MOD/internal/bus/local\$|^$MOD/internal/store/(sqlite|postgres|sqlstore)(/|\$)"
-	check_group './internal/mcpserver ./internal/cli' \
-		"^$MOD/internal/(gen|store)(/|\$)"
+	check_group './internal/mcpserver ./internal/mcpcli ./internal/cli ./internal/tui' \
+		"^$MOD/internal/(core|server|store|gen)(/|\$)|^$MOD/internal/bus/local\$"
 	check_group './internal/client' \
 		"^$MOD/internal/(core|server)(/|\$)|^$MOD/internal/bus/local\$|^$MOD/internal/store/(sqlite|postgres|sqlstore)(/|\$)" \
 		"^$MOD/internal/core/notify\$"

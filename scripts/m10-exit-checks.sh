@@ -24,8 +24,9 @@
 #       kin-openapi, gorilla/mux, slack-go, modernc.org/ or charm.land/ prints
 #       deps_violation=<pkg> [rule transitive]
 #   (b) direct: the imports of ./internal/mcpcli and ./cmd/agentmesh-mcponly
-#       that are internal/{cli,gen,store}/... print
-#       deps_violation=<pkg> imports <imp> [rule direct]
+#       that are internal/cli/... print deps_violation=<pkg> imports <imp>
+#       [rule direct]; the gen, store, core, server and bus/local bans on
+#       internal/mcpcli are scripts/m6-exit-checks.sh's consumer group (issue #29)
 #   (c) modules: the built binary's `go version -m` dep lines name only the
 #       allowlisted modules; any other prints module_violation=<module>
 set -euo pipefail
@@ -126,7 +127,7 @@ while IFS= read -r line; do
 	[ -n "$line" ] || continue
 	pkg="${line%% *}"
 	imp="${line#* }"
-	if printf '%s\n' "$imp" | grep -E -q -- "^$MOD/internal/(cli|gen|store)(/|\$)"; then
+	if printf '%s\n' "$imp" | grep -E -q -- "^$MOD/internal/cli(/|\$)"; then
 		echo "deps_violation=$pkg imports $imp [rule direct]"
 		violations=$((violations + 1))
 	fi
