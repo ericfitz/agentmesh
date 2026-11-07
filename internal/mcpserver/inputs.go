@@ -100,10 +100,10 @@ type sendIn struct {
 type receiveIn struct {
 	Session     string   `json:"session" jsonschema:"your session id as returned by register"`
 	Ack         string   `json:"ack,omitempty" jsonschema:"batch token from your previous receive, to acknowledge it"`
-	Count       int      `json:"count,omitempty" jsonschema:"maximum number of messages to return"`
+	Count       int      `json:"count,omitempty" jsonschema:"maximum number of messages to return; at most 10000, and the server returns at most its receive_max_count"`
 	Channels    []string `json:"channels,omitempty" jsonschema:"only return messages from these channels; the rest stay pending"`
 	IncludeOwn  bool     `json:"include_own,omitempty" jsonschema:"also return messages sent by this session"`
-	WaitSeconds float64  `json:"wait_seconds,omitempty" jsonschema:"when nothing is pending, wait up to this many seconds for a message and then receive again. This replaces an armed agentmesh wait or watch for the session, which then exits 3"`
+	WaitSeconds float64  `json:"wait_seconds,omitempty" jsonschema:"when nothing is pending, wait up to this many seconds for a message and then receive again (each wait is at most 240 seconds; a longer value is waited in several rounds). This replaces an armed agentmesh wait or watch for the session, which then exits 3"`
 }
 
 type historyIn struct {
@@ -111,7 +111,7 @@ type historyIn struct {
 	Channel string   `json:"channel" jsonschema:"channel to read"`
 	Before  *int64   `json:"before,omitempty" jsonschema:"only messages with a lower sequence number"`
 	After   *int64   `json:"after,omitempty" jsonschema:"only messages with a higher sequence number"`
-	Count   int      `json:"count,omitempty" jsonschema:"maximum number of messages"`
+	Count   int      `json:"count,omitempty" jsonschema:"maximum number of messages; at most 10000, and the server returns at most its receive_max_count"`
 	Tags    []string `json:"tags,omitempty" jsonschema:"only messages carrying at least one of these tags; a tag ending in * matches every tag with that prefix"`
 	Thread  *int64   `json:"thread,omitempty" jsonschema:"only the thread rooted at this sequence number: the message and every message whose reply_to is it. Complete for replies stored after the channel's Slack bridge went live (or on channels whose replies all point at the root); an earlier reply may point at another reply"`
 }
@@ -126,7 +126,7 @@ type searchIn struct {
 	Until   *int64   `json:"until,omitempty" jsonschema:"only messages created before this unix time in milliseconds"`
 	Thread  *int64   `json:"thread,omitempty" jsonschema:"only the thread rooted at this sequence number"`
 	Tags    []string `json:"tags,omitempty" jsonschema:"only messages carrying at least one of these tags; a tag ending in * matches every tag with that prefix"`
-	Count   int      `json:"count,omitempty" jsonschema:"maximum number of hits"`
+	Count   int      `json:"count,omitempty" jsonschema:"maximum number of hits; at most 1000"`
 	Cursor  string   `json:"cursor,omitempty" jsonschema:"the next value of a previous result, to read the next page"`
 }
 
@@ -156,7 +156,7 @@ type deleteIn struct {
 type taskCreateIn struct {
 	Session        string            `json:"session,omitempty" jsonschema:"your session id as returned by register (optional)"`
 	Channel        string            `json:"channel" jsonschema:"the task list channel"`
-	Subject        string            `json:"subject" jsonschema:"imperative one-line subject"`
+	Subject        string            `json:"subject" jsonschema:"imperative one-line subject, 1 to 256 characters"`
 	Description    string            `json:"description,omitempty" jsonschema:"details"`
 	Parent         int64             `json:"parent,omitempty" jsonschema:"id of an existing task in the same list to nest under"`
 	Before         int64             `json:"before,omitempty" jsonschema:"sibling task id to place the new task before"`
@@ -184,7 +184,7 @@ type taskUpdateIn struct {
 	TaskID          int64             `json:"task_id" jsonschema:"id of the task to change"`
 	Status          *string           `json:"status,omitempty" jsonschema:"pending, in_progress or completed"`
 	Owner           *string           `json:"owner,omitempty" jsonschema:"new owner identity; an empty string clears the owner"`
-	Subject         *string           `json:"subject,omitempty" jsonschema:"new subject"`
+	Subject         *string           `json:"subject,omitempty" jsonschema:"new subject, 1 to 256 characters"`
 	Description     *string           `json:"description,omitempty" jsonschema:"new description"`
 	Parent          *int64            `json:"parent,omitempty" jsonschema:"new parent task id; 0 moves the task to the top level"`
 	Before          int64             `json:"before,omitempty" jsonschema:"reorder: sibling task id to move before"`
