@@ -2,6 +2,7 @@ package remote
 
 import (
 	"context"
+	"net/http"
 
 	ab2bus "github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/gen"
@@ -16,7 +17,7 @@ func FromGenTaskResult(r gen.TaskUpdateResult) ab2bus.TaskUpdateResult {
 func (b *Bus) Create(ctx context.Context, in ab2bus.TaskCreateInput) (ab2bus.Task, error) {
 	req := CreateTaskRequest(in)
 	r, err := b.c.CreateTaskWithResponse(ctx, req.Channel, &req.Params, *req.Body)
-	if err := mtCheck(ctx, r, err, func(r *gen.CreateTaskResponse) bool { return r.JSON201 != nil }); err != nil {
+	if err := mtCheck(ctx, r, err, func(r *gen.CreateTaskResponse) *http.Response { return r.HTTPResponse }, func(r *gen.CreateTaskResponse) bool { return r.JSON201 != nil }); err != nil {
 		return ab2bus.Task{}, err
 	}
 	return FromGenTask(*r.JSON201), nil
@@ -38,7 +39,7 @@ func CreateTaskRequest(in ab2bus.TaskCreateInput) gen.CreateTaskRequestObject {
 // GetTask reads one task.
 func (b *Bus) GetTask(ctx context.Context, id int64) (ab2bus.Task, error) {
 	r, err := b.c.GetTaskWithResponse(ctx, id)
-	if err := mtCheck(ctx, r, err, func(r *gen.GetTaskResponse) bool { return r.JSON200 != nil }); err != nil {
+	if err := mtCheck(ctx, r, err, func(r *gen.GetTaskResponse) *http.Response { return r.HTTPResponse }, func(r *gen.GetTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.Task{}, err
 	}
 	return FromGenTask(*r.JSON200), nil
@@ -48,7 +49,7 @@ func (b *Bus) GetTask(ctx context.Context, id int64) (ab2bus.Task, error) {
 func (b *Bus) List(ctx context.Context, in ab2bus.TaskListInput) ([]ab2bus.TaskSummary, error) {
 	req := ListTasksRequest(in)
 	r, err := b.c.ListTasksWithResponse(ctx, req.Channel, &req.Params)
-	if err := mtCheck(ctx, r, err, func(r *gen.ListTasksResponse) bool { return r.JSON200 != nil }); err != nil {
+	if err := mtCheck(ctx, r, err, func(r *gen.ListTasksResponse) *http.Response { return r.HTTPResponse }, func(r *gen.ListTasksResponse) bool { return r.JSON200 != nil }); err != nil {
 		return nil, err
 	}
 	out := make([]ab2bus.TaskSummary, len(*r.JSON200))
@@ -70,7 +71,7 @@ func ListTasksRequest(in ab2bus.TaskListInput) gen.ListTasksRequestObject {
 func (b *Bus) Update(ctx context.Context, p ab2bus.TaskPatch) (ab2bus.TaskUpdateResult, error) {
 	req := UpdateTaskRequest(p)
 	r, err := b.c.UpdateTaskWithResponse(ctx, req.Id, &req.Params, *req.Body)
-	if err := mtCheck(ctx, r, err, func(r *gen.UpdateTaskResponse) bool { return r.JSON200 != nil }); err != nil {
+	if err := mtCheck(ctx, r, err, func(r *gen.UpdateTaskResponse) *http.Response { return r.HTTPResponse }, func(r *gen.UpdateTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.TaskUpdateResult{}, err
 	}
 	return FromGenTaskResult(*r.JSON200), nil
@@ -99,7 +100,7 @@ func UpdateTaskRequest(p ab2bus.TaskPatch) gen.UpdateTaskRequestObject {
 func (b *Bus) Claim(ctx context.Context, in ab2bus.TaskClaimInput) (ab2bus.TaskUpdateResult, error) {
 	req := ClaimTaskRequest(in)
 	r, err := b.c.ClaimTaskWithResponse(ctx, req.Id, &req.Params, *req.Body)
-	if err := mtCheck(ctx, r, err, func(r *gen.ClaimTaskResponse) bool { return r.JSON200 != nil }); err != nil {
+	if err := mtCheck(ctx, r, err, func(r *gen.ClaimTaskResponse) *http.Response { return r.HTTPResponse }, func(r *gen.ClaimTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.TaskUpdateResult{}, err
 	}
 	return FromGenTaskResult(*r.JSON200), nil
@@ -119,7 +120,7 @@ func ClaimTaskRequest(in ab2bus.TaskClaimInput) gen.ClaimTaskRequestObject {
 func (b *Bus) Release(ctx context.Context, in ab2bus.TaskReleaseInput) (ab2bus.TaskUpdateResult, error) {
 	req := ReleaseTaskRequest(in)
 	r, err := b.c.ReleaseTaskWithResponse(ctx, req.Id, &req.Params)
-	if err := mtCheck(ctx, r, err, func(r *gen.ReleaseTaskResponse) bool { return r.JSON200 != nil }); err != nil {
+	if err := mtCheck(ctx, r, err, func(r *gen.ReleaseTaskResponse) *http.Response { return r.HTTPResponse }, func(r *gen.ReleaseTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.TaskUpdateResult{}, err
 	}
 	return FromGenTaskResult(*r.JSON200), nil

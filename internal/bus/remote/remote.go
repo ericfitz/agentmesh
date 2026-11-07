@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +66,9 @@ func errorOf(ctx context.Context, status int, header http.Header, body []byte, e
 		}
 		return e
 	}
+	if status == http.StatusTooManyRequests {
+		return &ab2bus.Error{Code: ab2bus.CodeRateLimited, Message: fmt.Sprintf("HTTP %d", status), Retryable: true, RetryAfter: retryAfter(header)}
+	}
 	if status >= 500 {
 		return &ab2bus.Error{Code: ab2bus.CodeUnavailable, Message: fmt.Sprintf("HTTP %d", status), Retryable: true}
 	}
@@ -74,8 +76,15 @@ func errorOf(ctx context.Context, status int, header http.Header, body []byte, e
 	if len(excerpt) > maxBodyExcerpt {
 		excerpt = excerpt[:maxBodyExcerpt]
 	}
-	return &ab2bus.Error{Code: ab2bus.CodeInternal, Message: ab2bus.TruncateErrorMessage(fmt.Sprintf("HTTP %d: %s", status, excerpt)), Retryable: false}
+	msg := fmt.Sprintf("HTTP %d", status)
+	if excerpt != "" {
+		msg += ": " + excerpt
+	}
+	return &ab2bus.Error{Code: ab2bus.CodeInternal, Message: ab2bus.TruncateErrorMessage(msg), Retryable: false}
 }
+
+// maxRetryAfterSeconds caps the header so the multiplication cannot overflow.
+const maxRetryAfterSeconds = 86400
 
 // retryAfter reads the Retry-After header as whole seconds; absent, malformed
 // or negative is 0.
@@ -83,6 +92,9 @@ func retryAfter(h http.Header) time.Duration {
 	n, err := strconv.Atoi(strings.TrimSpace(h.Get("Retry-After")))
 	if err != nil || n < 0 {
 		return 0
+	}
+	if n > maxRetryAfterSeconds {
+		n = maxRetryAfterSeconds
 	}
 	return time.Duration(n) * time.Second
 }
@@ -94,24 +106,6 @@ func headerOf(r *http.Response) http.Header {
 		return nil
 	}
 	return r.Header
-}
-
-// httpResponseOf reads the HTTPResponse member every generated response has.
-func httpResponseOf(r any) *http.Response {
-	v := reflect.ValueOf(r)
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return nil
-		}
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return nil
-	}
-	if hr, ok := v.FieldByName("HTTPResponse").Interface().(*http.Response); ok {
-		return hr
-	}
-	return nil
 }
 
 // unparsable is a 2xx whose body did not parse as the documented shape:

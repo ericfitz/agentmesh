@@ -21,12 +21,16 @@ type canned struct {
 	status int
 	ctype  string
 	body   string
+	retry  string // Retry-After header, when set
 	n      atomic.Int64
 }
 
 func (c *canned) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	c.n.Add(1)
 	w.Header().Set("Content-Type", c.ctype)
+	if c.retry != "" {
+		w.Header().Set("Retry-After", c.retry)
+	}
 	w.WriteHeader(c.status)
 	_, _ = w.Write([]byte(c.body))
 }
@@ -288,6 +292,40 @@ func TestErrorOfDecodesAnyStatus(t *testing.T) {
 	body := []byte(`{"title":"Not Found","status":404,"code":"not_found","detail":"no such channel","retryable":false}`)
 	be := asBusError(t, errorOf(context.Background(), 404, nil, body, nil))
 	if be.Code != ab2bus.CodeNotFound || be.Message != "no such channel" {
+		t.Fatalf("got %+v", be)
+	}
+}
+
+func TestMtCheckReadsRetryAfter(t *testing.T) {
+	c := &canned{status: 429, ctype: "application/problem+json", retry: "7",
+		body: `{"title":"Too Many Requests","status":429,"code":"rate_limited","retryable":true}`}
+	_, err := newBus(t, c).GetMemory(context.Background(), 1)
+	be := asBusError(t, err)
+	if be.Code != ab2bus.CodeRateLimited || be.RetryAfter != 7*time.Second {
+		t.Fatalf("got %+v", be)
+	}
+}
+
+func TestErrorOfRetryAfterCapped(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", "99999999999")
+	if got := retryAfter(h); got != 86400*time.Second {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestErrorOfRateLimitedWithoutProblem(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", "5")
+	be := asBusError(t, errorOf(context.Background(), 429, h, []byte("<html>slow</html>"), nil))
+	if be.Code != ab2bus.CodeRateLimited || !be.Retryable || be.RetryAfter != 5*time.Second {
+		t.Fatalf("got %+v", be)
+	}
+}
+
+func TestErrorOfEmptyBodyMessage(t *testing.T) {
+	be := asBusError(t, errorOf(context.Background(), 404, nil, nil, nil))
+	if be.Code != ab2bus.CodeInternal || be.Message != "HTTP 404" {
 		t.Fatalf("got %+v", be)
 	}
 }

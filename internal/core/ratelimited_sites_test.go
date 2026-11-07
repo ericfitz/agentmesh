@@ -19,7 +19,15 @@ const busImportPath = "github.com/ericfitz/agentmesh/internal/bus"
 // (relative to the module root) and function name. Each needs a reason, and an
 // entry that no longer matches anything fails the test.
 var dynamicCodeExceptions = []struct{ file, fn, reason string }{
-	{"internal/bus/remote/remote.go", "errorOf", "decodes the wire problem's code; Task 2 sets RetryAfter from the Retry-After header there"},
+	{"internal/bus/remote/remote.go", "errorOf", "decodes the wire problem's code; RetryAfter comes from the Retry-After header there"},
+}
+
+// rateLimitedLiteralExceptions are the functions that may write the
+// rate_limited code in a bus.Error literal without core.RateLimited: the
+// client maps a 429 whose body is not a problem, where there is no server
+// wait to pass, and takes RetryAfter from the header.
+var rateLimitedLiteralExceptions = []struct{ file, fn, reason string }{
+	{"internal/bus/remote/remote.go", "errorOf", "a 429 without a problem body is rate_limited with RetryAfter from the header"},
 }
 
 // TestRateLimitedSites refuses any construction of a rate_limited error
@@ -41,6 +49,7 @@ func TestRateLimitedSites(t *testing.T) {
 	constFile := filepath.Join(root, "internal", "bus", "errors.go")
 	genDir := filepath.Join(root, "internal", "gen")
 	usedExc := make([]bool, len(dynamicCodeExceptions))
+	usedLit := make([]bool, len(rateLimitedLiteralExceptions))
 	fset := token.NewFileSet()
 	for _, top := range []string{"internal", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
@@ -143,7 +152,15 @@ func TestRateLimitedSites(t *testing.T) {
 								continue
 							}
 							if isCode(kv.Value) {
-								report(x.Pos(), "bus.Error literal with the rate_limited code")
+								excused := false
+								for i, e := range rateLimitedLiteralExceptions {
+									if e.file == rel && e.fn == fnName {
+										usedLit[i], excused = true, true
+									}
+								}
+								if !excused {
+									report(x.Pos(), "bus.Error literal with the rate_limited code")
+								}
 							} else if c, ok := kv.Value.(*ast.CallExpr); ok && typeIs(c.Fun, "Code") {
 								excused := false
 								for i, e := range dynamicCodeExceptions {
@@ -174,6 +191,11 @@ func TestRateLimitedSites(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	}
+	for i, e := range rateLimitedLiteralExceptions {
+		if !usedLit[i] {
+			t.Errorf("stale literal exception %s %s (%s): no matching construction", e.file, e.fn, e.reason)
 		}
 	}
 	for i, e := range dynamicCodeExceptions {
