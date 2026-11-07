@@ -71,12 +71,27 @@ func (a *api) ListChannels(ctx context.Context, _ gen.ListChannelsRequestObject)
 	}
 	out := make(gen.ListChannels200JSONResponse, len(chs))
 	for i, c := range chs {
-		out[i] = gen.Channel{Name: c.Name, Kind: gen.ChannelKind(c.Kind), Capabilities: capabilityStrings(c.Capabilities)}
+		out[i] = channelToGen(c)
 	}
 	return out, nil
 }
 
+// channelToGen converts a channel to its wire form.
+func channelToGen(c bus.Channel) gen.Channel {
+	return gen.Channel{Name: c.Name, Kind: gen.ChannelKind(c.Kind), Capabilities: capabilityStrings(c.Capabilities)}
+}
+
 func (a *api) CreateChannel(ctx context.Context, req gen.CreateChannelRequestObject) (gen.CreateChannelResponseObject, error) {
+	info, err := a.channels.Create(ctx, IdentityFrom(ctx), createChannelInput(req))
+	if err != nil {
+		return nil, err
+	}
+	return gen.CreateChannel201JSONResponse(channelInfoToGen(info)), nil
+}
+
+// createChannelInput reads the request; no body is an empty input, and the
+// core judges it.
+func createChannelInput(req gen.CreateChannelRequestObject) bus.CreateChannelInput {
 	in := bus.CreateChannelInput{IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
 	if req.Body != nil {
 		in.Name = req.Body.Name
@@ -91,30 +106,35 @@ func (a *api) CreateChannel(ctx context.Context, req gen.CreateChannelRequestObj
 			in.ACL = channelACLFromGen(*req.Body.Acl)
 		}
 	}
-	info, err := a.channels.Create(ctx, IdentityFrom(ctx), in)
-	if err != nil {
-		return nil, err
-	}
-	return gen.CreateChannel201JSONResponse(channelInfoToGen(info)), nil
+	return in
 }
 
 func (a *api) DeleteChannel(ctx context.Context, req gen.DeleteChannelRequestObject) (gen.DeleteChannelResponseObject, error) {
-	err := a.channels.Delete(ctx, IdentityFrom(ctx), bus.DeleteChannelInput{Name: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)})
-	if err != nil {
+	if err := a.channels.Delete(ctx, IdentityFrom(ctx), deleteChannelInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.DeleteChannel204Response{}, nil
 }
 
+// deleteChannelInput reads the path and the idempotency header.
+func deleteChannelInput(req gen.DeleteChannelRequestObject) bus.DeleteChannelInput {
+	return bus.DeleteChannelInput{Name: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
+}
+
 func (a *api) RenameChannel(ctx context.Context, req gen.RenameChannelRequestObject) (gen.RenameChannelResponseObject, error) {
+	if err := a.channels.Rename(ctx, IdentityFrom(ctx), renameChannelInput(req)); err != nil {
+		return nil, err
+	}
+	return gen.RenameChannel204Response{}, nil
+}
+
+// renameChannelInput reads the request; no body leaves the new name empty.
+func renameChannelInput(req gen.RenameChannelRequestObject) bus.RenameChannelInput {
 	in := bus.RenameChannelInput{Name: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
 	if req.Body != nil {
 		in.NewName = req.Body.Name
 	}
-	if err := a.channels.Rename(ctx, IdentityFrom(ctx), in); err != nil {
-		return nil, err
-	}
-	return gen.RenameChannel204Response{}, nil
+	return in
 }
 
 func (a *api) GetACL(ctx context.Context, req gen.GetACLRequestObject) (gen.GetACLResponseObject, error) {
@@ -126,33 +146,47 @@ func (a *api) GetACL(ctx context.Context, req gen.GetACLRequestObject) (gen.GetA
 }
 
 func (a *api) SetACL(ctx context.Context, req gen.SetACLRequestObject) (gen.SetACLResponseObject, error) {
-	in := bus.SetACLInput{Channel: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
-	if req.Body != nil {
-		in.Entries = channelACLFromGen(*req.Body)
-	}
-	if err := a.channels.SetACL(ctx, IdentityFrom(ctx), in); err != nil {
+	if err := a.channels.SetACL(ctx, IdentityFrom(ctx), setACLInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.SetACL204Response{}, nil
 }
 
-func (a *api) Subscribe(ctx context.Context, req gen.SubscribeRequestObject) (gen.SubscribeResponseObject, error) {
-	in := bus.SubscribeInput{Channel: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
-	if req.Body != nil && req.Body.From != nil {
-		in.From = string(*req.Body.From)
+// setACLInput reads the request; no body leaves the entries nil.
+func setACLInput(req gen.SetACLRequestObject) bus.SetACLInput {
+	in := bus.SetACLInput{Channel: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
+	if req.Body != nil {
+		in.Entries = channelACLFromGen(*req.Body)
 	}
-	if err := a.channels.Subscribe(ctx, IdentityFrom(ctx), in); err != nil {
+	return in
+}
+
+func (a *api) Subscribe(ctx context.Context, req gen.SubscribeRequestObject) (gen.SubscribeResponseObject, error) {
+	if err := a.channels.Subscribe(ctx, IdentityFrom(ctx), subscribeInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.Subscribe204Response{}, nil
 }
 
+// subscribeInput reads the request; no body or an absent from is "".
+func subscribeInput(req gen.SubscribeRequestObject) bus.SubscribeInput {
+	in := bus.SubscribeInput{Channel: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
+	if req.Body != nil && req.Body.From != nil {
+		in.From = string(*req.Body.From)
+	}
+	return in
+}
+
 func (a *api) Unsubscribe(ctx context.Context, req gen.UnsubscribeRequestObject) (gen.UnsubscribeResponseObject, error) {
-	err := a.channels.Unsubscribe(ctx, IdentityFrom(ctx), bus.UnsubscribeInput{Channel: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)})
-	if err != nil {
+	if err := a.channels.Unsubscribe(ctx, IdentityFrom(ctx), unsubscribeInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.Unsubscribe204Response{}, nil
+}
+
+// unsubscribeInput reads the path and the idempotency header.
+func unsubscribeInput(req gen.UnsubscribeRequestObject) bus.UnsubscribeInput {
+	return bus.UnsubscribeInput{Channel: req.Channel, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
 }
 
 func (a *api) ListTagSubscriptions(ctx context.Context, _ gen.ListTagSubscriptionsRequestObject) (gen.ListTagSubscriptionsResponseObject, error) {
@@ -168,20 +202,30 @@ func (a *api) ListTagSubscriptions(ctx context.Context, _ gen.ListTagSubscriptio
 }
 
 func (a *api) SubscribeTags(ctx context.Context, req gen.SubscribeTagsRequestObject) (gen.SubscribeTagsResponseObject, error) {
-	in := bus.TagSubscribeInput{IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
-	if req.Body != nil {
-		in.Patterns = req.Body.Patterns
-	}
-	if err := a.channels.SubscribeTags(ctx, IdentityFrom(ctx), in); err != nil {
+	if err := a.channels.SubscribeTags(ctx, IdentityFrom(ctx), subscribeTagsInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.SubscribeTags204Response{}, nil
 }
 
+// subscribeTagsInput reads the request; no body leaves the patterns nil.
+func subscribeTagsInput(req gen.SubscribeTagsRequestObject) bus.TagSubscribeInput {
+	in := bus.TagSubscribeInput{IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
+	if req.Body != nil {
+		in.Patterns = req.Body.Patterns
+	}
+	return in
+}
+
 func (a *api) UnsubscribeTags(ctx context.Context, req gen.UnsubscribeTagsRequestObject) (gen.UnsubscribeTagsResponseObject, error) {
-	err := a.channels.UnsubscribeTags(ctx, IdentityFrom(ctx), bus.TagSubscribeInput{Patterns: req.Params.Pattern, IdempotencyKey: idemKey(req.Params.IdempotencyKey)})
-	if err != nil {
+	if err := a.channels.UnsubscribeTags(ctx, IdentityFrom(ctx), unsubscribeTagsInput(req)); err != nil {
 		return nil, err
 	}
 	return gen.UnsubscribeTags204Response{}, nil
+}
+
+// unsubscribeTagsInput reads the repeated pattern query values and the
+// idempotency header.
+func unsubscribeTagsInput(req gen.UnsubscribeTagsRequestObject) bus.TagSubscribeInput {
+	return bus.TagSubscribeInput{Patterns: req.Params.Pattern, IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
 }

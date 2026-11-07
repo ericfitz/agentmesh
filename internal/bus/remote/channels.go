@@ -23,12 +23,20 @@ func (b *Bus) ListChannels(ctx context.Context) ([]ab2bus.Channel, error) {
 	}
 	out := make([]ab2bus.Channel, len(*r.JSON200))
 	for i, c := range *r.JSON200 {
-		out[i] = ab2bus.Channel{Name: c.Name, Kind: fromGenKind(c.Kind), Capabilities: fromGenCapabilities(c.Capabilities)}
+		out[i] = FromGenChannel(c)
 	}
 	return out, nil
 }
 
-func (b *Bus) CreateChannel(ctx context.Context, in ab2bus.CreateChannelInput) (ab2bus.ChannelInfo, error) {
+// FromGenChannel converts a wire channel to the domain type.
+func FromGenChannel(c gen.Channel) ab2bus.Channel {
+	return ab2bus.Channel{Name: c.Name, Kind: fromGenKind(c.Kind), Capabilities: fromGenCapabilities(c.Capabilities)}
+}
+
+// CreateChannelRequest builds the request for CreateChannel; Body is always
+// set, and a nil ACL stays absent (the configured default) while an empty one
+// is sent as [].
+func CreateChannelRequest(in ab2bus.CreateChannelInput) gen.CreateChannelRequestObject {
 	body := gen.CreateChannelRequest{Name: in.Name}
 	if in.Kind != "" {
 		k := gen.CreateChannelRequestKind(in.Kind)
@@ -44,7 +52,12 @@ func (b *Bus) CreateChannel(ctx context.Context, in ab2bus.CreateChannelInput) (
 		}
 		body.Acl = &acl
 	}
-	r, err := b.c.CreateChannelWithResponse(ctx, &gen.CreateChannelParams{IdempotencyKey: key(in.IdempotencyKey)}, body)
+	return gen.CreateChannelRequestObject{Params: gen.CreateChannelParams{IdempotencyKey: key(in.IdempotencyKey)}, Body: &body}
+}
+
+func (b *Bus) CreateChannel(ctx context.Context, in ab2bus.CreateChannelInput) (ab2bus.ChannelInfo, error) {
+	req := CreateChannelRequest(in)
+	r, err := b.c.CreateChannelWithResponse(ctx, &req.Params, *req.Body)
 	if err != nil {
 		return ab2bus.ChannelInfo{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -67,6 +80,7 @@ func fromGenCapabilities(in []string) []ab2bus.ChannelCapability {
 	return out
 }
 
+// FromGenChannelInfo converts a wire channel description to the domain type.
 func FromGenChannelInfo(c gen.ChannelInfo) ab2bus.ChannelInfo {
 	return ab2bus.ChannelInfo{
 		Channel: ab2bus.Channel{Name: c.Name, Kind: ab2bus.Kind(c.Kind), Capabilities: fromGenCapabilities(c.Capabilities)},
@@ -74,17 +88,32 @@ func FromGenChannelInfo(c gen.ChannelInfo) ab2bus.ChannelInfo {
 	}
 }
 
+// DeleteChannelRequest builds the request for DeleteChannel.
+func DeleteChannelRequest(in ab2bus.DeleteChannelInput) gen.DeleteChannelRequestObject {
+	return gen.DeleteChannelRequestObject{Channel: in.Name, Params: gen.DeleteChannelParams{IdempotencyKey: key(in.IdempotencyKey)}}
+}
+
 func (b *Bus) DeleteChannel(ctx context.Context, in ab2bus.DeleteChannelInput) error {
-	r, err := b.c.DeleteChannelWithResponse(ctx, in.Name, &gen.DeleteChannelParams{IdempotencyKey: key(in.IdempotencyKey)})
+	req := DeleteChannelRequest(in)
+	r, err := b.c.DeleteChannelWithResponse(ctx, req.Channel, &req.Params)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
 	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
 }
 
+// RenameChannelRequest builds the request for RenameChannel; Body is always
+// set.
+func RenameChannelRequest(in ab2bus.RenameChannelInput) gen.RenameChannelRequestObject {
+	return gen.RenameChannelRequestObject{
+		Channel: in.Name, Params: gen.RenameChannelParams{IdempotencyKey: key(in.IdempotencyKey)},
+		Body: &gen.RenameChannelRequest{Name: in.NewName},
+	}
+}
+
 func (b *Bus) RenameChannel(ctx context.Context, in ab2bus.RenameChannelInput) error {
-	r, err := b.c.RenameChannelWithResponse(ctx, in.Name, &gen.RenameChannelParams{IdempotencyKey: key(in.IdempotencyKey)},
-		gen.RenameChannelRequest{Name: in.NewName})
+	req := RenameChannelRequest(in)
+	r, err := b.c.RenameChannelWithResponse(ctx, req.Channel, &req.Params, *req.Body)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
@@ -109,42 +138,71 @@ func (b *Bus) ACL(ctx context.Context, channel string) ([]ab2bus.ACLEntry, error
 	return out, nil
 }
 
-func (b *Bus) SetACL(ctx context.Context, in ab2bus.SetACLInput) error {
+// SetACLRequest builds the request for SetACL; Body is always set, and nil
+// entries are sent as [].
+func SetACLRequest(in ab2bus.SetACLInput) gen.SetACLRequestObject {
 	entries := make([]gen.ACLEntry, len(in.Entries))
 	for i, e := range in.Entries {
 		entries[i] = toGenACLEntry(e)
 	}
-	r, err := b.c.SetACLWithResponse(ctx, in.Channel, &gen.SetACLParams{IdempotencyKey: key(in.IdempotencyKey)}, entries)
+	return gen.SetACLRequestObject{Channel: in.Channel, Params: gen.SetACLParams{IdempotencyKey: key(in.IdempotencyKey)}, Body: &entries}
+}
+
+func (b *Bus) SetACL(ctx context.Context, in ab2bus.SetACLInput) error {
+	req := SetACLRequest(in)
+	r, err := b.c.SetACLWithResponse(ctx, req.Channel, &req.Params, *req.Body)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
 	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
 }
 
-func (b *Bus) Subscribe(ctx context.Context, in ab2bus.SubscribeInput) error {
+// SubscribeRequest builds the request for Subscribe; Body is always set, and
+// from is absent when empty.
+func SubscribeRequest(in ab2bus.SubscribeInput) gen.SubscribeRequestObject {
 	var body gen.SubscribeRequest
 	if in.From != "" {
 		f := gen.SubscribeRequestFrom(in.From)
 		body.From = &f
 	}
-	r, err := b.c.SubscribeWithResponse(ctx, in.Channel, &gen.SubscribeParams{IdempotencyKey: key(in.IdempotencyKey)}, body)
+	return gen.SubscribeRequestObject{Channel: in.Channel, Params: gen.SubscribeParams{IdempotencyKey: key(in.IdempotencyKey)}, Body: &body}
+}
+
+func (b *Bus) Subscribe(ctx context.Context, in ab2bus.SubscribeInput) error {
+	req := SubscribeRequest(in)
+	r, err := b.c.SubscribeWithResponse(ctx, req.Channel, &req.Params, *req.Body)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
 	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+}
+
+// UnsubscribeRequest builds the request for Unsubscribe.
+func UnsubscribeRequest(in ab2bus.UnsubscribeInput) gen.UnsubscribeRequestObject {
+	return gen.UnsubscribeRequestObject{Channel: in.Channel, Params: gen.UnsubscribeParams{IdempotencyKey: key(in.IdempotencyKey)}}
 }
 
 func (b *Bus) Unsubscribe(ctx context.Context, in ab2bus.UnsubscribeInput) error {
-	r, err := b.c.UnsubscribeWithResponse(ctx, in.Channel, &gen.UnsubscribeParams{IdempotencyKey: key(in.IdempotencyKey)})
+	req := UnsubscribeRequest(in)
+	r, err := b.c.UnsubscribeWithResponse(ctx, req.Channel, &req.Params)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
 	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
 }
 
+// SubscribeTagsRequest builds the request for SubscribeTags; Body is always
+// set.
+func SubscribeTagsRequest(in ab2bus.TagSubscribeInput) gen.SubscribeTagsRequestObject {
+	return gen.SubscribeTagsRequestObject{
+		Params: gen.SubscribeTagsParams{IdempotencyKey: key(in.IdempotencyKey)},
+		Body:   &gen.TagPatterns{Patterns: in.Patterns},
+	}
+}
+
 func (b *Bus) SubscribeTags(ctx context.Context, in ab2bus.TagSubscribeInput) error {
-	r, err := b.c.SubscribeTagsWithResponse(ctx, &gen.SubscribeTagsParams{IdempotencyKey: key(in.IdempotencyKey)},
-		gen.TagPatterns{Patterns: in.Patterns})
+	req := SubscribeTagsRequest(in)
+	r, err := b.c.SubscribeTagsWithResponse(ctx, &req.Params, *req.Body)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
@@ -161,11 +219,18 @@ func (b *Bus) UnsubscribeTags(ctx context.Context, in ab2bus.TagSubscribeInput) 
 	if len(in.Patterns) == 0 || (len(in.Patterns) == 1 && in.Patterns[0] == "") {
 		return &ab2bus.Error{Code: ab2bus.CodeValidation, Message: "a tag subscription needs at least one pattern"}
 	}
-	r, err := b.c.UnsubscribeTagsWithResponse(ctx, &gen.UnsubscribeTagsParams{Pattern: in.Patterns, IdempotencyKey: key(in.IdempotencyKey)})
+	req := UnsubscribeTagsRequest(in)
+	r, err := b.c.UnsubscribeTagsWithResponse(ctx, &req.Params)
 	if err != nil {
 		return errorOf(ctx, 0, nil, nil, err)
 	}
 	return errorOf(ctx, r.StatusCode(), r.ApplicationproblemJSONDefault, r.Body, nil)
+}
+
+// UnsubscribeTagsRequest builds the request for UnsubscribeTags: one
+// repeated pattern query value per pattern.
+func UnsubscribeTagsRequest(in ab2bus.TagSubscribeInput) gen.UnsubscribeTagsRequestObject {
+	return gen.UnsubscribeTagsRequestObject{Params: gen.UnsubscribeTagsParams{Pattern: in.Patterns, IdempotencyKey: key(in.IdempotencyKey)}}
 }
 
 func (b *Bus) TagSubscriptions(ctx context.Context) ([][]string, error) {

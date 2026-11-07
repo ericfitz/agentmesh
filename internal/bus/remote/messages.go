@@ -18,15 +18,8 @@ func (b *Bus) Send(ctx context.Context, in ab2bus.SendInput) (ab2bus.SendResult,
 	if in.Channel == "" {
 		return ab2bus.SendResult{}, ab2bus.Errorf(ab2bus.CodeValidation, false, "channel is required")
 	}
-	resp, err := b.c.SendMessageWithResponse(ctx, in.Channel,
-		&gen.SendMessageParams{
-			IdempotencyKey: key(in.IdempotencyKey),
-		},
-		gen.SendRequest{
-			Content: in.Content, Subject: strPtr(in.Subject), Type: strPtr(in.Type),
-			ReplyTo: in.ReplyTo, Metadata: mapPtr(in.Metadata), Tags: slicePtr(in.Tags),
-			Session: strPtr(in.Session),
-		})
+	req := SendMessageRequest(in)
+	resp, err := b.c.SendMessageWithResponse(ctx, req.Channel, &req.Params, *req.Body)
 	if err != nil {
 		return ab2bus.SendResult{}, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -36,16 +29,32 @@ func (b *Bus) Send(ctx context.Context, in ab2bus.SendInput) (ab2bus.SendResult,
 	if resp.JSON201 == nil {
 		return ab2bus.SendResult{}, unparsable(resp.StatusCode())
 	}
-	return ab2bus.SendResult{Seq: resp.JSON201.Seq, MemoryID: resp.JSON201.MemoryId}, nil
+	return FromGenSendResult(*resp.JSON201), nil
+}
+
+// SendMessageRequest builds the request for Send; Body is always set, and its
+// optional members are absent for their zero values.
+func SendMessageRequest(in ab2bus.SendInput) gen.SendMessageRequestObject {
+	return gen.SendMessageRequestObject{
+		Channel: in.Channel,
+		Params:  gen.SendMessageParams{IdempotencyKey: key(in.IdempotencyKey)},
+		Body: &gen.SendRequest{
+			Content: in.Content, Subject: strPtr(in.Subject), Type: strPtr(in.Type),
+			ReplyTo: in.ReplyTo, Metadata: mapPtr(in.Metadata), Tags: slicePtr(in.Tags),
+			Session: strPtr(in.Session),
+		},
+	}
+}
+
+// FromGenSendResult converts a wire send receipt to the domain type.
+func FromGenSendResult(r gen.SendResult) ab2bus.SendResult {
+	return ab2bus.SendResult{Seq: r.Seq, MemoryID: r.MemoryId}
 }
 
 // History reads a window of the channel; count 0 is absent.
 func (b *Bus) History(ctx context.Context, in ab2bus.HistoryInput) ([]ab2bus.Message, error) {
-	p := &gen.HistoryParams{Before: in.Before, After: in.After, Thread: in.Thread, Tags: queryTags(in.Tags)}
-	if in.Count != 0 {
-		p.Count = ptr(in.Count)
-	}
-	resp, err := b.c.HistoryWithResponse(ctx, in.Channel, p)
+	req := HistoryRequest(in)
+	resp, err := b.c.HistoryWithResponse(ctx, req.Channel, &req.Params)
 	if err != nil {
 		return nil, errorOf(ctx, 0, nil, nil, err)
 	}
@@ -64,9 +73,36 @@ func (b *Bus) History(ctx context.Context, in ab2bus.HistoryInput) ([]ab2bus.Mes
 	return out, nil
 }
 
+// HistoryRequest builds the request for History; count 0 and an empty tag
+// list are absent.
+func HistoryRequest(in ab2bus.HistoryInput) gen.HistoryRequestObject {
+	p := gen.HistoryParams{Before: in.Before, After: in.After, Thread: in.Thread, Tags: queryTags(in.Tags)}
+	if in.Count != 0 {
+		p.Count = ptr(in.Count)
+	}
+	return gen.HistoryRequestObject{Channel: in.Channel, Params: p}
+}
+
 // Search queries readable channels; empty strings and zero counts are absent.
 func (b *Bus) Search(ctx context.Context, in ab2bus.SearchInput) (ab2bus.SearchResult, error) {
-	p := &gen.SearchParams{
+	req := SearchRequest(in)
+	resp, err := b.c.SearchWithResponse(ctx, &req.Params)
+	if err != nil {
+		return ab2bus.SearchResult{}, errorOf(ctx, 0, nil, nil, err)
+	}
+	if e := errorOf(ctx, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body, nil); e != nil {
+		return ab2bus.SearchResult{}, e
+	}
+	if resp.JSON200 == nil {
+		return ab2bus.SearchResult{}, unparsable(resp.StatusCode())
+	}
+	return FromGenSearchResult(*resp.JSON200)
+}
+
+// SearchRequest builds the request for Search; an empty string and a zero
+// count are absent (the query is always sent).
+func SearchRequest(in ab2bus.SearchInput) gen.SearchRequestObject {
+	p := gen.SearchParams{
 		Q: ptr(in.Query), Channel: strPtr(in.Channel), Sender: strPtr(in.Sender),
 		Since: in.Since, Until: in.Until, Thread: in.Thread, Tags: queryTags(in.Tags),
 		Cursor: strPtr(in.Cursor),
@@ -77,21 +113,17 @@ func (b *Bus) Search(ctx context.Context, in ab2bus.SearchInput) (ab2bus.SearchR
 	if in.Count != 0 {
 		p.Count = ptr(in.Count)
 	}
-	resp, err := b.c.SearchWithResponse(ctx, p)
-	if err != nil {
-		return ab2bus.SearchResult{}, errorOf(ctx, 0, nil, nil, err)
-	}
-	if e := errorOf(ctx, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body, nil); e != nil {
-		return ab2bus.SearchResult{}, e
-	}
-	if resp.JSON200 == nil {
-		return ab2bus.SearchResult{}, unparsable(resp.StatusCode())
-	}
+	return gen.SearchRequestObject{Params: p}
+}
+
+// FromGenSearchResult converts a wire page of hits; a hit with an unknown
+// sender kind is an internal error.
+func FromGenSearchResult(r gen.SearchResult) (ab2bus.SearchResult, error) {
 	out := ab2bus.SearchResult{
-		Next: deref(resp.JSON200.Next), SemanticUnavailable: deref(resp.JSON200.SemanticUnavailable),
-		Hits: make([]ab2bus.SearchHit, len(resp.JSON200.Hits)),
+		Next: deref(r.Next), SemanticUnavailable: deref(r.SemanticUnavailable),
+		Hits: make([]ab2bus.SearchHit, len(r.Hits)),
 	}
-	for i, h := range resp.JSON200.Hits {
+	for i, h := range r.Hits {
 		m, err := FromGenMessage(h.Message)
 		if err != nil {
 			return ab2bus.SearchResult{}, err

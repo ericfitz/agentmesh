@@ -87,7 +87,7 @@ var ruleAllowed = map[string]map[string]int{
 	"internal/bus/local/admin_identities.go Reset":          {"Scope": 1},               // passes the reset scope through to the core
 	"internal/server/admin_auth.go AdminReset":              {"Scope": 2},               // wire copy of the request's reset scope (spec Appendix A, kind N)
 	"internal/server/bridges.go bridgeToGen":                {"Scope": 1},               // wire copy of the bridge's scope (kind N)
-	"internal/server/channels.go CreateChannel":             {"Scope": 3},               // wire copy of the request's scope field (kind N)
+	"internal/server/channels.go createChannelInput":        {"Scope": 3},               // wire copy of the request's scope field (kind N)
 	"internal/server/channels.go channelInfoToGen":          {"Creator": 1, "Scope": 3}, // wire copy of the channel's creator and scope fields (kind N)
 	"internal/server/scopes.go CreateAgentIdentity":         {"Scope": 6},               // wire copy of the request's and result's scope (kind N)
 	"internal/server/scopes.go GetScope":                    {"Scope": 1},               // the path parameter naming the scope (kind N)

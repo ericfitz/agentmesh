@@ -48,6 +48,39 @@ func TestRequestConvertersNilBody(t *testing.T) {
 	if raw := mustMarshal(t, agentStatusToGen(bus.AgentStatus{})); strings.Contains(raw, "problem") || strings.Contains(raw, "last_tag") {
 		t.Fatalf("agentStatusToGen zero must omit problem and last_tag: %s", raw)
 	}
+	if got := createChannelInput(gen.CreateChannelRequestObject{}); got.Name != "" || got.ACL != nil || got.Scope != "" || got.Kind != "" {
+		t.Fatalf("createChannelInput nil body = %+v", got)
+	}
+	if got := renameChannelInput(gen.RenameChannelRequestObject{Channel: "c"}); got.Name != "c" || got.NewName != "" {
+		t.Fatalf("renameChannelInput nil body = %+v", got)
+	}
+	if got := setACLInput(gen.SetACLRequestObject{Channel: "c"}); got.Channel != "c" || got.Entries != nil {
+		t.Fatalf("setACLInput nil body = %+v", got)
+	}
+	if got := subscribeInput(gen.SubscribeRequestObject{Channel: "c"}); got.Channel != "c" || got.From != "" {
+		t.Fatalf("subscribeInput nil body = %+v", got)
+	}
+	if got := subscribeTagsInput(gen.SubscribeTagsRequestObject{}); got.Patterns != nil {
+		t.Fatalf("subscribeTagsInput nil body = %+v", got)
+	}
+	if _, err := sendInput(gen.SendMessageRequestObject{Channel: "c"}); err == nil {
+		t.Fatal("sendInput nil body must be a validation error")
+	}
+	if got := historyInput(gen.HistoryRequestObject{Channel: "c"}); got.Channel != "c" || got.Count != 0 || got.Tags != nil {
+		t.Fatalf("historyInput zero params = %+v", got)
+	}
+	if got := searchInput(gen.SearchRequestObject{}); got.Query != "" || got.Mode != "" || got.Count != 0 || got.Tags != nil {
+		t.Fatalf("searchInput zero params = %+v", got)
+	}
+	if raw := mustMarshal(t, searchResultToGen(bus.SearchResult{})); raw != `{"hits":[]}` {
+		t.Fatalf("searchResultToGen zero must omit next and semantic_unavailable: %s", raw)
+	}
+	if raw := mustMarshal(t, sendResultToGen(bus.SendResult{Seq: 1})); raw != `{"seq":1}` {
+		t.Fatalf("sendResultToGen zero must omit memory_id: %s", raw)
+	}
+	if c := channelToGen(bus.Channel{}); c.Capabilities == nil {
+		t.Fatal("channelToGen: capabilities must be [] not null")
+	}
 }
 
 func mustMarshal(t *testing.T, v any) string {

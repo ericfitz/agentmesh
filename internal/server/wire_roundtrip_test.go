@@ -83,6 +83,20 @@ var pairs = []pair{
 	pairOf("Identity", remote.FromGenIdentity, ok(identityToGen)),
 	pairOf("SetAgentStatusRequestObject", ok(setAgentStatusInput), ok(remote.SetAgentStatusRequest)),
 	pairOf("AgentStatusEntry", remote.FromGenAgentStatusEntry, ok(agentStatusEntryToGen)),
+	pairOf("CreateChannelRequestObject", ok(createChannelInput), ok(remote.CreateChannelRequest)),
+	pairOf("Channel", ok(remote.FromGenChannel), ok(channelToGen)),
+	pairOf("DeleteChannelRequestObject", ok(deleteChannelInput), ok(remote.DeleteChannelRequest)),
+	pairOf("RenameChannelRequestObject", ok(renameChannelInput), ok(remote.RenameChannelRequest)),
+	pairOf("SetACLRequestObject", ok(setACLInput), ok(remote.SetACLRequest)),
+	pairOf("SubscribeRequestObject", ok(subscribeInput), ok(remote.SubscribeRequest)),
+	pairOf("UnsubscribeRequestObject", ok(unsubscribeInput), ok(remote.UnsubscribeRequest)),
+	pairOf("SubscribeTagsRequestObject", ok(subscribeTagsInput), ok(remote.SubscribeTagsRequest)),
+	pairOf("UnsubscribeTagsRequestObject", ok(unsubscribeTagsInput), ok(remote.UnsubscribeTagsRequest)),
+	pairOf("SendMessageRequestObject", sendInput, ok(remote.SendMessageRequest)),
+	pairOf("SendResult", ok(remote.FromGenSendResult), ok(sendResultToGen)),
+	pairOf("HistoryRequestObject", ok(historyInput), ok(remote.HistoryRequest)),
+	pairOf("SearchRequestObject", ok(searchInput), ok(remote.SearchRequest)),
+	pairOf("SearchResult", remote.FromGenSearchResult, ok(searchResultToGen)),
 }
 
 // exception names a member a converter pair may not carry, with the reason.

@@ -10,11 +10,24 @@ import (
 // SendMessage maps the request to messaging.Service.Send; the Idempotency-Key
 // header is the receipt key (Decision 66).
 func (a *api) SendMessage(ctx context.Context, req gen.SendMessageRequestObject) (gen.SendMessageResponseObject, error) {
+	in, err := sendInput(req)
+	if err != nil {
+		return nil, err
+	}
+	res, err := a.messaging.Send(ctx, IdentityFrom(ctx), in)
+	if err != nil {
+		return nil, err
+	}
+	return gen.SendMessage201JSONResponse(sendResultToGen(res)), nil
+}
+
+// sendInput reads the request; the body is required.
+func sendInput(req gen.SendMessageRequestObject) (bus.SendInput, error) {
 	if req.Body == nil {
-		return nil, bus.Errorf(bus.CodeValidation, false, "the request body is required")
+		return bus.SendInput{}, bus.Errorf(bus.CodeValidation, false, "the request body is required")
 	}
 	b := req.Body
-	res, err := a.messaging.Send(ctx, IdentityFrom(ctx), bus.SendInput{
+	return bus.SendInput{
 		Channel:        req.Channel,
 		Subject:        derefOr(b.Subject),
 		Content:        b.Content,
@@ -24,20 +37,17 @@ func (a *api) SendMessage(ctx context.Context, req gen.SendMessageRequestObject)
 		Tags:           derefOr(b.Tags),
 		Session:        derefOr(b.Session),
 		IdempotencyKey: derefOr(req.Params.IdempotencyKey),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return gen.SendMessage201JSONResponse{Seq: res.Seq, MemoryId: res.MemoryID}, nil
+	}, nil
+}
+
+// sendResultToGen converts a send receipt to its wire form.
+func sendResultToGen(r bus.SendResult) gen.SendResult {
+	return gen.SendResult{Seq: r.Seq, MemoryId: r.MemoryID}
 }
 
 // History maps the query to messaging.Service.History; count absent is 0.
 func (a *api) History(ctx context.Context, req gen.HistoryRequestObject) (gen.HistoryResponseObject, error) {
-	p := req.Params
-	msgs, err := a.messaging.History(ctx, IdentityFrom(ctx), bus.HistoryInput{
-		Channel: req.Channel, Before: p.Before, After: p.After,
-		Count: derefOr(p.Count), Tags: derefOr(p.Tags), Thread: p.Thread,
-	})
+	msgs, err := a.messaging.History(ctx, IdentityFrom(ctx), historyInput(req))
 	if err != nil {
 		return nil, err
 	}
@@ -48,8 +58,26 @@ func (a *api) History(ctx context.Context, req gen.HistoryRequestObject) (gen.Hi
 	return out, nil
 }
 
+// historyInput reads the path and the query; an absent count is 0.
+func historyInput(req gen.HistoryRequestObject) bus.HistoryInput {
+	p := req.Params
+	return bus.HistoryInput{
+		Channel: req.Channel, Before: p.Before, After: p.After,
+		Count: derefOr(p.Count), Tags: derefOr(p.Tags), Thread: p.Thread,
+	}
+}
+
 // Search maps the query to search.Service.Search.
 func (a *api) Search(ctx context.Context, req gen.SearchRequestObject) (gen.SearchResponseObject, error) {
+	res, err := a.search.Search(ctx, IdentityFrom(ctx), searchInput(req))
+	if err != nil {
+		return nil, err
+	}
+	return gen.Search200JSONResponse(searchResultToGen(res)), nil
+}
+
+// searchInput reads the query; an absent member is its zero value.
+func searchInput(req gen.SearchRequestObject) bus.SearchInput {
 	p := req.Params
 	in := bus.SearchInput{
 		Query: derefOr(p.Q), Channel: derefOr(p.Channel), Sender: derefOr(p.Sender),
@@ -59,11 +87,13 @@ func (a *api) Search(ctx context.Context, req gen.SearchRequestObject) (gen.Sear
 	if p.Mode != nil {
 		in.Mode = string(*p.Mode)
 	}
-	res, err := a.search.Search(ctx, IdentityFrom(ctx), in)
-	if err != nil {
-		return nil, err
-	}
-	out := gen.Search200JSONResponse{Hits: make([]gen.SearchHit, len(res.Hits))}
+	return in
+}
+
+// searchResultToGen converts a page of hits; next and semantic_unavailable
+// are absent, never null or false, when unset.
+func searchResultToGen(res bus.SearchResult) gen.SearchResult {
+	out := gen.SearchResult{Hits: make([]gen.SearchHit, len(res.Hits))}
 	for i, h := range res.Hits {
 		out.Hits[i] = gen.SearchHit{Message: toGenMessage(h.Message), Score: h.Score}
 	}
@@ -75,5 +105,5 @@ func (a *api) Search(ctx context.Context, req gen.SearchRequestObject) (gen.Sear
 		t := true
 		out.SemanticUnavailable = &t
 	}
-	return out, nil
+	return out
 }
