@@ -15,18 +15,20 @@ import (
 	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
+// statusByCode is the one table of every bus code and its status.
+var statusByCode = map[bus.Code]int{
+	bus.CodeValidation: 400, bus.CodeUnauthenticated: 401, bus.CodeForbidden: 403,
+	bus.CodeNotRegistered: 403, bus.CodeNotFound: 404, bus.CodeConflict: 409,
+	bus.CodeReplaced: 409, bus.CodeSessionLapsed: 410, bus.CodeSessionClosed: 410,
+	bus.CodeRateLimited: 429, bus.CodeUnavailable: 503, bus.CodeInternal: 500,
+	bus.CodeInspectionRejected: 422, bus.CodePayloadTooLarge: 413,
+}
+
 func TestStatusForEveryCode(t *testing.T) {
-	want := map[bus.Code]int{
-		bus.CodeValidation: 400, bus.CodeUnauthenticated: 401, bus.CodeForbidden: 403,
-		bus.CodeNotRegistered: 403, bus.CodeNotFound: 404, bus.CodeConflict: 409,
-		bus.CodeReplaced: 409, bus.CodeSessionLapsed: 410, bus.CodeSessionClosed: 410,
-		bus.CodeRateLimited: 429, bus.CodeUnavailable: 503, bus.CodeInternal: 500,
-		bus.CodeInspectionRejected: 422, bus.CodePayloadTooLarge: 413,
+	if len(statusByCode) != 14 {
+		t.Fatalf("table has %d codes, want 14", len(statusByCode))
 	}
-	if len(want) != 14 {
-		t.Fatalf("table has %d codes, want 14", len(want))
-	}
-	for code, status := range want {
+	for code, status := range statusByCode {
 		if got := StatusFor(code); got != status {
 			t.Errorf("StatusFor(%s) = %d, want %d", code, got, status)
 		}
@@ -118,12 +120,7 @@ func TestRateLimitedRetryAfterHeader(t *testing.T) {
 }
 
 func TestWriteProblemStatusMatches(t *testing.T) {
-	for _, code := range []bus.Code{
-		bus.CodeValidation, bus.CodeUnauthenticated, bus.CodeForbidden, bus.CodeNotRegistered,
-		bus.CodeNotFound, bus.CodeConflict, bus.CodeReplaced, bus.CodeSessionLapsed,
-		bus.CodeSessionClosed, bus.CodeRateLimited, bus.CodeUnavailable, bus.CodeInternal,
-		bus.CodeInspectionRejected,
-	} {
+	for code := range statusByCode {
 		r := httptest.NewRequest("GET", "/v1/x", nil)
 		for name, write := range map[string]func(*httptest.ResponseRecorder){
 			"WriteProblem":  func(w *httptest.ResponseRecorder) { WriteProblem(w, r, StatusFor(code), code, "x", false) },

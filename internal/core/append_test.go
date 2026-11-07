@@ -231,12 +231,16 @@ func TestFromStoreMapping(t *testing.T) {
 }
 
 func TestEFixedRetryable(t *testing.T) {
-	for code, want := range map[bus.Code]bool{
+	table := map[bus.Code]bool{
 		bus.CodeRateLimited: true, bus.CodeUnavailable: true, bus.CodeInternal: true,
 		bus.CodeValidation: false, bus.CodeNotFound: false, bus.CodeConflict: false, bus.CodeForbidden: false,
 		bus.CodeNotRegistered: false, bus.CodeReplaced: false, bus.CodeSessionLapsed: false, bus.CodeSessionClosed: false,
-		bus.CodeInspectionRejected: false,
-	} {
+		bus.CodeInspectionRejected: false, bus.CodePayloadTooLarge: false, bus.CodeUnauthenticated: false,
+	}
+	if len(table) != 14 {
+		t.Fatalf("table has %d codes, want all 14 bus codes", len(table))
+	}
+	for code, want := range table {
 		if got := E(code, "x").Retryable; got != want {
 			t.Errorf("E(%s).Retryable = %v, want %v", code, got, want)
 		}
