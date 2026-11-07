@@ -2,6 +2,9 @@ package server
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"reflect"
 	"sort"
 	"strings"
@@ -134,7 +137,129 @@ type exception struct {
 	Reason string
 }
 
-var exceptions = map[string]exception{}
+var exceptions = map[string]exception{
+	"Problem": {Type: reflect.TypeFor[gen.Problem](), Fields: []string{"Code", "Detail", "Instance", "Retryable", "Status", "Title", "Type"},
+		Reason: "errors cross as RFC 9457 problems: WriteProblem writes, errorOf reads (TestErrorOf, TestProblem*)"},
+	"OAuthError": {Type: reflect.TypeFor[gen.OAuthError](), Fields: []string{"Error", "ErrorDescription"},
+		Reason: "the token endpoint answers the RFC 6749 error body (internal/server/oauth.go); internal/client reads it, not the Bus"},
+	"Discovery": {Type: reflect.TypeFor[gen.Discovery](), Fields: []string{"ApiVersions", "AuthMethods", "AuthorizationServer", "Capabilities", "Issuers", "OpenidConfiguration", "ProtocolVersion", "ServerVersion"},
+		Reason: authReason},
+	"AuthMethod": {Type: reflect.TypeFor[gen.AuthMethod](), Fields: []string{"BearerFormat", "Name", "Scheme", "Type"}, Reason: authReason},
+	"WellKnown":  {Type: reflect.TypeFor[gen.WellKnown](), Fields: []string{"Discover"}, Reason: authReason},
+	"AuthorizationServerMetadata": {Type: reflect.TypeFor[gen.AuthorizationServerMetadata](),
+		Fields: []string{"GrantTypesSupported", "Issuer", "JwksUri", "ResponseTypesSupported", "TokenEndpoint", "TokenEndpointAuthMethodsSupported", "TokenEndpointAuthSigningAlgValuesSupported"},
+		Reason: authReason},
+	"JWKS":                  {Type: reflect.TypeFor[gen.JWKS](), Fields: []string{"Keys"}, Reason: authReason},
+	"AccessToken":           {Type: reflect.TypeFor[gen.AccessToken](), Fields: []string{"AccessToken", "ExpiresIn", "IssuedTokenType", "TokenType"}, Reason: authReason},
+	"Registration":          {Type: reflect.TypeFor[gen.Registration](), Fields: []string{"Algorithm", "Created", "Identity", "Kid"}, Reason: authReason},
+	"RegisterRequest":       {Type: reflect.TypeFor[gen.RegisterRequest](), Fields: []string{"EnrollmentToken", "Identity", "PublicKeyJwk"}, Reason: authReason},
+	"RegisterRequestObject": {Type: reflect.TypeFor[gen.RegisterRequestObject](), Fields: []string{"Body"}, Reason: authReason},
+	"TokenRequestObject":    {Type: reflect.TypeFor[gen.TokenRequestObject](), Fields: []string{"Body"}, Reason: authReason},
+	"TokenRequest": {Type: reflect.TypeFor[gen.TokenRequest](),
+		Fields: []string{"ActorToken", "ActorTokenType", "Audience", "ClientAssertion", "ClientAssertionType", "ClientId", "GrantType", "RequestedTokenType", "Resource", "Scope", "SubjectToken", "SubjectTokenType"},
+		Reason: "the token endpoint's form body (the body struct of TokenRequestObject): internal/credential builds it, internal/server/oauth.go reads it; not the Bus"},
+	"GetTaskRequestObject":             {Type: reflect.TypeFor[gen.GetTaskRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
+	"GetMemoryRequestObject":           {Type: reflect.TypeFor[gen.GetMemoryRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
+	"ListMemoryRevisionsRequestObject": {Type: reflect.TypeFor[gen.ListMemoryRevisionsRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
+	"GetScopeRequestObject":            {Type: reflect.TypeFor[gen.GetScopeRequestObject](), Fields: []string{"Scope"}, Reason: pathReason},
+	"GetBridgeRequestObject":           {Type: reflect.TypeFor[gen.GetBridgeRequestObject](), Fields: []string{"Channel"}, Reason: pathReason},
+	"GetACLRequestObject":              {Type: reflect.TypeFor[gen.GetACLRequestObject](), Fields: []string{"Channel"}, Reason: pathReason},
+	"AgentStatusHistoryRequestObject":  {Type: reflect.TypeFor[gen.AgentStatusHistoryRequestObject](), Fields: []string{"Identity"}, Reason: pathReason},
+}
+
+const (
+	authReason = "discovery and authentication: consumed by internal/client (registration, login), internal/credential and internal/oidcclient, not the Bus"
+	pathReason = "the path parameter alone: the Bus method takes it as a scalar and the client passes it as given (Decision 80)"
+)
+
+// plumbingPatterns are the generated names that are transport plumbing, not
+// wire models. A name matches when it has the prefix or the suffix.
+var plumbingPatterns = []struct{ Prefix, Suffix, Reason string }{
+	{Suffix: "Response", Reason: "typed client and strict-server response wrappers (also *JSONResponse)"},
+	{Suffix: "Options", Reason: "generated server options"},
+	{Suffix: "ParamError", Reason: "generated parameter-binding errors (OAuthError is a model and stays enumerated)"},
+	{Suffix: "HeaderError", Reason: "generated parameter-binding errors"},
+	{Suffix: "FormatError", Reason: "generated parameter-binding errors"},
+	{Prefix: "Client", Reason: "the generated client and its options"},
+	{Prefix: "strictHandler", Reason: "the strict server adapter"},
+	{Prefix: "ServerInterfaceWrapper", Reason: "the generated router wrapper"},
+}
+
+func isPlumbing(name string) bool {
+	for _, p := range plumbingPatterns {
+		if (p.Prefix != "" && strings.HasPrefix(name, p.Prefix)) || (p.Suffix != "" && strings.HasSuffix(name, p.Suffix)) {
+			return true
+		}
+	}
+	return false
+}
+
+// genStructs parses internal/gen/gen.go and returns every struct type that is
+// not plumbing, with its exported field names.
+func genStructs(t *testing.T) map[string][]string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), "../gen/gen.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse gen.go: %v", err)
+	}
+	out := map[string][]string{}
+	for _, d := range f.Decls {
+		gd, isGen := d.(*ast.GenDecl)
+		if !isGen || gd.Tok != token.TYPE {
+			continue
+		}
+		for _, sp := range gd.Specs {
+			ts := sp.(*ast.TypeSpec)
+			st, isStruct := ts.Type.(*ast.StructType)
+			if !isStruct || isPlumbing(ts.Name.Name) {
+				continue
+			}
+			fields := []string{}
+			for _, fl := range st.Fields.List {
+				for _, n := range fl.Names {
+					if n.IsExported() {
+						fields = append(fields, n.Name)
+					}
+				}
+			}
+			out[ts.Name.Name] = fields
+		}
+	}
+	return out
+}
+
+// reachable returns the names of the gen struct types reachable from types
+// through fields, pointers, slices, arrays and maps.
+func reachable(types ...reflect.Type) map[string]bool {
+	seen := map[reflect.Type]bool{}
+	out := map[string]bool{}
+	var walk func(reflect.Type)
+	walk = func(ty reflect.Type) {
+		if seen[ty] {
+			return
+		}
+		seen[ty] = true
+		switch ty.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array:
+			walk(ty.Elem())
+		case reflect.Map:
+			walk(ty.Elem())
+		case reflect.Struct:
+			if ty.PkgPath() == reflect.TypeFor[gen.Problem]().PkgPath() {
+				out[ty.Name()] = true
+			}
+			for i := 0; i < ty.NumField(); i++ {
+				if ty.Field(i).IsExported() {
+					walk(ty.Field(i).Type)
+				}
+			}
+		}
+	}
+	for _, ty := range types {
+		walk(ty)
+	}
+	return out
+}
 
 // enumValues holds the value fill gives a member whose converter validates
 // it, keyed by member path ("Health.Store.Engine") or by reflect.Type.String()
@@ -324,6 +449,7 @@ func linePath(line string) string {
 
 func TestWireRoundTrip(t *testing.T) {
 	used := map[string]bool{}
+	hit := map[string]bool{}
 	for _, p := range pairs {
 		t.Run(p.name, func(t *testing.T) {
 			check := func(side string, ty reflect.Type, trip func(reflect.Value) (reflect.Value, error)) {
@@ -334,7 +460,9 @@ func TestWireRoundTrip(t *testing.T) {
 					t.Fatalf("%s: %s side trip: %v", p.name, side, err)
 				}
 				for _, l := range diff(p.name, want, got) {
-					if _, excepted := exceptions[side+":"+linePath(l)]; excepted {
+					key := side + ":" + linePath(l)
+					if _, excepted := exceptions[key]; excepted {
+						hit[key] = true
 						continue
 					}
 					t.Errorf("%s side: %s", side, l)
@@ -348,6 +476,50 @@ func TestWireRoundTrip(t *testing.T) {
 		for k := range enumValues {
 			if !used[k] {
 				t.Errorf("enumValues[%q] was never consulted", k)
+			}
+		}
+	})
+	structs := genStructs(t)
+	t.Run("coverage", func(t *testing.T) {
+		if len(structs) < 120 {
+			t.Fatalf("only %d generated struct types enumerated (want at least 120): the generator's output changed; the enumeration is blind", len(structs))
+		}
+		var roots []reflect.Type
+		for _, p := range pairs {
+			roots = append(roots, p.gen)
+		}
+		for _, e := range exceptions {
+			if e.Type != nil {
+				roots = append(roots, e.Type)
+			}
+		}
+		covered := reachable(roots...)
+		var missing []string
+		for name, fields := range structs {
+			if len(fields) == 0 || covered[name] {
+				continue
+			}
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		for _, name := range missing {
+			t.Errorf("generated type %s is neither paired nor excepted", name)
+		}
+	})
+	t.Run("exceptions", func(t *testing.T) {
+		for key, e := range exceptions {
+			if e.Type == nil {
+				if !hit[key] {
+					t.Errorf("exception %s matches nothing", key)
+				}
+				continue
+			}
+			want, found := structs[key]
+			got := append([]string(nil), e.Fields...)
+			sort.Strings(got)
+			sort.Strings(want)
+			if !found || !reflect.DeepEqual(got, want) || e.Type.Name() != key {
+				t.Errorf("stale exception %s", key)
 			}
 		}
 	})

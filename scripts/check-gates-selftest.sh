@@ -1157,6 +1157,31 @@ block_m10_deps_rule_fires() {
 	revert
 }
 
+# --- 34. wire-roundtrip-fires ---------------------------------------------------------
+# issue #29: TestWireRoundTrip (internal/server/wire_roundtrip_test.go) pairs every
+# generated wire type with its two converters. Docker-free; mutating
+# internal/gen/gen.go in the worktree is the same move as block 3. Each mutation
+# must turn the named subtest red: an unmapped generated member, a converter line
+# dropped, a generated type nobody pairs or excepts, and a stale exception.
+block_wire_roundtrip_fires() {
+	mutate_unit_block wire-gen-field-unmapped internal/gen/gen.go \
+		'type Session struct {' \
+		$'type Session struct {\n\tExtra *string `json:"extra,omitempty"`' \
+		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/Session
+	mutate_unit_block wire-converter-line-dropped internal/server/convert.go \
+		'ReplyTo: m.ReplyTo, MemoryId: m.MemoryID, Revision: m.Revision,' \
+		'ReplyTo: m.ReplyTo, Revision: m.Revision,' \
+		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/Message
+	mutate_unit_block wire-gen-type-unpaired internal/gen/gen.go \
+		'// Problem defines model for Problem.' \
+		$'// Extra defines model for Extra.\ntype Extra struct {\n\tA string\n}\n\n// Problem defines model for Problem.' \
+		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/coverage
+	mutate_unit_block wire-exception-stale internal/server/wire_roundtrip_test.go \
+		'var exceptions = map[string]exception{' \
+		$'var exceptions = map[string]exception{\n\t"gen:Session.Nope": {Reason: "stale"},' \
+		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/exceptions
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1190,6 +1215,7 @@ block_postgres_budget_physical_measure
 block_eviction_message_floor_removed
 block_agent_status_rules_fire
 block_m10_deps_rule_fires
+block_wire_roundtrip_fires
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"
