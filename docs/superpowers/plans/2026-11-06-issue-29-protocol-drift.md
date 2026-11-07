@@ -102,7 +102,7 @@ Probe content: `package <pkg>` and `import _ "github.com/ericfitz/agentmesh/<imp
 
 - [ ] **Step 6: Add the selftest probes**
 
-In block 23 (`block_m6_exit_script_fires`), after the existing seven `deps_probe` lines, add the twelve m6 rows of Step 5 (`deps_probe "$label" <file> "$m/<import>" "<expected line>" m6-exit-checks.sh`; use file names `probe_m6.go`). Update the block's header comment. In block 33, change the `[rule direct]` probe at the `internal/mcpcli/probe_m10.go` + `$m/internal/store` line to `$m/internal/cli` with want `deps_violation=$m/internal/mcpcli imports $m/internal/cli [rule direct]`; the `internal/core/notify` probe that expects m10 exit 0 stays (the direct ban on it is m6's, proved by the new m6 row). Update block 33's comment.
+In block 23 (`block_m6_exit_script_fires`), after the existing seven `deps_probe` lines, add the eleven m6 rows of Step 5 (the `internal/mcpcli` to `internal/cli` row is m10's and goes in block 33 below; m6 never prints a line for it) (`deps_probe "$label" <file> "$m/<import>" "<expected line>" m6-exit-checks.sh`; use file names `probe_m6.go`). Update the block's header comment. In block 33, change the `[rule direct]` probe at the `internal/mcpcli/probe_m10.go` + `$m/internal/store` line to `$m/internal/cli` with want `deps_violation=$m/internal/mcpcli imports $m/internal/cli [rule direct]`; the `internal/core/notify` probe that expects m10 exit 0 stays (the direct ban on it is m6's, proved by the new m6 row). Update block 33's comment.
 
 - [ ] **Step 7: Lint the scripts and run the gate**
 
@@ -183,7 +183,7 @@ Expected: compile failure naming `remote.FromGenMessage` (undefined) until Step 
 
 - [ ] **Step 3: Export the client converters; extract the two server converters; move the allowlist entry**
 
-Rename each `fromGen*` listed under Interfaces and every caller in `internal/bus/remote` (non-test and test files). `aclEntryToGen` is the loop body of `channelACLToGen`; `taskSummaryToGen` is the loop body of `ListTasks` (the `HasDetails` pointer rule included). Update `sites_test.go` as listed.
+Rename each `fromGen*` listed under Interfaces and every caller in `internal/bus/remote` (non-test and test files). `aclEntryToGen` is the loop body of `channelACLToGen`; `taskSummaryToGen` is the loop body of `ListTasks` (the `HasDetails` pointer rule included). Update `sites_test.go` as listed. This reverses the choice of commit `b3b4f4c` ("keep ListTasks' owner site in place") on purpose: that commit avoided an allowlist move for a small change, and for this issue the named converter is the deliverable (ruling 4); the `Owner` occurrences are the same wire copies, so the entry moves with its count and comment.
 
 - [ ] **Step 4: Run the tests**
 
