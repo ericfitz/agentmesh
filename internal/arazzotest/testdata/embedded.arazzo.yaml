@@ -71,3 +71,9 @@ workflows:
           - {name: id, in: path, value: "41"}
         successCriteria:
           - condition: '$response.body#/state != "ok"'
+  - workflowId: redirect
+    steps:
+      - stepId: go
+        operationId: getRedirect
+        successCriteria:
+          - condition: $statusCode == 302

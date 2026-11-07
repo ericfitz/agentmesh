@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -238,6 +239,9 @@ func compile(where string, v any) (*tmpl, error) {
 	case map[string]any:
 		t := &tmpl{kind: tObject, obj: make(map[string]*tmpl, len(x))}
 		for k, e := range x {
+			if strings.Contains(k, "{$") {
+				return nil, unsupported(where+"."+k, featExprOther)
+			}
 			c, err := compile(where+"."+k, e)
 			if err != nil {
 				return nil, err
@@ -265,6 +269,10 @@ func compile(where string, v any) (*tmpl, error) {
 	return &tmpl{kind: tLit, lit: v}, nil
 }
 
+// spacedBrace matches "{ $", a placeholder with whitespace inside the braces:
+// it is refused, never taken as literal text.
+var spacedBrace = regexp.MustCompile(`\{\s+\$`)
+
 func compileString(where, s string) (*tmpl, error) {
 	if strings.HasPrefix(s, "$") {
 		e, err := parseExpr(where, s)
@@ -272,6 +280,9 @@ func compileString(where, s string) (*tmpl, error) {
 			return nil, err
 		}
 		return &tmpl{kind: tWhole, e: e}, nil
+	}
+	if spacedBrace.MatchString(s) {
+		return nil, unsupported(where, featExprOther)
 	}
 	if !strings.Contains(s, "{$") {
 		return &tmpl{kind: tLit, lit: s}, nil

@@ -26,3 +26,7 @@ paths:
     get:
       operationId: getPlain
       responses: {"200": {description: ok}}
+  /redirect:
+    get:
+      operationId: getRedirect
+      responses: {"302": {description: moved}}

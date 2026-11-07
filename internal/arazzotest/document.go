@@ -286,6 +286,11 @@ func (d *Document) compileWorkflow(i int, w rawWF) (Workflow, error) {
 			wf.Properties = append(wf.Properties, n)
 		}
 		sort.Strings(wf.Properties)
+		for _, n := range wf.Required {
+			if _, ok := props[n]; !ok {
+				return wf, resolveErr(where+".inputs.required", n, "required input is not a declared property")
+			}
+		}
 	}
 	stepIDs := map[string]bool{}
 	for j, s := range w.Steps {
@@ -413,6 +418,9 @@ func (d *Document) compileStep(wfWhere string, j int, s rawStep) (Step, error) {
 			return st, err
 		}
 		st.criteria = append(st.criteria, cr)
+	}
+	if len(st.criteria) == 0 {
+		return st, resolveErr(where+".successCriteria", "successCriteria", "a step must assert at least one criterion")
 	}
 	outs, err := compileOutputs(where+".outputs", s.Outputs)
 	if err != nil {

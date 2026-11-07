@@ -47,7 +47,12 @@ func (r *Runner) client() *http.Client {
 	if r.Client != nil {
 		return r.Client
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	// A criterion on $statusCode must see the step's own response, so the
+	// default client never follows a redirect (a caller's Client is its own).
+	return &http.Client{
+		Timeout:       30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // Run runs one workflow. A dependsOn prerequisite must already have completed

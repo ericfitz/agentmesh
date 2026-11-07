@@ -6,6 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -94,6 +98,8 @@ func (f *fake) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, `{"linked":true}`)
+	case r.Method == "GET" && r.URL.Path == "/redirect":
+		http.Redirect(w, r, "/things", http.StatusFound)
 	case r.Method == "GET" && r.URL.Path == "/plain":
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, "not json")
@@ -238,6 +244,8 @@ var refusals = []struct{ file, where, feature string }{
 	{"expr-workflows", "workflows[0].steps[0].parameters[0].value", "expression $workflows"},
 	{"expr-components", "workflows[0].steps[0].parameters[0].value", "expression $components"},
 	{"expr-unrecognized", "workflows[0].steps[0].parameters[0].value", "unrecognized expression"},
+	{"expr-embedded-space", "workflows[0].steps[0].parameters[0].value", "unrecognized expression"},
+	{"key-expression", "workflows[0].steps[0].requestBody.payload.{$inputs.k}", "unrecognized expression"},
 	{"expr-embedded-unrecognized", "workflows[0].steps[0].parameters[0].value", "unrecognized expression"},
 }
 
@@ -323,7 +331,7 @@ func writeDoc(t *testing.T, workflows string) (*arazzotest.Document, error) {
 }
 
 func TestResolveErrors(t *testing.T) {
-	const getPlain = "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: getPlain\n"
+	const getPlain = "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: getPlain\n        successCriteria:\n          - condition: $statusCode == 200\n"
 	cases := []struct {
 		name, workflows string
 		run             string // workflow to run ("" : the error is Load's)
@@ -334,13 +342,17 @@ func TestResolveErrors(t *testing.T) {
 		{"undefined step output", getPlain + "        outputs: {a: $steps.x.outputs.y}\n", "w", nil, "$steps.x.outputs.y"},
 		{"missing required input", "  - workflowId: w\n    inputs: {required: [a], properties: {a: {}}}\n    steps: []\n", "w", nil, "$inputs.a"},
 		{"undeclared input", "  - workflowId: w\n    inputs: {properties: {a: {}}}\n    steps: []\n", "w", map[string]any{"b": 1}, "$inputs.b"},
-		{"input not provided", "  - workflowId: w\n    inputs: {properties: {a: {}}}\n    steps:\n      - stepId: s\n        operationId: getPlain\n        parameters:\n          - {name: q, in: query, value: $inputs.a}\n", "w", nil, "$inputs.a"},
-		{"pointer does not resolve", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: listThings\n        outputs: {a: $response.body#/nope}\n", "w", nil, "$response.body#/nope"},
-		{"array index out of range", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: listThings\n        outputs: {a: $response.body#/items/5}\n", "w", nil, "$response.body#/items/5"},
+		{"input not provided", "  - workflowId: w\n    inputs: {properties: {a: {}}}\n    steps:\n      - stepId: s\n        operationId: getPlain\n        parameters:\n          - {name: q, in: query, value: $inputs.a}\n        successCriteria:\n          - condition: $statusCode == 200\n", "w", nil, "$inputs.a"},
+		{"pointer does not resolve", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: listThings\n        successCriteria:\n          - condition: $statusCode == 200\n        outputs: {a: $response.body#/nope}\n", "w", nil, "$response.body#/nope"},
+		{"array index out of range", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: listThings\n        successCriteria:\n          - condition: $statusCode == 200\n        outputs: {a: $response.body#/items/5}\n", "w", nil, "$response.body#/items/5"},
 		{"non-JSON body with a pointer", getPlain + "        outputs: {a: $response.body#/x}\n", "w", nil, "$response.body#/x"},
 		{"unknown workflow", "  - workflowId: w\n    steps: []\n", "other", nil, "other"},
 		{"missing path parameter", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: getThing\n", "", nil, "id"},
 		{"extra path parameter", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: listThings\n        parameters:\n          - {name: id, in: path, value: x}\n", "", nil, "id"},
+		{"no successCriteria", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: listThings\n", "", nil, "successCriteria"},
+		{"empty successCriteria", "  - workflowId: w\n    steps:\n      - stepId: s\n        operationId: listThings\n        successCriteria: []\n", "", nil, "successCriteria"},
+		{"required input not a property", "  - workflowId: w\n    inputs: {required: [a], properties: {b: {}}}\n    steps: []\n", "", nil, "a"},
+		{"required without properties", "  - workflowId: w\n    inputs: {required: [a]}\n    steps: []\n", "", nil, "a"},
 		{"workflow output outside a step", "  - workflowId: w\n    steps: []\n    outputs: {a: $statusCode}\n", "w", nil, "$statusCode"},
 	}
 	for _, tc := range cases {
@@ -418,5 +430,79 @@ func TestConditions(t *testing.T) {
 func TestLoadRefusesMissingFile(t *testing.T) {
 	if _, err := arazzotest.Load(filepath.Join("testdata", "nope.arazzo.yaml")); err == nil {
 		t.Fatal("want an error")
+	}
+}
+
+func TestDefaultClientDoesNotFollowRedirects(t *testing.T) {
+	f := newFake(t)
+	r := runner(t, f, "embedded.arazzo.yaml")
+	res, err := r.Run(context.Background(), "redirect", nil)
+	if err != nil {
+		t.Fatal(err) // $statusCode == 302 holds only if the redirect was not followed
+	}
+	if res.Steps[0].Status != 302 || len(f.lines()) != 1 {
+		t.Fatalf("status %d, requests %v", res.Steps[0].Status, f.lines())
+	}
+}
+
+// TestRefusalsTieToSource: every feat* constant is listed by Unsupported, and
+// every unsupported(...) call site passes a feat* constant (the one table), so
+// a refusal cannot exist outside the list the fixtures are checked against.
+func TestRefusalsTieToSource(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consts := map[string]string{} // name -> value
+	var calls int
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			ast.Inspect(file, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.ValueSpec:
+					for i, id := range x.Names {
+						if strings.HasPrefix(id.Name, "feat") && i < len(x.Values) {
+							if lit, ok := x.Values[i].(*ast.BasicLit); ok {
+								v, _ := strconv.Unquote(lit.Value)
+								consts[id.Name] = v
+							}
+						}
+					}
+				case *ast.CallExpr:
+					if id, ok := x.Fun.(*ast.Ident); ok && id.Name == "unsupported" && len(x.Args) == 2 {
+						calls++
+						switch a := x.Args[1].(type) {
+						case *ast.Ident:
+							if !strings.HasPrefix(a.Name, "feat") {
+								t.Errorf("%s: unsupported(...) takes %s, not a feat* constant", fset.Position(x.Pos()), a.Name)
+							}
+						case *ast.BinaryExpr: // "unknown key " + key
+							if lit, ok := a.X.(*ast.BasicLit); !ok || lit.Value != `"unknown key "` {
+								t.Errorf("%s: unsupported(...) takes an unlisted expression", fset.Position(x.Pos()))
+							}
+						default:
+							t.Errorf("%s: unsupported(...) takes an unlisted feature", fset.Position(x.Pos()))
+						}
+					}
+				}
+				return true
+			})
+		}
+	}
+	if calls == 0 || len(consts) == 0 {
+		t.Fatalf("scan found %d call sites and %d constants", calls, len(consts))
+	}
+	listed := map[string]bool{}
+	for _, f := range arazzotest.Unsupported() {
+		listed[f] = true
+	}
+	for name, v := range consts {
+		if !listed[v] {
+			t.Errorf("%s = %q is not listed by Unsupported", name, v)
+		}
+	}
+	if len(listed) != len(consts) {
+		t.Errorf("Unsupported lists %d features, the source declares %d feat* constants", len(listed), len(consts))
 	}
 }
