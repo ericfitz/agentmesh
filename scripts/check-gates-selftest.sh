@@ -1202,6 +1202,18 @@ block_tool_coverage_fires() {
 		'"ReceiveInput": {' \
 		'"ReceiveInput": {"Nope": "used",' \
 		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/members
+	mutate_unit_block tool-bus-passed-as-argument internal/mcpserver/server.go \
+		'h, err := b.Health(ctx)' \
+		$'h, err := b.Health(ctx)\n\t\t\t\t_ = fmt.Sprint(b)' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/aliases
+	mutate_unit_block tool-bus-method-as-value internal/mcpserver/server.go \
+		'h, err := b.Health(ctx)' \
+		$'h, err := b.Health(ctx)\n\t\t\t\t_ = b.Status' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/aliases
+	mutate_unit_block tool-bus-aliased internal/mcpserver/server.go \
+		'h, err := b.Health(ctx)' \
+		$'h, err := b.Health(ctx)\n\t\t\t\tbb := b\n\t\t\t\t_ = bb' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/aliases
 }
 
 block_skip_in_wiring

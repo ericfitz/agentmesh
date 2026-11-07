@@ -70,7 +70,7 @@ var busMembers = map[string]map[string]string{
 		"IdempotencyKey": "used",
 		"Kind":           "used",
 		"Name":           "used",
-		"Scope":          "hidden: no documented reason (issue #29)",
+		"Scope":          "hidden: create_channel has no scope input; CreateChannelInput says an empty Scope takes the creator's scope and only an administrator may name one",
 	},
 	"DeleteChannelInput": {
 		"IdempotencyKey": "used",
@@ -440,8 +440,9 @@ func funcIndex(t *testing.T, files []*ast.File, fset *token.FileSet) map[string]
 }
 
 // toolHandlers returns each AddTool call's tool name and handler expression.
-func toolHandlers(files []*ast.File) map[string]ast.Expr {
+func toolHandlers(files []*ast.File) (map[string]ast.Expr, int) {
 	out := map[string]ast.Expr{}
+	calls := 0
 	for _, f := range files {
 		ast.Inspect(f, func(n ast.Node) bool {
 			ce, ok := n.(*ast.CallExpr)
@@ -452,6 +453,7 @@ func toolHandlers(files []*ast.File) map[string]ast.Expr {
 			if !ok || sel.Sel.Name != "AddTool" {
 				return true
 			}
+			calls++
 			ue, ok := ce.Args[1].(*ast.UnaryExpr)
 			if !ok {
 				return true
@@ -477,7 +479,7 @@ func toolHandlers(files []*ast.File) map[string]ast.Expr {
 			return true
 		})
 	}
-	return out
+	return out, calls
 }
 
 func busMethodSet() map[string]reflect.Method {
@@ -513,7 +515,13 @@ func walkBusCalls(root ast.Node, idx map[string]*ast.FuncDecl, methods map[strin
 			}
 			var name string
 			var recv ast.Expr
-			switch f := ce.Fun.(type) {
+			fun := ce.Fun
+			if ix, ok := fun.(*ast.IndexExpr); ok { // withSession[T](...)
+				fun = ix.X
+			} else if ix, ok := fun.(*ast.IndexListExpr); ok {
+				fun = ix.X
+			}
+			switch f := fun.(type) {
 			case *ast.Ident:
 				name = f.Name
 			case *ast.SelectorExpr:
@@ -614,10 +622,13 @@ func collectBusStructs(t reflect.Type, seen map[string]reflect.Type) {
 func TestToolCoverage(t *testing.T) {
 	files, fset := parseMCPServer(t)
 	idx := funcIndex(t, files, fset)
-	handlers := toolHandlers(files)
+	handlers, addToolCalls := toolHandlers(files)
 	methods := busMethodSet()
 
 	t.Run("tools", func(t *testing.T) {
+		if addToolCalls != len(handlers) {
+			t.Errorf("%d AddTool calls but %d literal tool names: a tool registered with a non-literal name (or twice) escapes the table", addToolCalls, len(handlers))
+		}
 		missing, extra := diffSets(sortedKeys(toolCalls), sortedKeys(handlers))
 		if len(missing) > 0 || len(extra) > 0 {
 			t.Errorf("toolCalls has no entry for the tools %v; it names tools no AddTool registers: %v", extra, missing)
@@ -660,7 +671,7 @@ func TestToolCoverage(t *testing.T) {
 				continue
 			}
 			ft := m.Type
-			for i := 1; i < ft.NumIn(); i++ { // index 0 is the receiver of a method value of an interface type? see below
+			for i := 0; i < ft.NumIn(); i++ { // an interface method type has no receiver parameter; context.Context is skipped by collectBusStructs (not a bus struct)
 				collectBusStructs(ft.In(i), seen)
 			}
 			if ft.NumOut() > 0 && ft.Out(0).String() != "error" {
@@ -693,27 +704,60 @@ func TestToolCoverage(t *testing.T) {
 	})
 
 	t.Run("aliases", func(t *testing.T) {
-		isBusSel := func(e ast.Expr) bool {
+		// The walk finds a Bus call only as b.M(...) or x.Bus.M(...). Every
+		// other way to reach the Bus is refused: an alias, the Bus passed as
+		// an argument (except to the func-typed parameter f of do and
+		// withSession), and a Bus method used as a value.
+		isBus := func(e ast.Expr) bool {
 			if u, ok := e.(*ast.UnaryExpr); ok {
 				e = u.X
 			}
-			s, ok := e.(*ast.SelectorExpr)
-			return ok && s.Sel.Name == "Bus"
+			switch v := e.(type) {
+			case *ast.Ident:
+				return v.Name == "b"
+			case *ast.SelectorExpr:
+				return v.Sel.Name == "Bus"
+			}
+			return false
 		}
 		for _, f := range files {
+			called := map[ast.Expr]bool{}
 			ast.Inspect(f, func(n ast.Node) bool {
-				var rhs []ast.Expr
+				if ce, ok := n.(*ast.CallExpr); ok {
+					called[ce.Fun] = true
+				}
+				return true
+			})
+			ast.Inspect(f, func(n ast.Node) bool {
+				if n == nil {
+					return false
+				}
+				pos := fset.Position(n.Pos())
 				switch v := n.(type) {
 				case *ast.AssignStmt:
-					rhs = v.Rhs
+					for _, e := range v.Rhs {
+						if isBus(e) {
+							t.Errorf("%s: alias the Bus and the walk goes blind: call through c.Bus or the b parameter", pos)
+						}
+					}
 				case *ast.ValueSpec:
-					rhs = v.Values
-				default:
-					return true
-				}
-				for _, e := range rhs {
-					if isBusSel(e) {
-						t.Errorf("%s: alias the Bus and the walk goes blind: call through c.Bus or the b parameter", fset.Position(n.Pos()))
+					for _, e := range v.Values {
+						if isBus(e) {
+							t.Errorf("%s: alias the Bus and the walk goes blind: call through c.Bus or the b parameter", pos)
+						}
+					}
+				case *ast.CallExpr:
+					if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "f" {
+						return true
+					}
+					for _, e := range v.Args {
+						if isBus(e) {
+							t.Errorf("%s: the Bus passed as an argument and the walk goes blind: call through c.Bus or the b parameter, not a helper's own parameter", pos)
+						}
+					}
+				case *ast.SelectorExpr:
+					if _, isMethod := methods[v.Sel.Name]; isMethod && isBusReceiver(v.X) && !called[v] {
+						t.Errorf("%s: Bus method %s used as a value and the walk goes blind: call it directly", pos, v.Sel.Name)
 					}
 				}
 				return true
