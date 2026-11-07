@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/gen"
@@ -114,5 +117,15 @@ func responseError(w http.ResponseWriter, r *http.Request, err error) {
 		inst := r.URL.Path
 		p.Instance = &inst
 	}
+	var be *bus.Error
+	if errors.As(err, &be) && be.Code == bus.CodeRateLimited {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(be.RetryAfter)))
+	}
 	writeProblemBody(w, p)
+}
+
+// retryAfterSeconds is the Retry-After value for a wait: whole seconds
+// rounded up, at least 1.
+func retryAfterSeconds(d time.Duration) int {
+	return max(1, int(math.Ceil(d.Seconds())))
 }

@@ -136,8 +136,8 @@ func (s Service) planEdit(ctx context.Context, tx store.Tx, identity string, p a
 	if err != nil {
 		return editPlan{}, err
 	}
-	if !s.Limits.Check(identity, size, s.Now()) {
-		return editPlan{}, core.E(bus.CodeRateLimited, "send_messages_per_second rate limit exceeded for %s", identity)
+	if ok, wait := s.Limits.Check(identity, size, s.Now()); !ok {
+		return editPlan{}, core.RateLimited(wait, "send_messages_per_second rate limit exceeded for %s", identity)
 	}
 	return editPlan{old: old, ch: ch, live: live, ai: ai, size: size}, nil
 }
@@ -310,8 +310,8 @@ func (s Service) Delete(ctx context.Context, identity string, in bus.DeleteMemor
 			if ch.Kind == store.KindTasks {
 				return core.E(bus.CodeValidation, taskListMsg, ch.Name)
 			}
-			if !s.Limits.Check(identity, 0, s.Now()) {
-				return core.E(bus.CodeRateLimited, "send_messages_per_second rate limit exceeded for %s", identity)
+			if ok, wait := s.Limits.Check(identity, 0, s.Now()); !ok {
+				return core.RateLimited(wait, "send_messages_per_second rate limit exceeded for %s", identity)
 			}
 			ok, err := s.TombstoneMemory(ctx, tx, in.ID, m.Seq, s.NowMs())
 			if err != nil {

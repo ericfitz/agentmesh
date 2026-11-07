@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/store"
@@ -14,6 +15,15 @@ import (
 func E(code bus.Code, format string, args ...any) *bus.Error {
 	retryable := code == bus.CodeRateLimited || code == bus.CodeUnavailable || code == bus.CodeInternal
 	return bus.Errorf(code, retryable, format, args...)
+}
+
+// RateLimited is the one constructor of a rate_limited error: wait is the
+// limiter's (or Slack's) known wait, which the server writes as Retry-After.
+// TestRateLimitedSites refuses any other construction.
+func RateLimited(wait time.Duration, format string, args ...any) *bus.Error {
+	be := bus.Errorf(bus.CodeRateLimited, true, format, args...)
+	be.RetryAfter = wait
+	return be
 }
 
 // FromStore maps a Store error to a bus.Error: nil stays nil, a *bus.Error

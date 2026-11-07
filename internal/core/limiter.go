@@ -52,12 +52,23 @@ func (l *Limiter) refill(identity string, now time.Time) *bucket {
 }
 
 // Check refills the identity's bucket and reports whether one message of n
-// bytes fits. It charges nothing.
-func (l *Limiter) Check(identity string, n int, now time.Time) bool {
+// bytes fits. It charges nothing. When it does not fit, wait is how long
+// the buckets need to refill enough (the larger of the count's and the
+// bytes' deficit, each taken only when positive); wait is 0 when ok.
+func (l *Limiter) Check(identity string, n int, now time.Time) (ok bool, wait time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	bk := l.refill(identity, now)
-	return bk.count >= 1 && bk.bytes >= float64(n)
+	if bk.count >= 1 && bk.bytes >= float64(n) {
+		return true, 0
+	}
+	if d := 1 - bk.count; d > 0 {
+		wait = time.Duration(d / l.perSec * float64(time.Second))
+	}
+	if d := float64(n) - bk.bytes; d > 0 {
+		wait = max(wait, time.Duration(d/l.bytesSec*float64(time.Second)))
+	}
+	return false, max(wait, 0)
 }
 
 // Charge refills the bucket and charges one message of n bytes. The bucket

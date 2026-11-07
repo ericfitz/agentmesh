@@ -200,7 +200,7 @@ func slackErr(err error) error {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return err
 	case errors.As(err, &rl):
-		return core.E(bus.CodeRateLimited, "Slack is rate limiting the bridge (%s); retry after %s", rl.Method, rl.RetryAfter)
+		return core.RateLimited(rl.RetryAfter, "Slack is rate limiting the bridge (%s); retry after %s", rl.Method, rl.RetryAfter)
 	case errors.As(err, &ae):
 		return core.E(bus.CodeUnavailable, "Slack refused %s: %s; retry", ae.Method, ae.Code)
 	case errors.Is(err, slackapi.ErrChannelGone):

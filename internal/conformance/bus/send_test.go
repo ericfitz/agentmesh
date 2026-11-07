@@ -376,6 +376,9 @@ func TestSendRateLimited(t *testing.T) {
 		if !errors.As(err, &be) || !be.Retryable {
 			t.Errorf("rate_limited is not retryable: %v", err)
 		}
+		if be != nil && be.RetryAfter <= 0 {
+			t.Errorf("rate_limited carries no wait: RetryAfter = %v", be.RetryAfter)
+		}
 		h.clock.Advance(time.Second)
 		if err := send(); err != nil {
 			t.Fatalf("send after refill: %v", err)

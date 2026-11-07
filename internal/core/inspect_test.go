@@ -341,7 +341,7 @@ func TestRunInspectedRefuse(t *testing.T) {
 	long := strings.Repeat("r", 1000)
 	in := &stubInspector{reply: replyWith(`{"verdict":"refuse","code":"pii","reason":"contains a key"}`)}
 	c, _, buf := newInspectCore(t, func(cfg *Config) { cfg.SendMessagesPerSecond = 1 }, in)
-	if !c.Limits.Check("pat", 0, c.Now()) {
+	if ok, _ := c.Limits.Check("pat", 0, c.Now()); !ok {
 		t.Fatal("limiter refuses before any charge")
 	}
 	err := c.RunInspected(context.Background(), "pat", prepareOf(testPrep()), func(string) error { t.Error("write ran"); return nil })
@@ -349,7 +349,7 @@ func TestRunInspectedRefuse(t *testing.T) {
 	if !errors.As(err, &be) || be.Code != bus.CodeInspectionRejected || be.Retryable || be.Message != "rejected by inspection (pii): contains a key" {
 		t.Fatalf("err = %#v", err)
 	}
-	if c.Limits.Check("pat", 0, c.Now()) {
+	if ok, _ := c.Limits.Check("pat", 0, c.Now()); ok {
 		t.Error("a refusal was not charged (Decision 13)")
 	}
 	lines := linesWithMsg(t, buf, "write refused by inspection")
@@ -403,7 +403,7 @@ func TestRunInspectedPrepareError(t *testing.T) {
 	if err != error(want) || in.count() != 0 {
 		t.Fatalf("err=%v calls=%d", err, in.count())
 	}
-	if !c.Limits.Check("pat", 0, c.Now()) {
+	if ok, _ := c.Limits.Check("pat", 0, c.Now()); !ok {
 		t.Error("a prepare error was charged")
 	}
 }
@@ -475,7 +475,7 @@ func TestRunInspectedFailClosed(t *testing.T) {
 			if !errors.As(err, &be) || be.Code != bus.CodeUnavailable || !be.Retryable || be.Message != "write inspection is unavailable; retry later" {
 				t.Fatalf("err = %#v", err)
 			}
-			if !c.Limits.Check("pat", 0, c.Now()) {
+			if ok, _ := c.Limits.Check("pat", 0, c.Now()); !ok {
 				t.Error("an inspector failure was charged (open note 2)")
 			}
 			n, ok := inspectionNotice(t, c)

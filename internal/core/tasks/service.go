@@ -39,8 +39,8 @@ func (s Service) finish(identity string, fx effects) {
 // buckets cannot pay for a row of n bytes; the charge is taken after the
 // commit (finish).
 func (s Service) rateCheck(identity string, n int, fx *effects) error {
-	if !s.Limits.Check(identity, n, s.Now()) {
-		return core.E(bus.CodeRateLimited, "send_messages_per_second rate limit exceeded for %s", identity)
+	if ok, wait := s.Limits.Check(identity, n, s.Now()); !ok {
+		return core.RateLimited(wait, "send_messages_per_second rate limit exceeded for %s", identity)
 	}
 	fx.charged, fx.bytes = true, n
 	return nil

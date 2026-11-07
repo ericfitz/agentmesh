@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Code is the machine-readable error code, the enumeration that Milestone 4
@@ -60,6 +61,11 @@ type Error struct {
 	Code      Code   `json:"code"`
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable"`
+	// RetryAfter is how long the caller should wait before retrying; set on
+	// rate_limited from the limiter's wait (the server's Retry-After header),
+	// zero when unknown. It is not part of the JSON form, so Error() is
+	// unchanged.
+	RetryAfter time.Duration `json:"-"`
 }
 
 // Error renders the JSON form, as v1 did.

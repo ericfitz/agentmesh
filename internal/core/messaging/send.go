@@ -134,8 +134,8 @@ func (s Service) target(ctx context.Context, tx store.Tx, pl sendPlan) (core.App
 	if err != nil {
 		return core.AppendInput{}, 0, err
 	}
-	if !s.Limits.Check(pl.p.Name, n, s.Now()) {
-		return core.AppendInput{}, 0, core.E(bus.CodeRateLimited, "send_messages_per_second rate limit exceeded for %s", pl.p.Name)
+	if ok, wait := s.Limits.Check(pl.p.Name, n, s.Now()); !ok {
+		return core.AppendInput{}, 0, core.RateLimited(wait, "send_messages_per_second rate limit exceeded for %s", pl.p.Name)
 	}
 	return ai, n, nil
 }

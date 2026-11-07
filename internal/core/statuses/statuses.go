@@ -59,8 +59,8 @@ func (s Service) Set(ctx context.Context, identity string, in bus.SetAgentStatus
 				return err
 			}
 			// open note: agent-status 8: one operation of len(tag)+len(text)+len(problem) bytes.
-			if !s.Limits.Check(identity, size, s.Now()) {
-				return core.E(bus.CodeRateLimited, "send_messages_per_second rate limit exceeded for %s", identity)
+			if ok, wait := s.Limits.Check(identity, size, s.Now()); !ok {
+				return core.RateLimited(wait, "send_messages_per_second rate limit exceeded for %s", identity)
 			}
 			row := store.AgentStatus{
 				Identity: identity, Tag: string(in.Tag), Text: text, Problem: problem,

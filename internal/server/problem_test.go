@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
@@ -86,6 +88,64 @@ func TestWriteProblemShape(t *testing.T) {
 	for k, v := range want {
 		if m[k] != v {
 			t.Errorf("member %s = %v, want %v", k, m[k], v)
+		}
+	}
+}
+
+func TestRateLimitedRetryAfterHeader(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{core.RateLimited(1500*time.Millisecond, "x"), "2"},
+		{core.RateLimited(0, "x"), "1"},
+		{core.E(bus.CodeConflict, "x"), ""},
+	} {
+		rec := httptest.NewRecorder()
+		responseError(rec, httptest.NewRequest("GET", "/v1/x", nil), tc.err)
+		if got := rec.Header().Get("Retry-After"); got != tc.want {
+			t.Errorf("%v: Retry-After = %q, want %q", tc.err, got, tc.want)
+		}
+		if _, has := rec.Header()["Retry-After"]; has != (tc.want != "") {
+			t.Errorf("%v: Retry-After presence = %v", tc.err, has)
+		}
+	}
+	rec := httptest.NewRecorder()
+	responseError(rec, httptest.NewRequest("GET", "/v1/x", nil), core.RateLimited(time.Second, "x"))
+	if rec.Code != 429 {
+		t.Errorf("status = %d, want 429", rec.Code)
+	}
+}
+
+func TestWriteProblemStatusMatches(t *testing.T) {
+	for _, code := range []bus.Code{
+		bus.CodeValidation, bus.CodeUnauthenticated, bus.CodeForbidden, bus.CodeNotRegistered,
+		bus.CodeNotFound, bus.CodeConflict, bus.CodeReplaced, bus.CodeSessionLapsed,
+		bus.CodeSessionClosed, bus.CodeRateLimited, bus.CodeUnavailable, bus.CodeInternal,
+		bus.CodeInspectionRejected,
+	} {
+		r := httptest.NewRequest("GET", "/v1/x", nil)
+		for name, write := range map[string]func(*httptest.ResponseRecorder){
+			"WriteProblem":  func(w *httptest.ResponseRecorder) { WriteProblem(w, r, StatusFor(code), code, "x", false) },
+			"responseError": func(w *httptest.ResponseRecorder) { responseError(w, r, core.E(code, "x")) },
+		} {
+			rec := httptest.NewRecorder()
+			write(rec)
+			var p gen.Problem
+			if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil {
+				t.Fatalf("%s %s: %v", name, code, err)
+			}
+			if rec.Code != StatusFor(code) || int(p.Status) != rec.Code {
+				t.Errorf("%s %s: recorder %d, body status %d, want %d", name, code, rec.Code, p.Status, StatusFor(code))
+			}
+		}
+	}
+}
+
+func TestRetryAfterSeconds(t *testing.T) {
+	for d, want := range map[time.Duration]int{0: 1, 1: 1, time.Second: 1, 1001 * time.Millisecond: 2} {
+		if got := retryAfterSeconds(d); got != want {
+			t.Errorf("retryAfterSeconds(%v) = %d, want %d", d, got, want)
 		}
 	}
 }
