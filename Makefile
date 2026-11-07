@@ -1,4 +1,4 @@
-.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags
+.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint
 export CGO_ENABLED=0
 PKGS_UNIT = $$(go list ./... | grep -v '^github.com/ericfitz/agentmesh/internal/conformance')
 
@@ -25,6 +25,13 @@ generate:    ## Regenerate internal/gen from api/openapi.yaml with the pinned oa
 	go tool oapi-codegen -config api/oapi-codegen-spec.yaml api/openapi.yaml
 generate-check: generate  ## Fail when internal/gen is not exactly what api/ generates (modified, staged, deleted or untracked files after regeneration)
 	@dirty=$$(git status --porcelain --untracked-files=all -- internal/gen); if [ -n "$$dirty" ]; then echo "internal/gen is stale or polluted (run make generate, then commit or remove):"; echo "$$dirty"; git --no-pager diff --stat -- internal/gen; exit 1; fi
+VACUUM_VERSION := 0.36.2
+VACUUM ?= vacuum
+
+spec-lint:   ## vacuum lint of api/openapi.yaml with api/vacuum-ruleset.yaml at fail-severity info (part of verify; needs vacuum $(VACUUM_VERSION))
+	@command -v $(VACUUM) >/dev/null 2>&1 || { echo "spec-lint: vacuum is not installed; run: go install github.com/daveshanley/vacuum@v$(VACUUM_VERSION) (or brew install vacuum and pin $(VACUUM_VERSION))"; exit 1; }
+	@v="$$($(VACUUM) version 2>/dev/null | tr -d '[:space:]' | sed 's/^v//')"; [ "$$v" = "$(VACUUM_VERSION)" ] || { echo "spec-lint: vacuum $$v installed, want $(VACUUM_VERSION)"; exit 1; }
+	$(VACUUM) lint -r api/vacuum-ruleset.yaml -n info -d -q -b --no-clip api/openapi.yaml
 test-conformance:  ## Store and Bus conformance suites on SQLite and Postgres; -count=1 so an unreachable Postgres can never be masked by the test cache
 	go test -count=1 -p 1 ./internal/conformance/...
 	@# the bus suite runs through local.New and through the generated client over the in-process transport (spec 10, Milestone 4 exit)

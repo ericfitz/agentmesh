@@ -145,7 +145,7 @@ func TestACLWire(t *testing.T) {
 	}
 }
 
-func TestDeleteAndRenameCarryAdminTag(t *testing.T) {
+func TestDeleteAndRenameAreChannelOperations(t *testing.T) {
 	spec := Spec()
 	for _, op := range []string{"deleteChannel", "renameChannel"} {
 		found := false
@@ -159,8 +159,8 @@ func TestDeleteAndRenameCarryAdminTag(t *testing.T) {
 				for _, tg := range o.Tags {
 					tags[tg] = true
 				}
-				if !tags["channels"] || !tags["admin"] {
-					t.Errorf("%s tags = %v, want channels and admin", op, o.Tags)
+				if len(tags) != 1 || !tags["channels"] {
+					t.Errorf("%s tags = %v, want channels only (the access rule is the channel ACL, not the administrator flag; issue #32 ruling 5)", op, o.Tags)
 				}
 			}
 		}

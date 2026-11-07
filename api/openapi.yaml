@@ -14,14 +14,23 @@ security:
   - bearerAuth: []
 tags:
   - name: discovery
+    description: "The well-known documents and /v1/discover"
   - name: health
+    description: "GET /v1/health"
   - name: sessions
+    description: "Open, close, receive, watch, peek and agent status"
   - name: channels
+    description: "Channels, ACLs, subscriptions and tag subscriptions"
   - name: messages
+    description: "Send, history and search"
   - name: memories
+    description: "Memory documents and their revisions"
   - name: tasks
+    description: "Task lists"
   - name: admin
+    description: "Administrator operations (scopes, identities, bridges, signing keys, status, usage, reset)"
   - name: auth
+    description: "Registration, the token endpoint and the JWKS"
 paths:
   /.well-known/agentmesh:
     get:
@@ -488,7 +497,7 @@ paths:
   /v1/channels/{channel}:
     delete:
       operationId: deleteChannel
-      tags: [channels, admin]
+      tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -511,7 +520,7 @@ paths:
           $ref: "#/components/responses/ServiceUnavailable"
     patch:
       operationId: renameChannel
-      tags: [channels, admin]
+      tags: [channels]
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
