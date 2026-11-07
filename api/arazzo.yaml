@@ -1,0 +1,1503 @@
+arazzo: 1.0.1
+info:
+  title: agentmesh
+  summary: The customer journeys of the agentmesh HTTP API as Arazzo workflows.
+  description: >-
+    One workflow per journey of docs/journeys.md (J1 to J11; J9 is two
+    workflows, because an Arazzo step is one request and the Slack message is
+    injected between the outbound and the inbound half). The runner is
+    internal/arazzotest, which supports steps bound by operationId, path,
+    query and header parameters, JSON and form bodies, $inputs, $steps,
+    $statusCode and $response.body#/pointer, == and != criteria against
+    literals, outputs and dependsOn as a check. Every bearer is a header
+    parameter, so a workflow shows its dependency on the token exchange; the
+    inputs that need key material (public_key_jwk, client_assertion, the
+    bearers) are minted by the test that runs the document. Names that must
+    not collide between runs (channels, scopes, identities) are inputs.
+  version: 1.0.0
+sourceDescriptions:
+  - name: agentmesh
+    url: ./openapi.yaml
+    type: openapi
+workflows:
+  # J1: Register and log in.
+  - workflowId: register-and-login
+    summary: Register a public key and exchange a client assertion for a bearer
+    description: >-
+      An agent registers its public key with an enrollment token (both e2e
+      servers run in enrollment mode), then exchanges a signed private_key_jwt
+      client assertion (iss and sub the identity, aud the issuer URL) for a
+      short-lived bearer that every other workflow carries.
+    inputs:
+      type: object
+      required: [identity, public_key_jwk, enrollment_token, client_assertion]
+      properties:
+        identity:
+          type: string
+          description: The identity to register.
+        public_key_jwk:
+          type: object
+          description: The identity's public key as a JWK object.
+        enrollment_token:
+          type: string
+          description: A token from `agentmesh server admin enrollment create`.
+        client_assertion:
+          type: string
+          description: A signed client assertion for the identity, audience the server's issuer URL.
+    steps:
+      - stepId: register
+        description: Register the identity's public key.
+        operationId: register
+        requestBody:
+          contentType: application/json
+          payload:
+            identity: $inputs.identity
+            public_key_jwk: $inputs.public_key_jwk
+            enrollment_token: $inputs.enrollment_token
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/created == true
+        outputs:
+          identity: $response.body#/identity
+          kid: $response.body#/kid
+      - stepId: token
+        description: Exchange the client assertion for a bearer (RFC 7523 private_key_jwt).
+        operationId: token
+        requestBody:
+          contentType: application/x-www-form-urlencoded
+          payload:
+            grant_type: client_credentials
+            client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+            client_assertion: $inputs.client_assertion
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/token_type == "Bearer"
+        outputs:
+          access_token: $response.body#/access_token
+          expires_in: $response.body#/expires_in
+    outputs:
+      identity: $steps.register.outputs.identity
+      kid: $steps.register.outputs.kid
+      access_token: $steps.token.outputs.access_token
+
+  # J2: Send and receive with ack.
+  - workflowId: send-receive-ack
+    summary: Open a session, receive a peer's message from general, acknowledge it, close
+    description: >-
+      An agent opens a session; a second identity sends a message to general
+      (every registered identity is subscribed to general at registration);
+      the first agent receives the batch, acknowledges its token on the next
+      receive (ack_ignored false), peeks at an empty inbox and closes the
+      session.
+    dependsOn: [register-and-login]
+    inputs:
+      type: object
+      required: [bearer, peer_bearer]
+      properties:
+        bearer:
+          type: string
+          description: The receiving agent's bearer.
+        peer_bearer:
+          type: string
+          description: The sending agent's bearer (a second identity registered through register-and-login).
+    steps:
+      - stepId: open-session
+        description: Open a session for the receiving agent.
+        operationId: openSession
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload: {}
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/resumed == false
+        outputs:
+          session: $response.body#/id
+      - stepId: send
+        description: The peer sends a message to general.
+        operationId: sendMessage
+        parameters:
+          - name: channel
+            in: path
+            value: general
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.peer_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: arazzo
+            content: hello from the arazzo peer
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          seq: $response.body#/seq
+      - stepId: receive
+        description: Receive the batch holding the peer's message.
+        operationId: receive
+        parameters:
+          - name: session
+            in: path
+            value: $steps.open-session.outputs.session
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            count: 10
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/messages/0/channel == "general"
+          - condition: $response.body#/messages/0/content == "hello from the arazzo peer"
+          - condition: $response.body#/messages/0/sender_kind == "agent"
+          - condition: $response.body#/redelivered == false
+        outputs:
+          batch: $response.body#/batch
+      - stepId: ack
+        description: Acknowledge the batch on the next receive.
+        operationId: receive
+        parameters:
+          - name: session
+            in: path
+            value: $steps.open-session.outputs.session
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            ack: $steps.receive.outputs.batch
+            count: 10
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/ack_ignored == false
+      - stepId: peek
+        description: The inbox is empty after the ack.
+        operationId: peek
+        parameters:
+          - name: session
+            in: path
+            value: $steps.open-session.outputs.session
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/count == 0
+      - stepId: close-session
+        description: Close the session.
+        operationId: closeSession
+        parameters:
+          - name: session
+            in: path
+            value: $steps.open-session.outputs.session
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 204
+    outputs:
+      seq: $steps.send.outputs.seq
+
+  # J3: Memories.
+  - workflowId: memories
+    summary: Create a memory channel, write a memory, read, edit, list revisions, delete
+    description: >-
+      An agent creates a channel of kind memory, sends a message to it (the
+      first revision; the result carries memory_id), reads it, edits it with
+      if_revision, lists the revisions and deletes it; a read after the delete
+      is not_found.
+    dependsOn: [register-and-login]
+    inputs:
+      type: object
+      required: [bearer, channel]
+      properties:
+        bearer:
+          type: string
+        channel:
+          type: string
+          description: A channel name unique to this run.
+    steps:
+      - stepId: create-channel
+        description: Create the memory channel.
+        operationId: createChannel
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.channel
+            kind: memory
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/kind == "memory"
+      - stepId: write
+        description: Write the memory (its first revision).
+        operationId: sendMessage
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: arazzo memory
+            content: the first revision
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          seq: $response.body#/seq
+          memory_id: $response.body#/memory_id
+      - stepId: read
+        description: Read the live revision.
+        operationId: getMemory
+        parameters:
+          - name: id
+            in: path
+            value: $steps.write.outputs.memory_id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/content == "the first revision"
+          - condition: $response.body#/revision == 1
+        outputs:
+          revision: $response.body#/revision
+      - stepId: edit
+        description: Edit the memory, guarded by the revision just read.
+        operationId: editMemory
+        parameters:
+          - name: id
+            in: path
+            value: $steps.write.outputs.memory_id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            if_revision: $steps.read.outputs.revision
+            content: the second revision
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/revision == 2
+        outputs:
+          seq: $response.body#/seq
+      - stepId: revisions
+        description: Both revisions, by revision.
+        operationId: listMemoryRevisions
+        parameters:
+          - name: id
+            in: path
+            value: $steps.write.outputs.memory_id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/revision == 1
+          - condition: $response.body#/1/revision == 2
+          - condition: $response.body#/1/content == "the second revision"
+      - stepId: delete
+        description: Delete the memory.
+        operationId: deleteMemory
+        parameters:
+          - name: id
+            in: path
+            value: $steps.write.outputs.memory_id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 204
+      - stepId: read-after-delete
+        description: The memory has no live revision.
+        operationId: getMemory
+        parameters:
+          - name: id
+            in: path
+            value: $steps.write.outputs.memory_id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 404
+          - condition: $response.body#/code == "not_found"
+    outputs:
+      memory_id: $steps.write.outputs.memory_id
+
+  # J4: Task list, claim and complete.
+  - workflowId: task-claim-complete
+    summary: Create a task list, create a task, claim it, complete it; claim and release another
+    description: >-
+      An agent creates a channel of kind tasks, creates a task, lists the
+      list, claims the task, updates it to completed and reads it back; a
+      second task is claimed and released instead.
+    dependsOn: [register-and-login]
+    inputs:
+      type: object
+      required: [bearer, channel]
+      properties:
+        bearer:
+          type: string
+        channel:
+          type: string
+          description: A task list name unique to this run.
+    steps:
+      - stepId: create-channel
+        description: Create the task list.
+        operationId: createChannel
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.channel
+            kind: tasks
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/kind == "tasks"
+      - stepId: create-task
+        description: Create the task.
+        operationId: createTask
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: write the report
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/status == "pending"
+        outputs:
+          id: $response.body#/id
+      - stepId: list-tasks
+        description: The list holds the pending task.
+        operationId: listTasks
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/subject == "write the report"
+          - condition: $response.body#/0/status == "pending"
+      - stepId: claim
+        description: Claim the task.
+        operationId: claimTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-task.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload: {}
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/status == "in_progress"
+      - stepId: complete
+        description: Mark the task completed.
+        operationId: updateTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-task.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            status: completed
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/status == "completed"
+      - stepId: get-task
+        description: Read the completed task.
+        operationId: getTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-task.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/status == "completed"
+      - stepId: create-second
+        description: A second task for the release path.
+        operationId: createTask
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: review the report
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          id: $response.body#/id
+      - stepId: claim-second
+        description: Claim the second task.
+        operationId: claimTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-second.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload: {}
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/status == "in_progress"
+      - stepId: release-second
+        description: Release it instead of completing it.
+        operationId: releaseTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-second.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/status == "pending"
+    outputs:
+      completed_task: $steps.create-task.outputs.id
+      released_task: $steps.create-second.outputs.id
+
+  # J11: Task list, create and maintain.
+  - workflowId: task-list-maintain
+    summary: Build a plan of tasks with subtasks, order and blockers, then maintain it
+    description: >-
+      An agent creates a channel of kind tasks and builds a plan in it: a
+      top-level task with two subtasks (the second placed after the first)
+      and a follow-up blocked by the plan; it then edits the subject and
+      description, assigns an owner, reorders the subtasks, removes the
+      blocker, starts a task, and lists the plan filtered by status and by
+      owner.
+    dependsOn: [register-and-login]
+    inputs:
+      type: object
+      required: [bearer, channel, identity]
+      properties:
+        bearer:
+          type: string
+        channel:
+          type: string
+          description: A task list name unique to this run.
+        identity:
+          type: string
+          description: The agent's own identity, assigned as the owner (an owner must be a registered identity).
+    steps:
+      - stepId: create-channel
+        description: Create the task list.
+        operationId: createChannel
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.channel
+            kind: tasks
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/kind == "tasks"
+      - stepId: create-plan
+        description: The top-level task.
+        operationId: createTask
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: plan
+            description: the plan
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/status == "pending"
+        outputs:
+          id: $response.body#/id
+      - stepId: create-first
+        description: The first subtask.
+        operationId: createTask
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: first step
+            parent: $steps.create-plan.outputs.id
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          id: $response.body#/id
+      - stepId: create-second
+        description: The second subtask, placed after the first.
+        operationId: createTask
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: second step
+            parent: $steps.create-plan.outputs.id
+            after: $steps.create-first.outputs.id
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          id: $response.body#/id
+      - stepId: create-follow-up
+        description: A follow-up blocked by the plan.
+        operationId: createTask
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: follow-up
+            blocked_by:
+              - $steps.create-plan.outputs.id
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/blocked == true
+        outputs:
+          id: $response.body#/id
+      - stepId: list-tree
+        description: The list in tree order.
+        operationId: listTasks
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/subject == "plan"
+          - condition: $response.body#/0/depth == 0
+          - condition: $response.body#/1/subject == "first step"
+          - condition: $response.body#/1/depth == 1
+          - condition: $response.body#/2/subject == "second step"
+          - condition: $response.body#/3/subject == "follow-up"
+      - stepId: edit-plan
+        description: Edit the subject and the description.
+        operationId: updateTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-plan.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: the plan
+            description: the plan, revised
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/subject == "the plan"
+          - condition: $response.body#/task/description == "the plan, revised"
+      - stepId: assign
+        description: Assign the first step an owner.
+        operationId: updateTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-first.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            owner: $inputs.identity
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/status == "pending"
+      - stepId: reorder
+        description: Move the second step before the first.
+        operationId: updateTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-second.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            before: $steps.create-first.outputs.id
+        successCriteria:
+          - condition: $statusCode == 200
+      - stepId: list-reordered
+        description: The subtasks in their new order.
+        operationId: listTasks
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/1/subject == "second step"
+          - condition: $response.body#/2/subject == "first step"
+      - stepId: unblock
+        description: Remove the follow-up's blocker.
+        operationId: updateTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-follow-up.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            remove_blocked_by:
+              - $steps.create-plan.outputs.id
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/blocked == false
+      - stepId: start
+        description: Start the owned first step.
+        operationId: updateTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-first.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            status: in_progress
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/task/status == "in_progress"
+      - stepId: get-first
+        description: The first step shows every change.
+        operationId: getTask
+        parameters:
+          - name: id
+            in: path
+            value: $steps.create-first.outputs.id
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/status == "in_progress"
+          - condition: $response.body#/subject == "first step"
+      - stepId: list-in-progress
+        description: Filter by status.
+        operationId: listTasks
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: status
+            in: query
+            value: in_progress
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/subject == "first step"
+          - condition: $response.body#/0/status == "in_progress"
+      - stepId: list-by-owner
+        description: Filter by owner.
+        operationId: listTasks
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: owner
+            in: query
+            value: $inputs.identity
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/subject == "first step"
+    outputs:
+      plan: $steps.create-plan.outputs.id
+
+  # J5: Admin bootstrap, the API half.
+  - workflowId: admin-bootstrap
+    summary: An administrator creates a scope, a scoped agent identity and a human, then reads the key set and the status
+    description: >-
+      The host half (enrollment create, admins add) has no HTTP operation and
+      runs before this workflow; the administrator's bearer comes from
+      register-and-login. The administrator creates a scope, a scoped agent
+      identity in it (the result carries a one-time enrollment token), a human
+      identity by email, lists the signing keys and reads the admin status.
+    dependsOn: [register-and-login]
+    inputs:
+      type: object
+      required: [admin_bearer, scope, agent_name, human_email]
+      properties:
+        admin_bearer:
+          type: string
+          description: The bearer of an identity on the admins list.
+        scope:
+          type: string
+          description: A scope name unique to this run; no other scope's prefix may nest with it.
+        agent_name:
+          type: string
+          description: The scoped agent's name, <scope>-<rest>.
+        human_email:
+          type: string
+          description: The human's email; the identity is the email.
+    steps:
+      - stepId: create-scope
+        description: Create the scope.
+        operationId: createScope
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.scope
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/state == "open"
+        outputs:
+          name: $response.body#/name
+      - stepId: create-agent-identity
+        description: Create a scoped agent identity; the result carries its one-time enrollment token.
+        operationId: createAgentIdentity
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.agent_name
+            scope: $inputs.scope
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/created == true
+        outputs:
+          identity: $response.body#/identity
+          enrollment_token: $response.body#/enrollment_token
+      - stepId: create-human
+        description: Create a human identity by email.
+        operationId: createIdentityByEmail
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            email: $inputs.human_email
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/created == true
+        outputs:
+          identity: $response.body#/identity
+      - stepId: list-signing-keys
+        description: The token signing key set, the active key first.
+        operationId: listSigningKeys
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/keys/0/state == "active"
+      - stepId: admin-status
+        description: The administrator's status document.
+        operationId: adminStatus
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+    outputs:
+      scope: $steps.create-scope.outputs.name
+      agent_identity: $steps.create-agent-identity.outputs.identity
+      agent_enrollment_token: $steps.create-agent-identity.outputs.enrollment_token
+      human_identity: $steps.create-human.outputs.identity
+
+  # J6: Search and history.
+  - workflowId: search-history
+    summary: Seed a channel, read its history and search it
+    description: >-
+      An agent creates a channel, sends a message to it, reads the channel's
+      history and searches the channels it may read for the message's words.
+      The seed is this workflow's own message (not J2's in general), so the
+      history's first row is deterministic.
+    dependsOn: [send-receive-ack]
+    inputs:
+      type: object
+      required: [bearer, channel]
+      properties:
+        bearer:
+          type: string
+        channel:
+          type: string
+          description: A channel name unique to this run.
+    steps:
+      - stepId: create-channel
+        description: Create the channel.
+        operationId: createChannel
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.channel
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/kind == "ordinary"
+      - stepId: seed
+        description: Send the message the history and the search find.
+        operationId: sendMessage
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            subject: arazzo search
+            content: the quick arazzo fox jumps
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          seq: $response.body#/seq
+      - stepId: history
+        description: The channel's history holds the message.
+        operationId: history
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: count
+            in: query
+            value: 10
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/subject == "arazzo search"
+          - condition: $response.body#/0/content == "the quick arazzo fox jumps"
+      - stepId: search
+        description: Text search for the message's words, within the channel.
+        operationId: search
+        parameters:
+          - name: q
+            in: query
+            value: arazzo fox
+          - name: mode
+            in: query
+            value: text
+          - name: channel
+            in: query
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/hits/0/message/content == "the quick arazzo fox jumps"
+    outputs:
+      seq: $steps.seed.outputs.seq
+
+  # J7: Agent status board.
+  - workflowId: agent-status
+    summary: Set a status in a session, list the board, read one identity's history
+    description: >-
+      An agent opens a session, sets its one-line status (the server validates
+      the tag), lists every identity's status and reads its own status
+      history, then closes the session.
+    dependsOn: [send-receive-ack]
+    inputs:
+      type: object
+      required: [bearer, identity]
+      properties:
+        bearer:
+          type: string
+        identity:
+          type: string
+          description: The agent's own identity, whose history is read.
+    steps:
+      - stepId: open-session
+        description: Open a session.
+        operationId: openSession
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload: {}
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          session: $response.body#/id
+      - stepId: set-status
+        description: Set the status.
+        operationId: setAgentStatus
+        parameters:
+          - name: session
+            in: path
+            value: $steps.open-session.outputs.session
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            tag: implementing
+            text: writing the arazzo workflows
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/tag == "implementing"
+          - condition: $response.body#/text == "writing the arazzo workflows"
+        outputs:
+          revision: $response.body#/revision
+      - stepId: list-statuses
+        description: Every identity's status.
+        operationId: listAgentStatuses
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+      - stepId: status-history
+        description: The agent's own status history.
+        operationId: agentStatusHistory
+        parameters:
+          - name: identity
+            in: path
+            value: $inputs.identity
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/tag == "implementing"
+          - condition: $response.body#/0/text == "writing the arazzo workflows"
+      - stepId: close-session
+        description: Close the session.
+        operationId: closeSession
+        parameters:
+          - name: session
+            in: path
+            value: $steps.open-session.outputs.session
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 204
+    outputs:
+      revision: $steps.set-status.outputs.revision
+
+  # J8: Channel access management.
+  - workflowId: channel-access
+    summary: Create a channel with an ACL, read and replace it, a peer subscribes, rename, unsubscribe, delete
+    description: >-
+      A creator makes a channel with an ACL naming itself (read, write,
+      admin; there is no implicit creator entry) and a peer (read), reads the
+      ACL, replaces it to give the peer write, the peer subscribes and lists
+      its channels, the creator renames the channel, the peer unsubscribes
+      from the new name and the creator deletes it.
+    dependsOn: [register-and-login]
+    inputs:
+      type: object
+      required: [bearer, identity, peer_bearer, peer_identity, channel, new_name]
+      properties:
+        bearer:
+          type: string
+          description: The creator's bearer.
+        identity:
+          type: string
+          description: The creator's identity, named in the ACL with admin.
+        peer_bearer:
+          type: string
+          description: The peer's bearer.
+        peer_identity:
+          type: string
+          description: The peer's identity (registered), named in the ACL.
+        channel:
+          type: string
+          description: A channel name unique to this run.
+        new_name:
+          type: string
+          description: The channel's name after the rename, unique to this run.
+    steps:
+      - stepId: create-channel
+        description: Create the channel with an explicit ACL.
+        operationId: createChannel
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.channel
+            acl:
+              - identity: $inputs.identity
+                permissions: [read, write, admin]
+              - identity: $inputs.peer_identity
+                permissions: [read]
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/kind == "ordinary"
+      - stepId: get-acl
+        description: Read the ACL (entries in insertion order).
+        operationId: getACL
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/permissions/2 == "admin"
+          - condition: $response.body#/1/permissions/0 == "read"
+      - stepId: set-acl
+        description: Replace the ACL, giving the peer write and keeping the creator's admin.
+        operationId: setACL
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            - identity: $inputs.identity
+              permissions: [read, write, admin]
+            - identity: $inputs.peer_identity
+              permissions: [read, write]
+        successCriteria:
+          - condition: $statusCode == 204
+      - stepId: get-acl-again
+        description: The peer's entry now carries write.
+        operationId: getACL
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/1/permissions/1 == "write"
+      - stepId: peer-subscribe
+        description: The peer subscribes from now.
+        operationId: subscribe
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.peer_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            from: now
+        successCriteria:
+          - condition: $statusCode == 204
+      - stepId: peer-list-channels
+        description: The peer lists the channels it may see.
+        operationId: listChannels
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.peer_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+      - stepId: rename
+        description: The creator renames the channel.
+        operationId: renameChannel
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.new_name
+        successCriteria:
+          - condition: $statusCode == 204
+      - stepId: peer-unsubscribe
+        description: The peer unsubscribes from the renamed channel.
+        operationId: unsubscribe
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.new_name
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.peer_bearer}"
+        successCriteria:
+          - condition: $statusCode == 204
+      - stepId: delete
+        description: The creator deletes the channel.
+        operationId: deleteChannel
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.new_name
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 204
+
+  # J9, the outbound half: a bridge on a scoped channel.
+  - workflowId: bridges
+    summary: Bridge a scoped channel to Slack, list and get the bridge, send a message outbound
+    description: >-
+      An administrator creates a channel in an open scope with a named-only
+      ACL granting itself and the human read and write (neither action has an
+      administrator-flag bypass), bridges it to a private Slack channel,
+      lists and gets the bridge (state live) and sends a message the bridge
+      posts to Slack. The test that runs this document waits for the post to
+      reach Slack, injects the Slack user's reply and then runs
+      bridges-inbound-remove. Runs only against a server with the Slack
+      bridge wired; without it every bridges operation is 503 unavailable.
+    dependsOn: [admin-bootstrap]
+    inputs:
+      type: object
+      required: [admin_bearer, admin_identity, scope, channel, slack_name, human_identity]
+      properties:
+        admin_bearer:
+          type: string
+        admin_identity:
+          type: string
+          description: The administrator's identity, named in the ACL.
+        scope:
+          type: string
+          description: The open scope (from admin-bootstrap).
+        channel:
+          type: string
+          description: The channel to bridge, named <scope>-<rest>, unique to this run.
+        slack_name:
+          type: string
+          description: The private Slack channel's name.
+        human_identity:
+          type: string
+          description: The human (from admin-bootstrap) whose Slack account the bridge invites and whose messages come inbound.
+    steps:
+      - stepId: create-channel
+        description: The scoped channel with a named-only ACL.
+        operationId: createChannel
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.channel
+            scope: $inputs.scope
+            acl:
+              - identity: $inputs.admin_identity
+                permissions: [read, write]
+              - identity: $inputs.human_identity
+                permissions: [read, write]
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/kind == "ordinary"
+      - stepId: create-bridge
+        description: Bridge the channel; the bridge creates the private Slack channel and invites the human.
+        operationId: createBridge
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            channel: $inputs.channel
+            slack_name: $inputs.slack_name
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/bridge/state == "live"
+        outputs:
+          slack_channel_id: $response.body#/bridge/slack_channel_id
+      - stepId: list-bridges
+        description: The bridge is listed live.
+        operationId: listBridges
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/bridges/0/state == "live"
+      - stepId: get-bridge
+        description: Get the bridge.
+        operationId: getBridge
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/state == "live"
+      - stepId: send-outbound
+        description: A message the bridge posts to Slack.
+        operationId: sendMessage
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            content: hello slack from arazzo
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          seq: $response.body#/seq
+    outputs:
+      slack_channel_id: $steps.create-bridge.outputs.slack_channel_id
+      seq: $steps.send-outbound.outputs.seq
+
+  # J9, the inbound half and the removal.
+  - workflowId: bridges-inbound-remove
+    summary: The Slack reply is in the channel's history as the human's; remove the bridge
+    description: >-
+      After the test injects the Slack user's message "hello bus from slack"
+      into the bridged Slack channel and waits for it to land, the channel's
+      history after the outbound message holds it with sender_kind human; the
+      administrator removes the bridge (the Slack channel is archived and the
+      bridge row deleted), so a get afterwards is not_found.
+    dependsOn: [bridges]
+    inputs:
+      type: object
+      required: [admin_bearer, channel, after]
+      properties:
+        admin_bearer:
+          type: string
+        channel:
+          type: string
+          description: The bridged channel (the bridges workflow's channel input).
+        after:
+          type: integer
+          description: The seq of the outbound message (the bridges workflow's seq output).
+    steps:
+      - stepId: history
+        description: The one message after the outbound one is the human's reply from Slack.
+        operationId: history
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: after
+            in: query
+            value: $inputs.after
+          - name: count
+            in: query
+            value: 1
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/0/content == "hello bus from slack"
+          - condition: $response.body#/0/sender_kind == "human"
+      - stepId: remove-bridge
+        description: Remove the bridge.
+        operationId: removeBridge
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 204
+      - stepId: get-bridge-after-remove
+        description: The channel has no bridge any more.
+        operationId: getBridge
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 404
+          - condition: $response.body#/code == "not_found"
+
+  # J10: Signing key rotation.
+  - workflowId: signing-key-rotation
+    summary: List the signing key set, rotate it revoking the previous key, log in again and list
+    description: >-
+      An administrator lists the token signing key set, rotates it revoking
+      the previous key (the e2e servers' active key is younger than the
+      rotation cooldown, so a plain rotation would be conflict; a revoking
+      rotation is exempt), exchanges a fresh client assertion for a bearer
+      signed by the new key (every bearer the revoked key signed stops
+      verifying at once, including the administrator's) and lists the key set
+      again. Run it last on its server: the bearers of every earlier workflow
+      die with the revoked key.
+    dependsOn: [register-and-login]
+    inputs:
+      type: object
+      required: [admin_bearer, client_assertion]
+      properties:
+        admin_bearer:
+          type: string
+          description: The administrator's bearer, signed by the key about to be revoked.
+        client_assertion:
+          type: string
+          description: A fresh client assertion for the administrator (a client assertion is single-use).
+    steps:
+      - stepId: list-signing-keys
+        description: The key set before the rotation, the active key first.
+        operationId: listSigningKeys
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/keys/0/state == "active"
+        outputs:
+          kid: $response.body#/keys/0/kid
+      - stepId: rotate
+        description: Rotate, revoking the previous key.
+        operationId: rotateSigningKey
+        parameters:
+          - name: revoke_previous
+            in: query
+            value: true
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.admin_bearer}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/revoked == true
+          - condition: $response.body#/active/state == "active"
+        outputs:
+          kid: $response.body#/active/kid
+      - stepId: token
+        description: A bearer signed by the new key.
+        operationId: token
+        requestBody:
+          contentType: application/x-www-form-urlencoded
+          payload:
+            grant_type: client_credentials
+            client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+            client_assertion: $inputs.client_assertion
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/token_type == "Bearer"
+        outputs:
+          access_token: $response.body#/access_token
+      - stepId: list-again
+        description: The key set after the rotation, read with the new bearer.
+        operationId: listSigningKeys
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$steps.token.outputs.access_token}"
+        successCriteria:
+          - condition: $statusCode == 200
+          - condition: $response.body#/keys/0/state == "active"
+    outputs:
+      previous_kid: $steps.list-signing-keys.outputs.kid
+      active_kid: $steps.rotate.outputs.kid
+      access_token: $steps.token.outputs.access_token
