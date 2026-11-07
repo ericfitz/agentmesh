@@ -450,14 +450,25 @@ func TestDefaultClientDoesNotFollowRedirects(t *testing.T) {
 // a refusal cannot exist outside the list the fixtures are checked against.
 func TestRefusalsTieToSource(t *testing.T) {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	names, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var files []*ast.File
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, file)
+	}
 	consts := map[string]string{} // name -> value
 	var calls int
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
+	{
+		for _, file := range files {
 			ast.Inspect(file, func(n ast.Node) bool {
 				switch x := n.(type) {
 				case *ast.ValueSpec:
