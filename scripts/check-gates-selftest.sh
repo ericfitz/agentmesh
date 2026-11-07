@@ -298,6 +298,7 @@ block_inproc_crosses_the_wire() {
 deps_probe() {
 	local label="$1" file="$2" import="$3" want="$4" script="${5:-m4-exit-checks.sh}" log="$tmp/b12.log" rc=0 pkgname
 	pkgname="$(basename "$(dirname "$file")")"
+	case "$file" in cmd/*) pkgname=main ;; esac # a command directory holds package main
 	printf 'package %s\n\nimport _ "%s"\n' "$pkgname" "$import" >"$wt/$file"
 	bash "$wt/scripts/$script" --deps-only >"$log" 2>&1 || rc=$?
 	if [ "$rc" -ne 1 ]; then
@@ -685,6 +686,8 @@ block_m6_exit_script_fires() {
 	deps_probe "$label" internal/tui/probe_m6.go "$m/internal/gen" "deps_violation=$m/internal/tui imports $m/internal/gen" m6-exit-checks.sh
 	deps_probe "$label" internal/tui/probe_m6.go "$m/internal/store/sqlite" "deps_violation=$m/internal/tui imports $m/internal/store/sqlite" m6-exit-checks.sh
 	deps_probe "$label" internal/tui/probe_m6.go "$m/internal/bus/local" "deps_violation=$m/internal/tui imports $m/internal/bus/local" m6-exit-checks.sh
+	deps_probe "$label" internal/mcpcli/probe_m6.go "$m/internal/store" "deps_violation=$m/internal/mcpcli imports $m/internal/store" m6-exit-checks.sh
+	deps_probe "$label" cmd/agentmesh-mcponly/probe_m6.go "$m/internal/gen" "deps_violation=$m/cmd/agentmesh-mcponly imports $m/internal/gen" m6-exit-checks.sh
 	rc=0
 	bash "$wt/scripts/m6-exit-checks.sh" "$tmp/does-not-exist.log" >"$log" 2>&1 || rc=$?
 	if [ "$rc" -ne 2 ]; then problem "$label" "missing log: exit $rc, expected 2"; fi

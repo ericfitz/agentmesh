@@ -25,7 +25,8 @@
 #              ./internal/procs ./internal/sessionstate
 #       must not import internal/core, internal/server, internal/bus/local or
 #       internal/store/{sqlite,postgres,sqlstore}
-#   consumer group ./internal/mcpserver ./internal/mcpcli ./internal/cli ./internal/tui
+#   consumer group ./internal/mcpserver ./internal/mcpcli ./cmd/agentmesh-mcponly
+#              ./internal/cli ./internal/tui
 #       obtain a Bus only from internal/client (client.Open, Conn): must not
 #       import internal/core/..., internal/server/..., internal/store/...,
 #       internal/gen/... or internal/bus/local (issue #29; internal/tui is also
@@ -79,7 +80,7 @@ check_group() {
 import_check() {
 	check_group './internal/profile ./internal/repoconfig ./internal/credential ./internal/procs ./internal/sessionstate' \
 		"^$MOD/internal/(core|server)(/|\$)|^$MOD/internal/bus/local\$|^$MOD/internal/store/(sqlite|postgres|sqlstore)(/|\$)"
-	check_group './internal/mcpserver ./internal/mcpcli ./internal/cli ./internal/tui' \
+	check_group './internal/mcpserver ./internal/mcpcli ./cmd/agentmesh-mcponly ./internal/cli ./internal/tui' \
 		"^$MOD/internal/(core|server|store|gen)(/|\$)|^$MOD/internal/bus/local\$"
 	check_group './internal/client' \
 		"^$MOD/internal/(core|server)(/|\$)|^$MOD/internal/bus/local\$|^$MOD/internal/store/(sqlite|postgres|sqlstore)(/|\$)" \
