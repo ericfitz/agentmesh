@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -340,6 +341,44 @@ func TestSpecBounds(t *testing.T) {
 		for k := range bounds {
 			if _, ok := leaves[k]; !ok {
 				t.Errorf("row %q matches no bounded field of the spec", k)
+			}
+		}
+	})
+
+	// Every row has a core probe in the Bus suite (TestOverBoundRefused) or a
+	// reasoned exception: internal/conformance/bus/testdata/core_bound_rows.txt
+	// lists them, and this keeps its rows equal to the table's. That suite
+	// cannot import this package, so the file is the one shared record; the
+	// suite checks that each probe line names a case that exists.
+	t.Run("core_probes", func(t *testing.T) {
+		raw, err := os.ReadFile("../conformance/bus/testdata/core_bound_rows.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		listed := map[string]string{}
+		for i, line := range strings.Split(string(raw), "\n") {
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			kind, rest, _ := strings.Cut(line, " ")
+			row, tail, _ := strings.Cut(rest, " ")
+			if (kind != "probe" && kind != "except") || row == "" || strings.TrimSpace(tail) == "" {
+				t.Errorf("core_bound_rows.txt:%d: want \"probe|except <row> <case or reason>\", got %q", i+1, line)
+				continue
+			}
+			if _, dup := listed[row]; dup {
+				t.Errorf("core_bound_rows.txt:%d: row %s listed twice", i+1, row)
+			}
+			listed[row] = kind
+		}
+		for k := range bounds {
+			if _, ok := listed[k]; !ok {
+				t.Errorf("row %s has no probe line and no exception in core_bound_rows.txt", k)
+			}
+		}
+		for k := range listed {
+			if _, ok := bounds[k]; !ok {
+				t.Errorf("core_bound_rows.txt lists %s, which has no row in bounds", k)
 			}
 		}
 	})

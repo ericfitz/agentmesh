@@ -1,0 +1,118 @@
+# Core bound probes (issue #34). Read by TestOverBoundRefused/coverage (internal/conformance/bus)
+# and by TestSpecBounds/core_probes (internal/server); keep it in step with the `bounds` table of
+# internal/server/spec_bounds_test.go.
+#
+# probe <row key> <TestOverBoundRefused case name>: the Bus suite sends the row's field one over its bound.
+# except <row key> <reason>: no probe is possible on the local transport.
+probe operations/agentStatusHistory/path/identity status_history_identity_bytes
+probe operations/history/query/after history_after_negative
+probe operations/history/query/before history_before_negative
+probe operations/history/query/count history_count_ceiling
+probe operations/history/query/tags history_tags_items
+probe operations/history/query/tags[] history_pattern_len
+probe operations/history/query/thread history_thread_zero
+probe operations/listTasks/query/owner list_tasks_owner_bytes
+probe operations/listTasks/query/status list_tasks_status_runes
+probe operations/resetCredential/path/identity reset_credential_identity_bytes
+probe operations/search/query/channel search_channel_bytes
+probe operations/search/query/count search_count_ceiling
+probe operations/search/query/cursor search_cursor_len
+probe operations/search/query/q search_query_runes
+probe operations/search/query/sender search_sender_bytes
+probe operations/search/query/since search_since_negative
+probe operations/search/query/tags search_tags_items
+probe operations/search/query/tags[] search_pattern_len
+probe operations/search/query/thread search_thread_zero
+probe operations/search/query/until search_until_negative
+probe operations/setACL/body set_acl_items
+probe operations/unsubscribeTags/query/pattern unsubscribe_tags_items
+probe operations/unsubscribeTags/query/pattern[] unsubscribe_tags_pattern_len
+probe operations/watch/query/after watch_after_negative
+probe operations/watch/query/timeout watch_timeout_ceiling
+probe parameters/ChannelParam send_channel_bytes
+probe parameters/IdParam memory_id_negative
+probe parameters/IdempotencyKeyParam idempotency_key_bytes
+probe parameters/ScopeParam scope_get_name_bytes
+probe parameters/SessionParam watch_session_bytes
+probe schemas/ACLEntry.identity acl_identity_bytes
+probe schemas/ACLEntry.permissions acl_permissions_items
+probe schemas/ClaimTaskRequest.leased_until claim_leased_until_negative
+probe schemas/CreateAgentIdentityRequest.name create_agent_identity_name_bytes
+probe schemas/CreateAgentIdentityRequest.scope create_agent_identity_scope_bytes
+probe schemas/CreateChannelRequest.acl create_channel_acl_items
+probe schemas/CreateChannelRequest.name create_channel_name_bytes
+probe schemas/CreateChannelRequest.scope create_channel_scope_bytes
+probe schemas/CreateIdentityByEmailRequest.email create_identity_email_bytes
+probe schemas/CreateScopeRequest.name create_scope_name_bytes
+probe schemas/EditMemoryRequest.content edit_memory_content_envelope
+probe schemas/EditMemoryRequest.if_revision edit_memory_if_revision_negative
+probe schemas/EditMemoryRequest.metadata edit_memory_metadata_keys
+probe schemas/EditMemoryRequest.metadata.<key> edit_memory_metadata_value_runes
+probe schemas/EditMemoryRequest.subject edit_memory_subject_runes
+probe schemas/EditMemoryRequest.tags edit_memory_tags_items
+probe schemas/EditMemoryRequest.tags[] edit_memory_tag_len
+probe schemas/EditMemoryRequest.type edit_memory_type_runes
+probe schemas/OfferedCursor.channel open_cursor_channel_bytes
+probe schemas/OfferedCursor.seq open_cursor_seq_negative
+probe schemas/OpenSessionRequest.cursors open_cursors_items
+probe schemas/OpenSessionRequest.hint open_hint_bytes
+probe schemas/OpenSessionRequest.resume_token open_resume_token_shape
+probe schemas/ReceiveRequest.ack receive_ack_bytes
+probe schemas/ReceiveRequest.channels receive_channels_items
+probe schemas/ReceiveRequest.channels[] receive_channel_name_bytes
+probe schemas/ReceiveRequest.count receive_count_ceiling
+probe schemas/RenameChannelRequest.name rename_name_bytes
+probe schemas/SendRequest.content send_content_envelope
+probe schemas/SendRequest.metadata send_metadata_keys
+probe schemas/SendRequest.metadata.<key> send_metadata_value_runes
+probe schemas/SendRequest.reply_to send_reply_to_negative
+probe schemas/SendRequest.session send_session_bytes
+probe schemas/SendRequest.subject send_subject_runes
+probe schemas/SendRequest.tags send_tags_items
+probe schemas/SendRequest.tags[] send_tag_len
+probe schemas/SendRequest.type send_type_runes
+probe schemas/SetAgentStatusRequest.problem status_problem_runes
+probe schemas/SetAgentStatusRequest.tag status_tag_runes
+probe schemas/SetAgentStatusRequest.text status_text_runes
+probe schemas/TagPatterns.patterns subscribe_tags_items
+probe schemas/TagPatterns.patterns[] subscribe_tags_pattern_len
+probe schemas/TaskCreateRequest.after task_after_negative
+probe schemas/TaskCreateRequest.before task_before_negative
+probe schemas/TaskCreateRequest.blocked_by task_blockers_items
+probe schemas/TaskCreateRequest.blocked_by[] task_blocker_id_negative
+probe schemas/TaskCreateRequest.description task_description_envelope
+probe schemas/TaskCreateRequest.metadata task_metadata_keys
+probe schemas/TaskCreateRequest.metadata.<key> task_metadata_value_runes
+probe schemas/TaskCreateRequest.parent task_parent_negative
+probe schemas/TaskCreateRequest.subject task_subject_runes
+probe schemas/TaskPatch.add_blocked_by task_patch_add_blockers_items
+probe schemas/TaskPatch.add_blocked_by[] task_patch_add_blocker_id_negative
+probe schemas/TaskPatch.after task_patch_after_negative
+probe schemas/TaskPatch.before task_patch_before_negative
+probe schemas/TaskPatch.description task_patch_description_envelope
+probe schemas/TaskPatch.leased_until task_leased_until_negative
+probe schemas/TaskPatch.metadata task_patch_metadata_merged
+probe schemas/TaskPatch.metadata.<key> task_patch_metadata_value_runes
+probe schemas/TaskPatch.owner task_owner_bytes
+probe schemas/TaskPatch.parent task_patch_parent_negative
+probe schemas/TaskPatch.remove_blocked_by task_patch_remove_blockers_items
+probe schemas/TaskPatch.remove_blocked_by[] task_patch_remove_blocker_id_negative
+probe schemas/TaskPatch.status task_status_runes
+probe schemas/TaskPatch.subject task_patch_subject_runes
+except schemas/CreateBridgeRequest.channel CreateBridge answers unavailable on a harness with no bridge wired, so the bound check is unreachable on the local transport
+except schemas/CreateBridgeRequest.slack_name CreateBridge answers unavailable on a harness with no bridge wired, so the bound check is unreachable on the local transport
+except schemas/JWK registration is not a Bus method; only the handler registers a key (TestRegisterRefusesWideJWK covers it)
+except schemas/RegisterRequest.enrollment_token registration is not a Bus method (TestRegisterEnrollmentTokenBound covers the core service)
+except schemas/RegisterRequest.identity registration is not a Bus method; the handler is the only path
+except schemas/TokenRequest.actor_token the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.actor_token_type the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.audience the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.client_assertion the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.client_assertion_type the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.client_id the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.grant_type the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.requested_token_type the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.resource the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.scope the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.subject_token the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)
+except schemas/TokenRequest.subject_token_type the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)

@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -173,8 +174,8 @@ func TestOverBoundRefused(t *testing.T) {
 			{"send_session_bytes", send(ab2bus.SendInput{Session: long(1025)}), "at most 1024 bytes"},
 			{"history_count_ceiling", history(ab2bus.HistoryInput{Count: 10001}), "at most 10000"},
 			{"history_after_negative", history(ab2bus.HistoryInput{After: boundsPtr(int64(-1))}), "must not be negative"},
-			{"history_tags_items", history(ab2bus.HistoryInput{Tags: boundsTags(11)}), ""},
-			{"history_pattern_len", history(ab2bus.HistoryInput{Tags: []string{long(34)}}), ""},
+			{"history_tags_items", history(ab2bus.HistoryInput{Tags: boundsTags(11)}), "at most 10 tag patterns"},
+			{"history_pattern_len", history(ab2bus.HistoryInput{Tags: []string{long(34)}}), "1-32 character tag prefix"},
 			{"search_query_runes", search(ab2bus.SearchInput{Query: boundsRep("a", 1025)}), "at most 1024 characters"},
 			{"search_count_ceiling", search(ab2bus.SearchInput{Count: 1001}), "at most 1000"},
 			{"search_cursor_len", search(ab2bus.SearchInput{Cursor: boundsRep("9", 20)}), "invalid cursor"},
@@ -190,7 +191,7 @@ func TestOverBoundRefused(t *testing.T) {
 				_, err := b.Create(ctx, ab2bus.TaskCreateInput{Channel: "work"})
 				return err
 			}, "1-256 characters"},
-			{"task_description_envelope", create(ab2bus.TaskCreateInput{Description: boundsRep("d", over)}), ""},
+			{"task_description_envelope", create(ab2bus.TaskCreateInput{Description: boundsRep("d", over)}), "envelope exceeds max_message_kib"},
 			{"task_metadata_keys", create(ab2bus.TaskCreateInput{Metadata: boundsKeys(33)}), "at most 32"},
 			{"task_patch_metadata_merged", update(ab2bus.TaskPatch{Metadata: func() map[string]string {
 				m := map[string]string{}
@@ -231,10 +232,10 @@ func TestOverBoundRefused(t *testing.T) {
 			}, "1-128 bytes"},
 			{"subscribe_tags_items", func(ctx context.Context, b ab2bus.Bus) error {
 				return b.SubscribeTags(ctx, ab2bus.TagSubscribeInput{Patterns: boundsTags(11)})
-			}, ""},
+			}, "at most 10 tag patterns"},
 			{"subscribe_tags_pattern_len", func(ctx context.Context, b ab2bus.Bus) error {
 				return b.SubscribeTags(ctx, ab2bus.TagSubscribeInput{Patterns: []string{long(34)}})
-			}, ""},
+			}, "1-32 character tag prefix"},
 			{"status_text_runes", status(ab2bus.SetAgentStatusInput{Text: boundsRep("a", 201)}), "at most 200 characters"},
 			{"status_problem_runes", status(ab2bus.SetAgentStatusInput{Problem: boundsRep("a", 201)}), "at most 200 characters"},
 			{"status_tag_runes", status(ab2bus.SetAgentStatusInput{Tag: ab2bus.StatusTag(boundsRep("t", 257))}), "at most 256 characters"},
@@ -266,7 +267,97 @@ func TestOverBoundRefused(t *testing.T) {
 				_, err := b.CreateChannel(ctx, ab2bus.CreateChannelInput{Name: "idem", IdempotencyKey: long(1025)})
 				return err
 			}, "at most 1024 bytes"},
+			{"open_hint_bytes", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.Open(ctx, ab2bus.OpenSessionInput{Hint: long(129)})
+				return err
+			}, "1-128 bytes"},
+			{"receive_channel_name_bytes", receive(ab2bus.ReceiveInput{Channels: []string{long(129)}}), "1-128 bytes"},
+			{"search_sender_bytes", search(ab2bus.SearchInput{Sender: long(129)}), "1-128 bytes"},
+			{"search_until_negative", search(ab2bus.SearchInput{Until: boundsPtr(int64(-1))}), "must not be negative"},
+			{"search_tags_items", search(ab2bus.SearchInput{Tags: boundsTags(11)}), "at most 10 tag patterns"},
+			{"search_pattern_len", search(ab2bus.SearchInput{Tags: []string{long(34)}}), "1-32 character tag prefix"},
+			{"history_before_negative", history(ab2bus.HistoryInput{Before: boundsPtr(int64(-1))}), "must not be negative"},
+			{"history_thread_zero", history(ab2bus.HistoryInput{Thread: boundsPtr(int64(0))}), "at least 1"},
+			{"list_tasks_status_runes", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.List(ctx, ab2bus.TaskListInput{Channel: "work", Status: boundsRep("s", 257)})
+				return err
+			}, "at most 256 characters"},
+			{"set_acl_items", func(ctx context.Context, b ab2bus.Bus) error {
+				return b.SetACL(ctx, ab2bus.SetACLInput{Channel: "dev", Entries: acl(257)})
+			}, "at most 256"},
+			{"unsubscribe_tags_items", func(ctx context.Context, b ab2bus.Bus) error {
+				return b.UnsubscribeTags(ctx, ab2bus.TagSubscribeInput{Patterns: boundsTags(11)})
+			}, "at most 10 tag patterns"},
+			{"unsubscribe_tags_pattern_len", func(ctx context.Context, b ab2bus.Bus) error {
+				return b.UnsubscribeTags(ctx, ab2bus.TagSubscribeInput{Patterns: []string{long(34)}})
+			}, "1-32 character tag prefix"},
+			{"send_content_envelope", send(ab2bus.SendInput{Content: boundsRep("d", over)}), "envelope exceeds max_message_kib"},
+			{"edit_memory_content_envelope", edit(ab2bus.EditMemoryInput{Content: boundsPtr(boundsRep("d", over))}), "envelope exceeds max_message_kib"},
+			{"edit_memory_if_revision_negative", edit(ab2bus.EditMemoryInput{IfRevision: -1}), "if_revision must be positive"},
+			{"edit_memory_tags_items", edit(ab2bus.EditMemoryInput{Tags: boundsTags(11)}), "at most 10 tags"},
+			{"edit_memory_tag_len", edit(ab2bus.EditMemoryInput{Tags: []string{long(33)}}), "must be 1-32 characters"},
+			{"edit_memory_metadata_value_runes", edit(ab2bus.EditMemoryInput{Metadata: boundsPtr(map[string]string{"k": boundsRep("v", 1025)})}), "at most 1024 characters"},
+			{"task_before_negative", create(ab2bus.TaskCreateInput{Before: -1}), "must not be negative"},
+			{"task_after_negative", create(ab2bus.TaskCreateInput{After: -1}), "must not be negative"},
+			{"task_blocker_id_negative", create(ab2bus.TaskCreateInput{BlockedBy: []int64{-1}}), "must not be negative"},
+			{"task_metadata_value_runes", create(ab2bus.TaskCreateInput{Metadata: map[string]string{"k": boundsRep("v", 1025)}}), "at most 1024 characters"},
+			{"task_patch_subject_runes", update(ab2bus.TaskPatch{Subject: boundsPtr(boundsRep("a", 257))}), "1-256 characters"},
+			{"task_patch_description_envelope", update(ab2bus.TaskPatch{Description: boundsPtr(boundsRep("d", over))}), "envelope exceeds max_message_kib"},
+			{"task_patch_parent_negative", update(ab2bus.TaskPatch{Parent: boundsPtr(int64(-1))}), "must not be negative"},
+			{"task_patch_before_negative", update(ab2bus.TaskPatch{Before: -1}), "must not be negative"},
+			{"task_patch_after_negative", update(ab2bus.TaskPatch{After: -1}), "must not be negative"},
+			{"task_patch_add_blockers_items", update(ab2bus.TaskPatch{AddBlockedBy: boundsIDs(65)}), "at most 64"},
+			{"task_patch_add_blocker_id_negative", update(ab2bus.TaskPatch{AddBlockedBy: []int64{-1}}), "must not be negative"},
+			{"task_patch_remove_blockers_items", update(ab2bus.TaskPatch{RemoveBlockedBy: boundsIDs(65)}), "at most 64"},
+			{"task_patch_remove_blocker_id_negative", update(ab2bus.TaskPatch{RemoveBlockedBy: []int64{-1}}), "must not be negative"},
+			{"task_patch_metadata_value_runes", update(ab2bus.TaskPatch{Metadata: map[string]string{"k": boundsRep("v", 1025)}}), "at most 1024 characters"},
+			{"claim_leased_until_negative", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.Claim(ctx, ab2bus.TaskClaimInput{ID: task16.ID, LeasedUntil: -1})
+				return err
+			}, "must not be negative"},
+			{"create_channel_scope_bytes", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := admin.CreateChannel(ctx, ab2bus.CreateChannelInput{Name: "scoped1", Scope: long(129)})
+				return err
+			}, "must be 1-128 bytes"},
+			{"create_scope_name_bytes", func(ctx context.Context, _ ab2bus.Bus) error {
+				_, err := admin.CreateScope(ctx, ab2bus.CreateScopeInput{Name: long(129)})
+				return err
+			}, "must be 1-128 bytes"},
+			{"create_agent_identity_name_bytes", func(ctx context.Context, _ ab2bus.Bus) error {
+				_, err := admin.CreateAgentIdentity(ctx, ab2bus.CreateAgentIdentityInput{Name: long(129)})
+				return err
+			}, "must be 1-128 bytes"},
+			{"create_agent_identity_scope_bytes", func(ctx context.Context, _ ab2bus.Bus) error {
+				_, err := admin.CreateAgentIdentity(ctx, ab2bus.CreateAgentIdentityInput{Name: "scoped-agent", Scope: long(129)})
+				return err
+			}, "must be 1-128 bytes"},
+			{"create_identity_email_bytes", func(ctx context.Context, _ ab2bus.Bus) error {
+				_, err := admin.CreateIdentityByEmail(ctx, ab2bus.CreateIdentityByEmailInput{Email: long(127) + "@c"})
+				return err
+			}, "must be 1-128 bytes"},
+			{"reset_credential_identity_bytes", func(ctx context.Context, _ ab2bus.Bus) error {
+				_, err := admin.ResetCredential(ctx, ab2bus.ResetCredentialInput{Identity: long(129)})
+				return err
+			}, "1-128 bytes"},
 		}
+		// coverage: every row the file lists as probed names a case that
+		// exists; the case names are unique, so a renamed or dropped case
+		// fails here, and a row with no case fails the server's check.
+		t.Run("coverage", func(t *testing.T) {
+			names := map[string]bool{}
+			for _, tc := range cases {
+				if names[tc.name] {
+					t.Errorf("case %q is listed twice", tc.name)
+				}
+				names[tc.name] = true
+			}
+			probes, _ := coreBoundRows(t)
+			for row, name := range probes {
+				if !names[name] {
+					t.Errorf("row %s: probe case %q does not exist", row, name)
+				}
+			}
+		})
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				err := tc.call(ctx, b)
@@ -280,6 +371,45 @@ func TestOverBoundRefused(t *testing.T) {
 			})
 		}
 	})
+}
+
+// coreBoundRows is testdata/core_bound_rows.txt: the bounds rows of
+// internal/server/spec_bounds_test.go, each with the case of
+// TestOverBoundRefused that probes it or the reason none can. The server's
+// TestSpecBounds/core_probes keeps the file's rows equal to the table's.
+func coreBoundRows(t *testing.T) (probes map[string]string, excepts map[string]string) {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/core_bound_rows.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	probes, excepts = map[string]string{}, map[string]string{}
+	for i, line := range strings.Split(string(raw), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		kind, rest, _ := strings.Cut(line, " ")
+		row, tail, _ := strings.Cut(rest, " ")
+		if row == "" || tail == "" {
+			t.Fatalf("core_bound_rows.txt:%d: want %q <row> <text>, got %q", i+1, kind, line)
+		}
+		var into map[string]string
+		switch kind {
+		case "probe":
+			into = probes
+		case "except":
+			into = excepts
+		default:
+			t.Fatalf("core_bound_rows.txt:%d: unknown line kind %q", i+1, kind)
+		}
+		_, inProbes := probes[row]
+		_, inExcepts := excepts[row]
+		if inProbes || inExcepts {
+			t.Fatalf("core_bound_rows.txt:%d: row %q listed twice", i+1, row)
+		}
+		into[row] = tail
+	}
+	return probes, excepts
 }
 
 // TestRuneCountsAgree sends values that are within their bound in code points
