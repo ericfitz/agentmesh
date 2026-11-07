@@ -106,18 +106,24 @@ func TestTransportInUse(t *testing.T) {
 
 // TestInprocResponseCheckWired proves a call made through newBus crosses the
 // response validator: the checker's count rises. Reverting newBus (or the
-// inprocTransport helper) to the raw in-process transport fails it.
+// inprocTransport helper) to the raw in-process transport fails it. Under the
+// local transport there is no wire to check, so it asserts only that the
+// checker's count does not rise (nothing crosses it).
 func TestInprocResponseCheckWired(t *testing.T) {
-	if transport != "inproc" {
-		return // the local transport has no wire (a Skip would trip the no-skip gate)
-	}
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		h := newHarness(t, e, harnessOptions{})
 		before := check.Checked()
 		if _, err := h.as("pat").ListChannels(context.Background()); err != nil {
 			t.Fatalf("ListChannels: %v", err)
 		}
-		if got := check.Checked() - before; got < 1 {
+		got := check.Checked() - before
+		if transport != "inproc" {
+			if got != 0 {
+				t.Fatalf("the local transport was checked %d times, want 0", got)
+			}
+			return
+		}
+		if got < 1 {
 			t.Fatalf("a ListChannels through newBus was checked %d times, want at least 1: newBus bypasses the response validator", got)
 		}
 	})

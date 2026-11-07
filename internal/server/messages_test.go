@@ -4,10 +4,12 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/channels"
 	"github.com/ericfitz/agentmesh/internal/core/sessions"
 	"github.com/ericfitz/agentmesh/internal/gen"
@@ -210,5 +212,35 @@ func TestSendMissingContentIsValidation(t *testing.T) {
 	}
 	if p := readProblem(t, resp); p.Code != "validation" {
 		t.Fatalf("code %q", p.Code)
+	}
+}
+
+// TestSendRateLimitedRetryAfterIsTheLimitersWait pins the 429 Retry-After end
+// to end (issue #33): the header carries the limiter's own wait rounded up,
+// not the floor of 1 that WriteProblem applies to a 429 with no known wait.
+// The byte bucket is the one that can be made to wait seconds: a 64 KiB/s
+// rate with a 1024 KiB burst, and two 900 KiB messages, leave a deficit of
+// about 780 KiB at the second send, a wait of about 12 s, with the clock fixed.
+func TestSendRateLimitedRetryAfterIsTheLimitersWait(t *testing.T) {
+	e := msgEnv(t, envOptions{cfg: func(c *core.Config) {
+		c.MaxMessageKiB = 1024
+		c.SendKiBPerSecond = 64
+	}})
+	c := e.client("pat")
+	big := strings.Repeat("x", 900*1024)
+	if r := send(t, c, nil, gen.SendRequest{Content: big}); r.JSON201 == nil {
+		t.Fatalf("first send: %d %s", r.StatusCode(), r.Body)
+	}
+	r := send(t, c, nil, gen.SendRequest{Content: big})
+	if r.StatusCode() != http.StatusTooManyRequests {
+		t.Fatalf("second send: %d %s, want 429", r.StatusCode(), r.Body)
+	}
+	got := r.HTTPResponse.Header.Get("Retry-After")
+	secs, err := strconv.Atoi(got)
+	if err != nil {
+		t.Fatalf("Retry-After = %q: %v", got, err)
+	}
+	if secs < 10 || secs > 16 {
+		t.Errorf("Retry-After = %d, want the limiter's wait (about 12), not the floor of 1", secs)
 	}
 }

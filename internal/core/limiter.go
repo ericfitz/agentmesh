@@ -71,7 +71,7 @@ func (l *Limiter) Check(identity string, n int, now time.Time) (ok bool, wait ti
 	if d := float64(n) - bk.bytes; d > 0 {
 		wait = max(wait, time.Duration(d/l.bytesSec*float64(time.Second)))
 	}
-	return false, max(wait, 0)
+	return false, wait
 }
 
 // Charge refills the bucket and charges one message of n bytes. The bucket

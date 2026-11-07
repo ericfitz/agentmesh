@@ -1242,7 +1242,7 @@ block_tool_coverage_fires() {
 # Docker-free except the two inproc conformance runs, which use the ambient Postgres
 # like block 7 (or testcontainers).
 
-# mutate_spec_block LABEL SCOPE FROM TO PKG RUN WANT: mutate api/openapi.yaml inside one
+# mutate_spec_block LABEL SCOPE FROM TO PKG RUN WANT [EXTRA]: mutate api/openapi.yaml inside one
 # scope and regenerate internal/gen (both oapi-codegen configs) in $wt before the test.
 # SCOPE is a line of the file ("operationId: <id>" matches as a substring, a component key
 # such as "    TooManyRequests:" too) and must occur once; the span runs from that line to
@@ -1251,7 +1251,7 @@ block_tool_coverage_fires() {
 # in the span (whole-string count by length arithmetic, so a multi-line FROM works) and is
 # replaced by TO in that span only. A regeneration failure is a problem, not a skip.
 mutate_spec_block() {
-	local label="$1" scope="$2" from="$3" to="$4" pkg="$5" run="$6" want="$7"
+	local label="$1" scope="$2" from="$3" to="$4" pkg="$5" run="$6" want="$7" extra="${8:-}"
 	local log="$tmp/$label.log" f="$wt/api/openapi.yaml" start end total span rest n
 	begin
 	start="$(awk -v s="$scope" 'index($0, s) { print NR }' "$f")"
@@ -1283,6 +1283,7 @@ mutate_spec_block() {
 		else
 			(cd "$wt" && go test -count=1 -p 1 -v -run "$run" "$pkg" >"$log" 2>&1) || true
 			grep -qF -- "--- FAIL: $want" "$log" || problem "$label" "log lacks '--- FAIL: $want': $(tail -n 3 "$log" | tr '\n' ' ')"
+			if [ -n "$extra" ]; then grep -qF -- "$extra" "$log" || problem "$label" "log lacks '$extra'"; fi
 		fi
 	fi
 	finish "$label"
@@ -1306,10 +1307,12 @@ block_error_responses_fire() {
 		./internal/server/ '^TestStatusTable$' TestStatusTable/references
 	mutate_spec_block spec-code-narrowed-wrong '    TooManyRequests:' \
 		'enum: [rate_limited]' 'enum: [conflict]' \
-		./internal/server/ '^TestStatusTable$' TestStatusTable/shared_responses
+		./internal/server/ '^TestStatusTable$' TestStatusTable/shared_responses \
+		'TooManyRequests (429): code enum [conflict], statusTable says [rate_limited]'
 	mutate_spec_block spec-retry-after-optional '    TooManyRequests:' \
 		'required: true' 'required: false' \
-		./internal/server/ '^TestStatusTable$' TestStatusTable/shared_responses
+		./internal/server/ '^TestStatusTable$' TestStatusTable/shared_responses \
+		'TooManyRequests: Retry-After is not required'
 	mutate_unit_block status-for-wrong internal/server/problem.go \
 		'return http.StatusTooManyRequests' 'return http.StatusConflict' \
 		./internal/server/ '^TestStatusTable$' TestStatusTable/status_for

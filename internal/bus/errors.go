@@ -78,8 +78,9 @@ type Error struct {
 	Retryable bool   `json:"retryable"`
 	// RetryAfter is how long the caller should wait before retrying; set on
 	// rate_limited from the limiter's wait (the server's Retry-After header),
-	// zero when unknown. It is not part of the JSON form, so Error() is
-	// unchanged.
+	// zero when unknown. On the local transport it is the limiter's raw
+	// duration; on the remote Bus it is whole seconds (the header's value). It
+	// is not part of the JSON form, so Error() is unchanged.
 	RetryAfter time.Duration `json:"-"`
 }
 

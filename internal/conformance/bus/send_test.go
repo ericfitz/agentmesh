@@ -376,8 +376,10 @@ func TestSendRateLimited(t *testing.T) {
 		if !errors.As(err, &be) || !be.Retryable {
 			t.Errorf("rate_limited is not retryable: %v", err)
 		}
-		if be != nil && be.RetryAfter <= 0 {
-			t.Errorf("rate_limited carries no wait: RetryAfter = %v", be.RetryAfter)
+		// The bucket holds 2, so the third send waits 500 ms (the local
+		// transport's raw duration) or 1 s (the remote Bus's whole seconds).
+		if be != nil && be.RetryAfter < 500*time.Millisecond {
+			t.Errorf("rate_limited carries no wait: RetryAfter = %v, want at least 500ms", be.RetryAfter)
 		}
 		h.clock.Advance(time.Second)
 		if err := send(); err != nil {

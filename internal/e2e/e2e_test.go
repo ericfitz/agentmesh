@@ -71,11 +71,11 @@ type fixture struct {
 
 	// proxy is the validating reverse proxy every client call crosses (issue
 	// #33, ruling 9): the issuer the server advertises is the proxy's URL, so
-	// the token exchange crosses it too. target is the server's own address,
-	// set once its listening line gives the port.
+	// the token exchange crosses it too. proxyH is built once, when the
+	// server's listening line gives the port.
 	proxy      *httptest.Server
 	check      *respcheck.Checker
-	target     atomic.Pointer[url.URL]
+	proxyH     atomic.Pointer[http.Handler] // the validating ReverseProxy to the server
 	violations violationLog
 }
 
@@ -228,12 +228,12 @@ func startFixture(root string) (*fixture, error) {
 	}
 	f.check = check
 	f.proxy = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t := f.target.Load()
-		if t == nil {
+		h := f.proxyH.Load()
+		if h == nil {
 			http.Error(w, "the server is not listening yet", http.StatusServiceUnavailable)
 			return
 		}
-		f.check.Proxy(t, f.violations.add).ServeHTTP(w, r)
+		(*h).ServeHTTP(w, r)
 	}))
 	f.proxy.Start()
 	f.srv = exec.Command(binPath, "server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "issuer="+f.proxy.URL)
@@ -256,7 +256,9 @@ func startFixture(root string) (*fixture, error) {
 				return f, fmt.Errorf("listening address %q: %w", m[1], err)
 			}
 			f.port = port
-			f.target.Store(&url.URL{Scheme: "http", Host: "127.0.0.1:" + port})
+			tu := &url.URL{Scheme: "http", Host: "127.0.0.1:" + port}
+			ph := f.check.Proxy(tu, f.violations.add)
+			f.proxyH.Store(&ph)
 			break
 		}
 		select {

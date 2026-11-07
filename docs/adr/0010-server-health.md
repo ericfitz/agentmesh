@@ -34,4 +34,4 @@ Issue #11 asks for server health through the REST API, surfaced in the TUI healt
 
 ## Addendum: declared error responses (issue #33, 2026-11-07)
 
-Decisions 2 and 3 now show in `api/openapi.yaml`: `health` declares 401 (`Unauthorized`, `unauthenticated`, an invalid bearer) and 503 (`ServiceUnavailable`, `unavailable`, `store unreachable`) beside 400 and 500, and no `default`. Decision 12's pins are unchanged.
+Decisions 2 and 3 now show in `api/openapi.yaml`: `health` declares 401 (`Unauthorized`, `unauthenticated`, an invalid bearer), 403 (`Forbidden`, `not_registered`) and 503 (`ServiceUnavailable`, `unavailable`, `store unreachable`) beside 400 and 500, and no `default`. Decision 12's pins are unchanged.
