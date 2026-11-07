@@ -139,9 +139,9 @@ type exception struct {
 
 var exceptions = map[string]exception{
 	"Problem": {Type: reflect.TypeFor[gen.Problem](), Fields: []string{"Code", "Detail", "Instance", "Retryable", "Status", "Title", "Type"},
-		Reason: "errors cross as RFC 9457 problems: WriteProblem writes, errorOf reads (TestErrorOf, TestProblem*)"},
+		Reason: "errors cross as RFC 9457 problems: WriteProblem writes (internal/server), errorOf reads (internal/bus/remote/remote.go)"},
 	"OAuthError": {Type: reflect.TypeFor[gen.OAuthError](), Fields: []string{"Error", "ErrorDescription"},
-		Reason: "the token endpoint answers the RFC 6749 error body (internal/server/oauth.go); internal/client reads it, not the Bus"},
+		Reason: "the token endpoint answers the RFC 6749 error body (internal/server/oauth.go); internal/bus/remote/auth.go reads it (:119), not a Bus domain type"},
 	"Discovery": {Type: reflect.TypeFor[gen.Discovery](), Fields: []string{"ApiVersions", "AuthMethods", "AuthorizationServer", "Capabilities", "Issuers", "OpenidConfiguration", "ProtocolVersion", "ServerVersion"},
 		Reason: authReason},
 	"AuthMethod": {Type: reflect.TypeFor[gen.AuthMethod](), Fields: []string{"BearerFormat", "Name", "Scheme", "Type"}, Reason: authReason},
@@ -157,7 +157,7 @@ var exceptions = map[string]exception{
 	"TokenRequestObject":    {Type: reflect.TypeFor[gen.TokenRequestObject](), Fields: []string{"Body"}, Reason: authReason},
 	"TokenRequest": {Type: reflect.TypeFor[gen.TokenRequest](),
 		Fields: []string{"ActorToken", "ActorTokenType", "Audience", "ClientAssertion", "ClientAssertionType", "ClientId", "GrantType", "RequestedTokenType", "Resource", "Scope", "SubjectToken", "SubjectTokenType"},
-		Reason: "the token endpoint's form body (the body struct of TokenRequestObject): internal/credential builds it, internal/server/oauth.go reads it; not the Bus"},
+		Reason: "the token endpoint's form body (the body struct of TokenRequestObject): internal/bus/remote/auth.go builds it (TokenFormdataRequestBody, :75 and :86), internal/server/auth_handlers.go reads it; not a Bus domain type"},
 	"GetTaskRequestObject":             {Type: reflect.TypeFor[gen.GetTaskRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
 	"GetMemoryRequestObject":           {Type: reflect.TypeFor[gen.GetMemoryRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
 	"ListMemoryRevisionsRequestObject": {Type: reflect.TypeFor[gen.ListMemoryRevisionsRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
@@ -168,8 +168,8 @@ var exceptions = map[string]exception{
 }
 
 const (
-	authReason = "discovery and authentication: consumed by internal/client (registration, login), internal/credential and internal/oidcclient, not the Bus"
-	pathReason = "the path parameter alone: the Bus method takes it as a scalar and the client passes it as given (Decision 80)"
+	authReason = "discovery and authentication documents: internal/server (discovery.go, auth_handlers.go) writes them, internal/bus/remote/auth.go (register, token exchange) reads or builds them through the generated client; not Bus domain types"
+	pathReason = "the path parameter alone: the Bus method takes it as a scalar and the client passes it as given"
 )
 
 // plumbingPatterns are the generated names that are transport plumbing, not
@@ -198,7 +198,7 @@ func isPlumbing(name string) bool {
 // not plumbing, with its exported field names.
 func genStructs(t *testing.T) map[string][]string {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "../gen/gen.go", nil, 0)
+	f, err := parser.ParseFile(token.NewFileSet(), "../gen/gen.go", nil, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse gen.go: %v", err)
 	}
@@ -211,7 +211,17 @@ func genStructs(t *testing.T) map[string][]string {
 		for _, sp := range gd.Specs {
 			ts := sp.(*ast.TypeSpec)
 			st, isStruct := ts.Type.(*ast.StructType)
-			if !isStruct || isPlumbing(ts.Name.Name) {
+			if !isStruct {
+				continue
+			}
+			if isPlumbing(ts.Name.Name) {
+				doc := gd.Doc.Text()
+				if ts.Doc != nil {
+					doc += ts.Doc.Text()
+				}
+				if strings.Contains(doc, "defines model for") || strings.Contains(doc, "defines parameters for") {
+					t.Errorf("generated type %s is a model but matches a plumbing pattern: narrow plumbingPatterns", ts.Name.Name)
+				}
 				continue
 			}
 			fields := []string{}
@@ -507,7 +517,15 @@ func TestWireRoundTrip(t *testing.T) {
 		}
 	})
 	t.Run("exceptions", func(t *testing.T) {
+		var paired []reflect.Type
+		for _, p := range pairs {
+			paired = append(paired, p.gen)
+		}
+		pairCovered := reachable(paired...)
 		for key, e := range exceptions {
+			if e.Type != nil && pairCovered[key] {
+				t.Errorf("redundant exception %s: a pair already covers it", key)
+			}
 			if e.Type == nil {
 				if !hit[key] {
 					t.Errorf("exception %s matches nothing", key)
