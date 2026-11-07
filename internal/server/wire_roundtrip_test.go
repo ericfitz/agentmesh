@@ -77,6 +77,7 @@ var pairs = []pair{
 // Keys are "gen:<Pair>.<path>" or "bus:<Pair>.<path>" (the side whose trip
 // shows the diff), or a type name.
 type exception struct {
+	Type   reflect.Type // nil for a member-level entry; set for a whole-type entry
 	Fields []string
 	Reason string
 }
