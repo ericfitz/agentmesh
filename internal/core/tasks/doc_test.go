@@ -383,3 +383,24 @@ func TestDedupeIDs(t *testing.T) {
 		t.Fatal("nil in, nil out")
 	}
 }
+
+func TestTaskSubjectRunes(t *testing.T) {
+	if err := validateTaskSubject(strings.Repeat("é", MaxSubjectRunes)); err != nil {
+		t.Fatalf("256 two-byte runes: %v", err)
+	}
+	err := validateTaskSubject(strings.Repeat("x", MaxSubjectRunes+1))
+	wantCode(t, err, bus.CodeValidation)
+	if !strings.Contains(err.Error(), "subject must be 1-256 characters") {
+		t.Fatalf("message %q", err)
+	}
+}
+
+func TestBlockersRawCount(t *testing.T) {
+	ids := make([]int64, MaxBlockers+1)
+	for i := range ids {
+		ids[i] = int64(i%(MaxBlockers-1)) + 1 // 65 entries, only 63 distinct
+	}
+	big := mk(1000, 0, "V", "pending", "")
+	big.BlockedBy = ids
+	wantCode(t, validateTaskLinks([]task{big}, big), bus.CodeValidation)
+}

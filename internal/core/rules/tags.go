@@ -20,6 +20,19 @@ const MaxTagLen = 32
 // message can name both limits.
 var tagRe = regexp.MustCompile(`^[a-z0-9-]+(:[a-z0-9-]+)?$`)
 
+// MaxTagPatternLen caps a tag pattern: a prefix of MaxTagLen characters plus
+// the trailing *.
+const MaxTagPatternLen = MaxTagLen + 1
+
+// TagSpecPattern and TagPatternSpecPattern are the api/openapi.yaml patterns
+// for a tag and for a tag pattern. They are the case-insensitive forms of
+// tagRe and tagPrefixRe (the core lowercases before it matches); length is
+// MaxTagLen and MaxTagPatternLen, stated apart as maxLength.
+const (
+	TagSpecPattern        = `^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$`
+	TagPatternSpecPattern = `^[A-Za-z0-9-]+(:[A-Za-z0-9-]+)?$|^[A-Za-z0-9-]+(:[A-Za-z0-9-]*)?\*$`
+)
+
 // tagRuleText is the rule as NormalizeTags states it to the caller.
 const tagRuleText = "tag %q must be 1-32 characters of a-z, 0-9 and -, with at most one : between other characters"
 
@@ -29,11 +42,15 @@ func validTag(t string) bool { return len(t) <= MaxTagLen && tagRe.MatchString(t
 // normalizeTagList is the shared body of NormalizeTags and the pattern
 // normalizer: lowercase, reject any entry valid rejects (one bad entry fails
 // the whole call; badFmt takes the lowercased entry as its one %q), drop
-// duplicates, cap at MaxTags (capFmt takes MaxTags as its one %d), sort.
+// duplicates, sort. The count is of the raw entries, before duplicates drop,
+// so it agrees with the spec's maxItems (capFmt takes MaxTags as its one %d).
 // nil in, nil out.
 func normalizeTagList(tags []string, valid func(string) bool, badFmt, capFmt string) ([]string, error) {
 	if len(tags) == 0 {
 		return nil, nil
+	}
+	if len(tags) > MaxTags {
+		return nil, bus.Errorf(bus.CodeValidation, false, capFmt, MaxTags)
 	}
 	out := make([]string, 0, len(tags))
 	for _, t := range tags {
@@ -44,9 +61,6 @@ func normalizeTagList(tags []string, valid func(string) bool, badFmt, capFmt str
 		if !slices.Contains(out, t) {
 			out = append(out, t)
 		}
-	}
-	if len(out) > MaxTags {
-		return nil, bus.Errorf(bus.CodeValidation, false, capFmt, MaxTags)
 	}
 	slices.Sort(out)
 	return out, nil

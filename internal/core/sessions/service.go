@@ -25,6 +25,13 @@ type Service struct{ *core.Core }
 // choice 4).
 const resumeTokenBytes = 32
 
+// ResumeTokenLen is the length of a resume token: 32 bytes as unpadded
+// base64url, and ResumeTokenPattern is that shape for api/openapi.yaml.
+const (
+	ResumeTokenLen     = 43
+	ResumeTokenPattern = "^[A-Za-z0-9_-]{43}$"
+)
+
 // DisplayName is the first free of identity, identity-2, identity-3, ...;
 // with a hint, identity/hint, identity/hint-2, ... (Decision 39, plan choice
 // 5). taken holds the display names of the identity's rows with ClosedAt == 0
@@ -58,6 +65,9 @@ func hashToken(token string) string {
 // validToken reports whether token has the shape Open generates: 32 bytes,
 // base64url without padding.
 func validToken(token string) bool {
+	if len(token) != ResumeTokenLen {
+		return false
+	}
 	b, err := base64.RawURLEncoding.DecodeString(token)
 	return err == nil && len(b) == resumeTokenBytes
 }

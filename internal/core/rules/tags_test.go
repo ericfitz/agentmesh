@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -37,9 +38,13 @@ func TestNormalizeTags(t *testing.T) {
 	}
 	_, err = NormalizeTags(eleven)
 	wantCode(t, err, bus.CodeValidation)
-	if _, err := NormalizeTags(append(eleven[:10], "TA")); err != nil {
-		t.Fatalf("duplicates are removed before the limit applies: %v", err)
+	// The limit counts the raw entries (issue #34, ruling 4): ten with a
+	// duplicate pass, eleven with one do not.
+	if _, err := NormalizeTags(append(eleven[:9:9], "TA")); err != nil {
+		t.Fatalf("ten entries with a duplicate: %v", err)
 	}
+	_, err = NormalizeTags(append(eleven[:10:10], "TA"))
+	wantCode(t, err, bus.CodeValidation)
 }
 
 func TestNormalizeTagPatterns(t *testing.T) {
@@ -155,4 +160,45 @@ func TestTagsKey(t *testing.T) {
 	if got := TagsKey([]string{"a", "b*"}); got != "a,b*" {
 		t.Fatalf("TagsKey = %q", got)
 	}
+}
+
+func TestTagsRawCountBeforeDedupe(t *testing.T) {
+	eleven := []string{"a", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j"}
+	_, err := NormalizeTags(eleven)
+	wantCode(t, err, bus.CodeValidation)
+	if !strings.Contains(err.Error(), "at most 10 tags per message") {
+		t.Fatalf("message %q", err)
+	}
+	if _, err := NormalizeTags(eleven[:10]); err != nil {
+		t.Fatalf("ten with a duplicate: %v", err)
+	}
+	_, err = NormalizeTagPatterns(eleven)
+	wantCode(t, err, bus.CodeValidation)
+}
+
+func TestTagSpecPatternsAgree(t *testing.T) {
+	tagSpec := regexp.MustCompile(TagSpecPattern)
+	patSpec := regexp.MustCompile(TagPatternSpecPattern)
+	corpus := []string{"env", "env:prod", "ENV:Prod", "env:", "env:*", "env*", "*", ":a", "a:b:c", "a b", "",
+		strings.Repeat("a", 32), strings.Repeat("a", 33), strings.Repeat("a", 31) + "*", strings.Repeat("a", 32) + "*",
+		strings.Repeat("a", 33) + "*", "a:" + strings.Repeat("b", 29), "a:" + strings.Repeat("b", 30), "a**", "a:b*", "a:b:*"}
+	for _, s := range corpus {
+		_, err := NormalizeTags([]string{s})
+		if got := tagSpec.MatchString(s) && len(s) <= MaxTagLen; got != (err == nil) {
+			t.Errorf("tag %q: spec %v, core err %v", s, got, err)
+		}
+		_, err = NormalizeTagPatterns([]string{s})
+		if got := patSpec.MatchString(s) && len(s) <= patMax(s); got != (err == nil) {
+			t.Errorf("pattern %q: spec %v, core err %v", s, got, err)
+		}
+	}
+}
+
+// patMax is the length limit of a pattern: MaxTagPatternLen with the
+// trailing *, MaxTagLen for an exact tag.
+func patMax(s string) int {
+	if strings.HasSuffix(s, "*") {
+		return MaxTagPatternLen
+	}
+	return MaxTagLen
 }

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
@@ -65,10 +66,14 @@ func isTaskStatus(s string) bool {
 	return s == "pending" || s == "in_progress" || s == "completed"
 }
 
-// validateTaskSubject enforces subject 1-256 bytes, no control characters.
+// MaxSubjectRunes caps a task subject, counted in characters.
+const MaxSubjectRunes = 256
+
+// validateTaskSubject enforces subject 1-MaxSubjectRunes characters, no
+// control characters.
 func validateTaskSubject(s string) error {
-	if len(s) == 0 || len(s) > 256 {
-		return core.E(bus.CodeValidation, "subject must be 1-256 bytes")
+	if n := utf8.RuneCountInString(s); n == 0 || n > MaxSubjectRunes {
+		return core.E(bus.CodeValidation, "subject must be 1-%d characters", MaxSubjectRunes)
 	}
 	for _, r := range s {
 		if unicode.IsControl(r) {
@@ -242,8 +247,9 @@ func followsToSelf(ts []task, start, target int64, next func(task) []int64) bool
 	return false
 }
 
-// maxBlockers caps blocked_by.
-const maxBlockers = 64
+// MaxBlockers caps blocked_by (and the add and remove lists of a patch),
+// counted on the list as sent, before duplicates drop.
+const MaxBlockers = 64
 
 // validateTaskLinks checks t's parent and blocked_by against the live tasks in
 // ts: existence, no self-reference, no cycles, and the cap on blocked_by.
@@ -265,10 +271,10 @@ func validateTaskLinks(ts []task, t task) error {
 			return core.E(bus.CodeValidation, "parent %d would create a cycle", t.Parent)
 		}
 	}
-	blockers := dedupeIDs(t.BlockedBy)
-	if len(blockers) > maxBlockers {
-		return core.E(bus.CodeValidation, "blocked_by accepts at most %d tasks", maxBlockers)
+	if len(t.BlockedBy) > MaxBlockers {
+		return core.E(bus.CodeValidation, "blocked_by accepts at most %d tasks", MaxBlockers)
 	}
+	blockers := dedupeIDs(t.BlockedBy)
 	for _, bid := range blockers {
 		if bid == t.ID {
 			return core.E(bus.CodeValidation, "task %d cannot block itself", t.ID)

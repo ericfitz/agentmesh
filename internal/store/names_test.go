@@ -98,3 +98,23 @@ func TestFileNameRule(t *testing.T) {
 		}
 	}
 }
+
+func TestMaxNameBytesAndAllPermissions(t *testing.T) {
+	if MaxNameBytes != 128 {
+		t.Fatalf("MaxNameBytes = %d", MaxNameBytes)
+	}
+	if NameRule(strings.Repeat("a", MaxNameBytes)) != nil || NameRule(strings.Repeat("a", MaxNameBytes+1)) == nil {
+		t.Fatal("NameRule does not follow MaxNameBytes")
+	}
+	if len(AllPermissions) != 3 {
+		t.Fatalf("AllPermissions = %v", AllPermissions)
+	}
+	for _, p := range AllPermissions {
+		if !ValidPermission(p) {
+			t.Errorf("%q not valid", p)
+		}
+	}
+	if ValidPermission("owner") || ValidPermission("") {
+		t.Fatal("unknown permission accepted")
+	}
+}

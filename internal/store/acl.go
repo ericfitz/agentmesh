@@ -28,9 +28,12 @@ func (p Permissions) Union(q Permissions) Permissions {
 	return Permissions{Read: p.Read || q.Read, Write: p.Write || q.Write, Admin: p.Admin || q.Admin}
 }
 
-// ValidPermission reports whether p is one of the three known permissions.
+// AllPermissions lists the known permissions.
+var AllPermissions = []Permission{PermRead, PermWrite, PermAdmin}
+
+// ValidPermission reports whether p is one of the known permissions.
 func ValidPermission(p Permission) bool {
-	return p == PermRead || p == PermWrite || p == PermAdmin
+	return slices.Contains(AllPermissions, p)
 }
 
 // ValidateEntry rejects (ErrInvalid) an empty permission list, an unknown

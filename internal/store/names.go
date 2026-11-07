@@ -24,13 +24,17 @@ func TextRule(s string) error {
 	return nil
 }
 
+// MaxNameBytes is the longest name NameRule accepts, in bytes (a name also
+// names credential and token files, so the bound is bytes, not characters).
+const MaxNameBytes = 128
+
 // NameRule is the name rule for identities, channels and ACL identities:
 // 1-128 bytes passing TextRule (valid UTF-8, no NUL), no control characters,
 // no '/' (the '/' ban is what Decision 93 relies on). The error is a plain
 // sentence without a subject so callers can supply their own. Ported from v1
 // internal/bus/sessions.go.
 func NameRule(name string) error {
-	if len(name) == 0 || len(name) > 128 {
+	if len(name) == 0 || len(name) > MaxNameBytes {
 		return errors.New("must be 1-128 bytes")
 	}
 	if err := TextRule(name); err != nil {

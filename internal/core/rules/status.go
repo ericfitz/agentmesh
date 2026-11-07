@@ -12,14 +12,16 @@ import (
 const MaxLineRunes = 200
 
 // NormalizeLine trims s; a line break or more than MaxLineRunes characters is
-// a validation error naming field. An empty result is returned as is.
+// a validation error naming field. The characters are counted before the
+// trim, so the count agrees with the spec's maxLength on the field as sent.
+// An empty result is returned as is.
 func NormalizeLine(field, s string) (string, error) {
+	if utf8.RuneCountInString(s) > MaxLineRunes {
+		return "", bus.Errorf(bus.CodeValidation, false, "%s must be at most %d characters", field, MaxLineRunes)
+	}
 	s = strings.TrimSpace(s)
 	if strings.ContainsAny(s, "\r\n") {
 		return "", bus.Errorf(bus.CodeValidation, false, "%s must be a single line", field)
-	}
-	if utf8.RuneCountInString(s) > MaxLineRunes {
-		return "", bus.Errorf(bus.CodeValidation, false, "%s must be at most %d characters", field, MaxLineRunes)
 	}
 	return s, nil
 }

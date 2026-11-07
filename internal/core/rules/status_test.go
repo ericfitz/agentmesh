@@ -69,3 +69,14 @@ func errMsg(err error) string {
 	}
 	return ""
 }
+
+func TestNormalizeLineCountsBeforeTrim(t *testing.T) {
+	_, err := NormalizeLine("subject", strings.Repeat("x", MaxLineRunes)+" ")
+	wantCode(t, err, bus.CodeValidation)
+	if _, err := NormalizeLine("subject", strings.Repeat("x", MaxLineRunes)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NormalizeLine("subject", strings.Repeat("é", MaxLineRunes)); err != nil {
+		t.Fatal(err)
+	}
+}
