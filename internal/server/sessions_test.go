@@ -120,7 +120,7 @@ func TestWatchTimeoutWire(t *testing.T) {
 	}
 
 	r, err = cl.WatchWithResponse(ctx, id, &gen.WatchParams{Timeout: ptrTo(-1.0)})
-	if err != nil || r.StatusCode() != 400 || r.ApplicationproblemJSONDefault == nil || r.ApplicationproblemJSONDefault.Code != "validation" {
+	if err != nil || r.StatusCode() != 400 || len(r.Body) == 0 || problemOf(t, r.Body).Code != "validation" {
 		t.Fatalf("timeout=-1: %v %s", err, r.Body)
 	}
 
@@ -396,7 +396,7 @@ func TestOpenCloseReceiveRoundTrip(t *testing.T) {
 		t.Fatalf("close: %v %v", err, c)
 	}
 	r3, err := cl.ReceiveWithResponse(ctx, s.session.Id, gen.ReceiveJSONRequestBody{})
-	if err != nil || r3.StatusCode() != 410 || r3.ApplicationproblemJSONDefault == nil || r3.ApplicationproblemJSONDefault.Code != "session_closed" {
+	if err != nil || r3.StatusCode() != 410 || len(r3.Body) == 0 || problemOf(t, r3.Body).Code != "session_closed" {
 		t.Fatalf("receive after close: %v %s", err, r3.Body)
 	}
 }

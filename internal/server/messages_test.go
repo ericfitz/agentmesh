@@ -55,7 +55,7 @@ func TestSendIdempotencyWire(t *testing.T) { // Decision (Eric, 2026-10-21): Mil
 		t.Fatalf("rows after replay = %d, want 1", n)
 	}
 	d := send(t, c, &k, gen.SendRequest{Content: "different"})
-	if d.StatusCode() != 409 || d.ApplicationproblemJSONDefault == nil || d.ApplicationproblemJSONDefault.Code != "conflict" {
+	if d.StatusCode() != 409 || len(d.Body) == 0 || problemOf(t, d.Body).Code != "conflict" {
 		t.Fatalf("same key other content: %d %s", d.StatusCode(), d.Body)
 	}
 	// Absent header: two identical sends are two rows.
@@ -91,7 +91,7 @@ func TestSendSessionAttribution(t *testing.T) {
 		t.Fatalf("message session/display = %v %q", m.Session, m.Display)
 	}
 	r := send(t, c, nil, gen.SendRequest{Content: "y", Session: &theirs.ID})
-	if r.StatusCode() != 404 || r.ApplicationproblemJSONDefault == nil || r.ApplicationproblemJSONDefault.Code != "not_found" {
+	if r.StatusCode() != 404 || len(r.Body) == 0 || problemOf(t, r.Body).Code != "not_found" {
 		t.Fatalf("other identity's session: %d %s", r.StatusCode(), r.Body)
 	}
 }

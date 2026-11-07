@@ -69,9 +69,12 @@ func (f *mtFixture) latest(t *testing.T) store.Message {
 	return m
 }
 
-func wantProblem(t *testing.T, status int, p *gen.Problem, wantStatus int, wantCode gen.ProblemCode) {
+func wantProblem(t *testing.T, status int, body []byte, wantStatus int, wantCode gen.ProblemCode) {
 	t.Helper()
-	if status != wantStatus || p == nil || p.Code != wantCode {
+	if status != wantStatus {
+		t.Fatalf("status %d body %s, want %d %s", status, body, wantStatus, wantCode)
+	}
+	if p := problemOf(t, body); p.Code != wantCode {
 		t.Fatalf("status %d problem %+v, want %d %s", status, p, wantStatus, wantCode)
 	}
 }
@@ -133,7 +136,7 @@ func TestMemoryRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, g.StatusCode(), g.ApplicationproblemJSONDefault, http.StatusNotFound, gen.NotFound)
+	wantProblem(t, g.StatusCode(), g.Body, http.StatusNotFound, gen.NotFound)
 	rv, err := f.c.ListMemoryRevisionsWithResponse(ctx, f.memoryID)
 	if err != nil || rv.JSON200 == nil || len(*rv.JSON200) == 0 {
 		t.Fatalf("revisions after delete: %+v, %v", rv, err)
@@ -149,7 +152,7 @@ func TestTaskRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, r.StatusCode(), r.ApplicationproblemJSONDefault, http.StatusBadRequest, gen.Validation)
+	wantProblem(t, r.StatusCode(), r.Body, http.StatusBadRequest, gen.Validation)
 
 	cr, err := f.c.CreateTaskWithResponse(ctx, "work", &gen.CreateTaskParams{}, gen.TaskCreateRequest{Subject: "one"})
 	if err != nil || cr.JSON201 == nil {
@@ -162,7 +165,7 @@ func TestTaskRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, l.StatusCode(), l.ApplicationproblemJSONDefault, http.StatusBadRequest, gen.Validation)
+	wantProblem(t, l.StatusCode(), l.Body, http.StatusBadRequest, gen.Validation)
 	l, err = f.c.ListTasksWithResponse(ctx, "work", &gen.ListTasksParams{})
 	if err != nil || l.JSON200 == nil || len(*l.JSON200) != 1 {
 		t.Fatalf("list: %+v, %v", l, err)
@@ -185,7 +188,7 @@ func TestTaskRoutesWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantProblem(t, u.StatusCode(), u.ApplicationproblemJSONDefault, http.StatusBadRequest, gen.Validation)
+	wantProblem(t, u.StatusCode(), u.Body, http.StatusBadRequest, gen.Validation)
 
 	done := "completed"
 	u, err = f.c.UpdateTaskWithResponse(ctx, id, &gen.UpdateTaskParams{}, gen.TaskPatch{Status: &done})

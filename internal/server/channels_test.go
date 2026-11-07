@@ -100,7 +100,7 @@ func TestCreateChannelIdempotencyHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r3.StatusCode() != 409 || r3.ApplicationproblemJSONDefault == nil || r3.ApplicationproblemJSONDefault.Code != gen.ProblemCode("conflict") {
+	if r3.StatusCode() != 409 || len(r3.Body) == 0 || problemOf(t, r3.Body).Code != gen.ProblemCode("conflict") {
 		t.Fatalf("same key other kind: %d %s", r3.StatusCode(), r3.Body)
 	}
 
@@ -109,7 +109,7 @@ func TestCreateChannelIdempotencyHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r4.StatusCode() != 409 || r4.ApplicationproblemJSONDefault == nil || r4.ApplicationproblemJSONDefault.Code != gen.ProblemCode("conflict") {
+	if r4.StatusCode() != 409 || len(r4.Body) == 0 || problemOf(t, r4.Body).Code != gen.ProblemCode("conflict") {
 		t.Fatalf("no header duplicate: %d %s", r4.StatusCode(), r4.Body)
 	}
 }
@@ -135,7 +135,7 @@ func TestACLWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.StatusCode() != 403 || r.ApplicationproblemJSONDefault == nil || r.ApplicationproblemJSONDefault.Code != gen.ProblemCode("forbidden") {
+	if r.StatusCode() != 403 || len(r.Body) == 0 || problemOf(t, r.Body).Code != gen.ProblemCode("forbidden") {
 		t.Fatalf("non-admin get: %d %s", r.StatusCode(), r.Body)
 	}
 
@@ -320,7 +320,7 @@ func TestUnsubscribeTagsCommaIsOnePattern(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.StatusCode() != 400 || r.ApplicationproblemJSONDefault == nil || r.ApplicationproblemJSONDefault.Code != gen.ProblemCode("validation") {
+	if r.StatusCode() != 400 || len(r.Body) == 0 || problemOf(t, r.Body).Code != gen.ProblemCode("validation") {
 		t.Fatalf("comma pattern: %d %s, want 400 validation about the one pattern", r.StatusCode(), r.Body)
 	}
 	if !strings.Contains(string(r.Body), "a,b") {

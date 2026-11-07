@@ -115,7 +115,7 @@ func TestSecurityFromDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.StatusCode() != 401 || r.ApplicationproblemJSONDefault == nil || r.ApplicationproblemJSONDefault.Code != gen.ProblemCode("unauthenticated") {
+	if r.StatusCode() != 401 || len(r.Body) == 0 || problemOf(t, r.Body).Code != gen.ProblemCode("unauthenticated") {
 		t.Fatalf("anonymous ListChannels: %d %s", r.StatusCode(), r.Body)
 	}
 	for name, get := range map[string]func() (int, error){

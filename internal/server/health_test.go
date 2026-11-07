@@ -102,8 +102,8 @@ func TestHealthUnregisteredIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.StatusCode() != 403 || r.JSON200 != nil || r.ApplicationproblemJSONDefault == nil || r.ApplicationproblemJSONDefault.Code != "not_registered" {
-		t.Fatalf("status %d problem %+v", r.StatusCode(), r.ApplicationproblemJSONDefault)
+	if r.StatusCode() != 403 || r.JSON200 != nil || len(r.Body) == 0 || problemOf(t, r.Body).Code != "not_registered" {
+		t.Fatalf("status %d body %s", r.StatusCode(), r.Body)
 	}
 }
 
@@ -121,8 +121,11 @@ func TestHealthStoreDownIs503(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := r.ApplicationproblemJSONDefault
-	if r.StatusCode() != 503 || p == nil || p.Code != "unavailable" || !p.Retryable {
+	if r.StatusCode() != 503 {
+		t.Fatalf("status %d body %s", r.StatusCode(), r.Body)
+	}
+	p := problemOf(t, r.Body)
+	if p.Code != "unavailable" || !p.Retryable {
 		t.Fatalf("status %d problem %+v", r.StatusCode(), p)
 	}
 	if p.Detail == nil || *p.Detail != "store unreachable" || strings.Contains(*p.Detail, e.dbPath) {

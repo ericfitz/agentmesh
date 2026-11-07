@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"sync/atomic"
@@ -153,8 +154,11 @@ func TestOddChannelNameOverTCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := sr.ApplicationproblemJSONDefault
-	if sr.StatusCode() != http.StatusNotFound || p == nil || p.Code != gen.NotFound ||
+	var p gen.Problem
+	if err := json.Unmarshal(sr.Body, &p); err != nil {
+		t.Fatalf("a/b: body %q is not a problem document: %v", sr.Body, err)
+	}
+	if sr.StatusCode() != http.StatusNotFound || p.Code != gen.NotFound ||
 		p.Detail == nil || *p.Detail != `channel "a/b" does not exist` {
 		t.Fatalf("a/b: status %d body %s, want not_found naming the channel", sr.StatusCode(), sr.Body)
 	}
