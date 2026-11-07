@@ -127,7 +127,8 @@ var ruleAllowed = map[string]map[string]int{
 	"internal/core/tasks/snapshot.go Snapshot":    {"Owner": 1},  // copies the task's owner into the snapshot's assignee: a converter (kind N)
 	"internal/core/tasks/update.go applyPatch":    {"Owner": 15}, // the patch's own fields: an in_progress task needs an owner, a new owner must be registered, release and completion set it
 	"internal/server/tasks.go taskToGen":          {"Owner": 1},  // wire copy of the task's owner (kind N)
-	"internal/server/tasks.go ListTasks":          {"Owner": 2},  // wire copy of the owner filter and the summaries' owner (kind N)
+	"internal/server/tasks.go ListTasks":          {"Owner": 1},  // wire copy of the owner filter (kind N)
+	"internal/server/tasks.go taskSummaryToGen":   {"Owner": 1},  // wire copy of the summary's owner (kind N)
 	"internal/server/tasks.go UpdateTask":         {"Owner": 1},  // wire copy of the patch's owner (kind N)
 }
 

@@ -54,7 +54,7 @@ func (b *Bus) CreateChannel(ctx context.Context, in ab2bus.CreateChannelInput) (
 	if r.JSON201 == nil {
 		return ab2bus.ChannelInfo{}, unparsable(r.StatusCode())
 	}
-	return fromGenChannelInfo(*r.JSON201), nil
+	return FromGenChannelInfo(*r.JSON201), nil
 }
 
 // fromGenCapabilities copies the strings unfiltered; an absent array (nil)
@@ -67,7 +67,7 @@ func fromGenCapabilities(in []string) []ab2bus.ChannelCapability {
 	return out
 }
 
-func fromGenChannelInfo(c gen.ChannelInfo) ab2bus.ChannelInfo {
+func FromGenChannelInfo(c gen.ChannelInfo) ab2bus.ChannelInfo {
 	return ab2bus.ChannelInfo{
 		Channel: ab2bus.Channel{Name: c.Name, Kind: ab2bus.Kind(c.Kind), Capabilities: fromGenCapabilities(c.Capabilities)},
 		Creator: c.Creator, Scope: deref(c.Scope), CreatedAt: c.CreatedAt,
@@ -104,7 +104,7 @@ func (b *Bus) ACL(ctx context.Context, channel string) ([]ab2bus.ACLEntry, error
 	}
 	out := make([]ab2bus.ACLEntry, len(*r.JSON200))
 	for i, e := range *r.JSON200 {
-		out[i] = fromGenACLEntry(e)
+		out[i] = FromGenACLEntry(e)
 	}
 	return out, nil
 }

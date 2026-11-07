@@ -37,7 +37,7 @@ func (b *Bus) Status(ctx context.Context) (ab2bus.Status, error) {
 		st.Sessions[i] = ab2bus.SessionInfo{ID: s.Id, Identity: s.Identity, DisplayName: s.DisplayName, OpenedAt: s.OpenedAt}
 	}
 	for i, c := range g.Channels {
-		st.Channels[i] = fromGenChannelInfo(c)
+		st.Channels[i] = FromGenChannelInfo(c)
 	}
 	for i, n := range g.Notices {
 		st.Notices[i] = ab2bus.Notice{Kind: n.Kind, Message: n.Message, SetAt: n.SetAt}

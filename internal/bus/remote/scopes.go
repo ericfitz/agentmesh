@@ -14,9 +14,9 @@ func unknownWire(field, v string) error {
 	return &ab2bus.Error{Code: ab2bus.CodeInternal, Message: fmt.Sprintf("server sent unknown %s %q", field, v)}
 }
 
-// fromGenScope converts a wire scope, refusing a state or retire mode outside
+// FromGenScope converts a wire scope, refusing a state or retire mode outside
 // the closed sets.
-func fromGenScope(g gen.Scope) (ab2bus.Scope, error) {
+func FromGenScope(g gen.Scope) (ab2bus.Scope, error) {
 	out := ab2bus.Scope{
 		Name: g.Name, CreatedAt: g.CreatedAt, DoneAt: deref(g.DoneAt), LastActivity: g.LastActivity,
 		Channels: deref(g.Channels), Identities: deref(g.Identities),
@@ -38,9 +38,9 @@ func fromGenScope(g gen.Scope) (ab2bus.Scope, error) {
 	return out, nil
 }
 
-// fromGenBridge converts a wire bridge, refusing a state outside the closed
+// FromGenBridge converts a wire bridge, refusing a state outside the closed
 // set.
-func fromGenBridge(g gen.Bridge) (ab2bus.Bridge, error) {
+func FromGenBridge(g gen.Bridge) (ab2bus.Bridge, error) {
 	out := ab2bus.Bridge{
 		Channel: g.Channel, Scope: g.Scope, SlackChannelID: deref(g.SlackChannelId), SlackName: g.SlackName,
 		CreatedAt: g.CreatedAt, ArchivedAt: deref(g.ArchivedAt),
@@ -66,7 +66,7 @@ func (b *Bus) CreateScope(ctx context.Context, in ab2bus.CreateScopeInput) (ab2b
 	if r.JSON200 == nil {
 		return ab2bus.Scope{}, unparsable(r.StatusCode())
 	}
-	return fromGenScope(*r.JSON200)
+	return FromGenScope(*r.JSON200)
 }
 
 // ListScopes lists the open and done scopes.
@@ -83,7 +83,7 @@ func (b *Bus) ListScopes(ctx context.Context) ([]ab2bus.Scope, error) {
 	}
 	out := make([]ab2bus.Scope, len(r.JSON200.Scopes))
 	for i, g := range r.JSON200.Scopes {
-		sc, err := fromGenScope(g)
+		sc, err := FromGenScope(g)
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +104,7 @@ func (b *Bus) GetScope(ctx context.Context, name string) (ab2bus.Scope, error) {
 	if r.JSON200 == nil {
 		return ab2bus.Scope{}, unparsable(r.StatusCode())
 	}
-	return fromGenScope(*r.JSON200)
+	return FromGenScope(*r.JSON200)
 }
 
 // DoneScope marks a scope done. A retire mode outside the closed set is
@@ -125,7 +125,7 @@ func (b *Bus) DoneScope(ctx context.Context, in ab2bus.DoneScopeInput) (ab2bus.S
 	if r.JSON200 == nil {
 		return ab2bus.Scope{}, unparsable(r.StatusCode())
 	}
-	return fromGenScope(*r.JSON200)
+	return FromGenScope(*r.JSON200)
 }
 
 // CreateAgentIdentity creates an agent identity, optionally in a scope, and
@@ -165,7 +165,7 @@ func (b *Bus) CreateBridge(ctx context.Context, in ab2bus.CreateBridgeInput) (ab
 	if r.JSON200 == nil {
 		return ab2bus.BridgeCreated{}, unparsable(r.StatusCode())
 	}
-	br, err := fromGenBridge(r.JSON200.Bridge)
+	br, err := FromGenBridge(r.JSON200.Bridge)
 	if err != nil {
 		return ab2bus.BridgeCreated{}, err
 	}
@@ -190,7 +190,7 @@ func (b *Bus) ListBridges(ctx context.Context) ([]ab2bus.Bridge, error) {
 	}
 	out := make([]ab2bus.Bridge, len(r.JSON200.Bridges))
 	for i, g := range r.JSON200.Bridges {
-		br, err := fromGenBridge(g)
+		br, err := FromGenBridge(g)
 		if err != nil {
 			return nil, err
 		}
@@ -211,7 +211,7 @@ func (b *Bus) GetBridge(ctx context.Context, channel string) (ab2bus.Bridge, err
 	if r.JSON200 == nil {
 		return ab2bus.Bridge{}, unparsable(r.StatusCode())
 	}
-	return fromGenBridge(*r.JSON200)
+	return FromGenBridge(*r.JSON200)
 }
 
 // RemoveBridge archives the Slack channel of a channel's bridge and deletes

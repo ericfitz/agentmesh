@@ -32,10 +32,15 @@ func channelACLFromGen(in []gen.ACLEntry) []bus.ACLEntry {
 func channelACLToGen(in []bus.ACLEntry) []gen.ACLEntry {
 	out := make([]gen.ACLEntry, len(in))
 	for i, e := range in {
-		out[i] = gen.ACLEntry{Identity: e.Identity, Permissions: make([]gen.ACLEntryPermissions, len(e.Permissions))}
-		for j, p := range e.Permissions {
-			out[i].Permissions[j] = gen.ACLEntryPermissions(p)
-		}
+		out[i] = aclEntryToGen(e)
+	}
+	return out
+}
+
+func aclEntryToGen(e bus.ACLEntry) gen.ACLEntry {
+	out := gen.ACLEntry{Identity: e.Identity, Permissions: make([]gen.ACLEntryPermissions, len(e.Permissions))}
+	for j, p := range e.Permissions {
+		out.Permissions[j] = gen.ACLEntryPermissions(p)
 	}
 	return out
 }

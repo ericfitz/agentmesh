@@ -7,8 +7,8 @@ import (
 	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
-func fromGenTaskResult(r gen.TaskUpdateResult) ab2bus.TaskUpdateResult {
-	return ab2bus.TaskUpdateResult{Task: fromGenTask(r.Task), Replaced: r.Replaced, Deleted: deref(r.Deleted)}
+func FromGenTaskResult(r gen.TaskUpdateResult) ab2bus.TaskUpdateResult {
+	return ab2bus.TaskUpdateResult{Task: FromGenTask(r.Task), Replaced: r.Replaced, Deleted: deref(r.Deleted)}
 }
 
 func (b *Bus) Create(ctx context.Context, in ab2bus.TaskCreateInput) (ab2bus.Task, error) {
@@ -21,7 +21,7 @@ func (b *Bus) Create(ctx context.Context, in ab2bus.TaskCreateInput) (ab2bus.Tas
 	if err := mtCheck(ctx, r, err, func(r *gen.CreateTaskResponse) bool { return r.JSON201 != nil }); err != nil {
 		return ab2bus.Task{}, err
 	}
-	return fromGenTask(*r.JSON201), nil
+	return FromGenTask(*r.JSON201), nil
 }
 
 func (b *Bus) GetTask(ctx context.Context, id int64) (ab2bus.Task, error) {
@@ -29,7 +29,7 @@ func (b *Bus) GetTask(ctx context.Context, id int64) (ab2bus.Task, error) {
 	if err := mtCheck(ctx, r, err, func(r *gen.GetTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.Task{}, err
 	}
-	return fromGenTask(*r.JSON200), nil
+	return FromGenTask(*r.JSON200), nil
 }
 
 func (b *Bus) List(ctx context.Context, in ab2bus.TaskListInput) ([]ab2bus.TaskSummary, error) {
@@ -39,7 +39,7 @@ func (b *Bus) List(ctx context.Context, in ab2bus.TaskListInput) ([]ab2bus.TaskS
 	}
 	out := make([]ab2bus.TaskSummary, len(*r.JSON200))
 	for i, s := range *r.JSON200 {
-		out[i] = fromGenTaskSummary(s)
+		out[i] = FromGenTaskSummary(s)
 	}
 	return out, nil
 }
@@ -58,7 +58,7 @@ func (b *Bus) Update(ctx context.Context, p ab2bus.TaskPatch) (ab2bus.TaskUpdate
 	if err := mtCheck(ctx, r, err, func(r *gen.UpdateTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.TaskUpdateResult{}, err
 	}
-	return fromGenTaskResult(*r.JSON200), nil
+	return FromGenTaskResult(*r.JSON200), nil
 }
 
 func (b *Bus) Claim(ctx context.Context, in ab2bus.TaskClaimInput) (ab2bus.TaskUpdateResult, error) {
@@ -67,7 +67,7 @@ func (b *Bus) Claim(ctx context.Context, in ab2bus.TaskClaimInput) (ab2bus.TaskU
 	if err := mtCheck(ctx, r, err, func(r *gen.ClaimTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.TaskUpdateResult{}, err
 	}
-	return fromGenTaskResult(*r.JSON200), nil
+	return FromGenTaskResult(*r.JSON200), nil
 }
 
 func (b *Bus) Release(ctx context.Context, in ab2bus.TaskReleaseInput) (ab2bus.TaskUpdateResult, error) {
@@ -75,5 +75,5 @@ func (b *Bus) Release(ctx context.Context, in ab2bus.TaskReleaseInput) (ab2bus.T
 	if err := mtCheck(ctx, r, err, func(r *gen.ReleaseTaskResponse) bool { return r.JSON200 != nil }); err != nil {
 		return ab2bus.TaskUpdateResult{}, err
 	}
-	return fromGenTaskResult(*r.JSON200), nil
+	return FromGenTaskResult(*r.JSON200), nil
 }

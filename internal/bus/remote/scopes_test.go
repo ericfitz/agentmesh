@@ -18,21 +18,21 @@ func wantInternal(t *testing.T, err error, member string) {
 }
 
 func TestFromGenScopeRejectsUnknownState(t *testing.T) {
-	_, err := fromGenScope(gen.Scope{Name: "j", State: "paused"})
+	_, err := FromGenScope(gen.Scope{Name: "j", State: "paused"})
 	wantInternal(t, err, "state")
 	retire := gen.ScopeRetire("later")
-	_, err = fromGenScope(gen.Scope{Name: "j", State: gen.ScopeState("done"), Retire: &retire})
+	_, err = FromGenScope(gen.Scope{Name: "j", State: gen.ScopeState("done"), Retire: &retire})
 	wantInternal(t, err, "retire")
 
 	for _, st := range []string{"open", "done", "retired"} {
-		sc, err := fromGenScope(gen.Scope{Name: "j", State: gen.ScopeState(st)})
+		sc, err := FromGenScope(gen.Scope{Name: "j", State: gen.ScopeState(st)})
 		if err != nil || string(sc.State) != st {
 			t.Fatalf("state %q = %+v, %v", st, sc, err)
 		}
 	}
 	for _, m := range []string{"with_bridge", "normal"} {
 		r := gen.ScopeRetire(m)
-		sc, err := fromGenScope(gen.Scope{Name: "j", State: "done", Retire: &r})
+		sc, err := FromGenScope(gen.Scope{Name: "j", State: "done", Retire: &r})
 		if err != nil || string(sc.Retire) != m {
 			t.Fatalf("retire %q = %+v, %v", m, sc, err)
 		}
@@ -40,10 +40,10 @@ func TestFromGenScopeRejectsUnknownState(t *testing.T) {
 }
 
 func TestFromGenBridgeRejectsUnknownState(t *testing.T) {
-	_, err := fromGenBridge(gen.Bridge{Channel: "c", State: "paused"})
+	_, err := FromGenBridge(gen.Bridge{Channel: "c", State: "paused"})
 	wantInternal(t, err, "state")
 	for _, st := range []string{"creating", "live", "archived"} {
-		b, err := fromGenBridge(gen.Bridge{Channel: "c", State: gen.BridgeState(st)})
+		b, err := FromGenBridge(gen.Bridge{Channel: "c", State: gen.BridgeState(st)})
 		if err != nil || string(b.State) != st {
 			t.Fatalf("state %q = %+v, %v", st, b, err)
 		}

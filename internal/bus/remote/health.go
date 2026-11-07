@@ -18,5 +18,5 @@ func (b *Bus) Health(ctx context.Context) (ab2bus.Health, error) {
 	if r.JSON200 == nil {
 		return ab2bus.Health{}, unparsable(r.StatusCode())
 	}
-	return fromGenHealth(*r.JSON200)
+	return FromGenHealth(*r.JSON200)
 }

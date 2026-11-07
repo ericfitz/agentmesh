@@ -12,11 +12,11 @@ import (
 func TestTaskConvertReclaimedMark(t *testing.T) {
 	const at = int64(1_700_000_000_000)
 	task := bus.Task{ID: 1, Subject: "s", Status: "pending", Rank: "m", ReclaimedFrom: "pat", ReclaimedAt: at}
-	if got := fromGenTask(toGenTask(task)); got.ReclaimedFrom != "pat" || got.ReclaimedAt != at {
+	if got := FromGenTask(toGenTask(task)); got.ReclaimedFrom != "pat" || got.ReclaimedAt != at {
 		t.Fatalf("task round trip mark = %q, %d", got.ReclaimedFrom, got.ReclaimedAt)
 	}
 	sum := bus.TaskSummary{ID: 1, Subject: "s", Status: "pending", ReclaimedFrom: "pat", ReclaimedAt: at}
-	if got := fromGenTaskSummary(toGenTaskSummary(sum)); got.ReclaimedFrom != "pat" || got.ReclaimedAt != at {
+	if got := FromGenTaskSummary(toGenTaskSummary(sum)); got.ReclaimedFrom != "pat" || got.ReclaimedAt != at {
 		t.Fatalf("summary round trip mark = %q, %d", got.ReclaimedFrom, got.ReclaimedAt)
 	}
 	g := toGenTask(bus.Task{ID: 1, Subject: "s", Status: "pending", Rank: "m"})

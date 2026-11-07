@@ -7,9 +7,9 @@ import (
 	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
-// fromGenAgentStatus copies the tag as a string: a tag this build does not
+// FromGenAgentStatus copies the tag as a string: a tag this build does not
 // know is passed through, not rejected (open note: agent-status 1).
-func fromGenAgentStatus(g gen.AgentStatus) ab2bus.AgentStatus {
+func FromGenAgentStatus(g gen.AgentStatus) ab2bus.AgentStatus {
 	return ab2bus.AgentStatus{
 		Identity: g.Identity, Revision: g.Revision, Tag: ab2bus.StatusTag(g.Tag),
 		LastTag: ab2bus.StatusTag(derefStr(g.LastTag)), Text: g.Text, Problem: derefStr(g.Problem),
@@ -39,7 +39,7 @@ func (b *Bus) SetAgentStatus(ctx context.Context, in ab2bus.SetAgentStatusInput)
 	if r.JSON200 == nil {
 		return ab2bus.AgentStatus{}, unparsable(r.StatusCode())
 	}
-	return fromGenAgentStatus(*r.JSON200), nil
+	return FromGenAgentStatus(*r.JSON200), nil
 }
 
 func (b *Bus) AgentStatuses(ctx context.Context) ([]ab2bus.AgentStatusEntry, error) {
@@ -59,7 +59,7 @@ func (b *Bus) AgentStatuses(ctx context.Context) ([]ab2bus.AgentStatusEntry, err
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, ab2bus.AgentStatusEntry{Identity: e.Identity, Kind: kind, Live: e.Live, Status: fromGenAgentStatus(e.Status)})
+		out = append(out, ab2bus.AgentStatusEntry{Identity: e.Identity, Kind: kind, Live: e.Live, Status: FromGenAgentStatus(e.Status)})
 	}
 	return out, nil
 }
@@ -80,7 +80,7 @@ func (b *Bus) AgentStatusHistory(ctx context.Context, identity string) ([]ab2bus
 	}
 	out := make([]ab2bus.AgentStatus, 0, len(*r.JSON200))
 	for _, s := range *r.JSON200 {
-		out = append(out, fromGenAgentStatus(s))
+		out = append(out, FromGenAgentStatus(s))
 	}
 	return out, nil
 }

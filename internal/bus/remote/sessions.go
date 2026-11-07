@@ -85,7 +85,7 @@ func (b *Bus) Receive(ctx context.Context, in ab2bus.ReceiveInput) (ab2bus.Recei
 		Notice: deref(w.Notice), Instruction: deref(w.Instruction),
 	}
 	for _, m := range w.Messages {
-		msg, err := fromGenMessage(m)
+		msg, err := FromGenMessage(m)
 		if err != nil {
 			return ab2bus.ReceiveResult{}, err
 		}
@@ -141,7 +141,7 @@ func (b *Bus) Identities(ctx context.Context) ([]ab2bus.IdentityInfo, error) {
 		}
 		info := ab2bus.IdentityInfo{Name: i.Name, Kind: kind, Admin: i.Admin}
 		if i.Status != nil {
-			st := fromGenAgentStatus(*i.Status)
+			st := FromGenAgentStatus(*i.Status)
 			info.Status = &st
 		}
 		for _, s := range i.Sessions {

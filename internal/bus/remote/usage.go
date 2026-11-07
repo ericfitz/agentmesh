@@ -19,12 +19,12 @@ func (b *Bus) Usage(ctx context.Context) (ab2bus.Usage, error) {
 	if r.JSON200 == nil {
 		return ab2bus.Usage{}, unparsable(r.StatusCode())
 	}
-	return fromGenUsage(*r.JSON200)
+	return FromGenUsage(*r.JSON200)
 }
 
-// fromGenUsage maps the wire usage reading; a tier outside the five is an
+// FromGenUsage maps the wire usage reading; a tier outside the five is an
 // internal error naming the member.
-func fromGenUsage(g gen.Usage) (ab2bus.Usage, error) {
+func FromGenUsage(g gen.Usage) (ab2bus.Usage, error) {
 	tier := ab2bus.PressureTier(g.Tier)
 	if !ab2bus.ValidPressureTier(tier) {
 		return ab2bus.Usage{}, unknownEnum("storage.tier", string(g.Tier))

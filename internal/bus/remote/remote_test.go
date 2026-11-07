@@ -189,14 +189,14 @@ func TestRemoteConvertRoundTrips(t *testing.T) {
 		Metadata: map[string]string{"k": "v"}, MemoryID: &mem, Revision: &rev,
 		Tags: []string{"a"}, MatchedTags: []string{"a"},
 	}
-	if got, err := fromGenMessage(toGenMessage(m)); err != nil || !reflect.DeepEqual(got, m) {
+	if got, err := FromGenMessage(toGenMessage(m)); err != nil || !reflect.DeepEqual(got, m) {
 		t.Fatalf("message: %+v != %+v", got, m)
 	}
-	if got, err := fromGenMessage(toGenMessage(ab2bus.Message{Content: "x", SenderKind: ab2bus.IdentityAgent})); err != nil || got.Content != "x" || got.Session != "" || got.Tags != nil {
+	if got, err := FromGenMessage(toGenMessage(ab2bus.Message{Content: "x", SenderKind: ab2bus.IdentityAgent})); err != nil || got.Content != "x" || got.Session != "" || got.Tags != nil {
 		t.Fatalf("minimal message: %+v", got)
 	}
 	e := ab2bus.ACLEntry{Identity: "i", Permissions: []ab2bus.Permission{ab2bus.PermRead, ab2bus.PermAdmin}}
-	if got := fromGenACLEntry(toGenACLEntry(e)); !reflect.DeepEqual(got, e) {
+	if got := FromGenACLEntry(toGenACLEntry(e)); !reflect.DeepEqual(got, e) {
 		t.Fatalf("acl: %+v", got)
 	}
 	for _, k := range []ab2bus.Kind{ab2bus.KindOrdinary, ab2bus.KindMemory, ab2bus.KindTasks} {
@@ -209,11 +209,11 @@ func TestRemoteConvertRoundTrips(t *testing.T) {
 		Parent: 4, Rank: "r", BlockedBy: []int64{5}, LeasedUntil: 9, Metadata: map[string]string{"a": "b"},
 		Blocked: true, OpenBlockers: []int64{5}, UpdatedAt: 7, UpdatedBy: "u",
 	}
-	if got := fromGenTask(toGenTask(tk)); !reflect.DeepEqual(got, tk) {
+	if got := FromGenTask(toGenTask(tk)); !reflect.DeepEqual(got, tk) {
 		t.Fatalf("task: %+v", got)
 	}
 	ts := ab2bus.TaskSummary{ID: 1, Subject: "s", Status: "open", Owner: "o", Parent: 2, Depth: 1, OpenBlockers: []int64{3}, LeasedUntil: 4, HasDetails: true}
-	if got := fromGenTaskSummary(toGenTaskSummary(ts)); !reflect.DeepEqual(got, ts) {
+	if got := FromGenTaskSummary(toGenTaskSummary(ts)); !reflect.DeepEqual(got, ts) {
 		t.Fatalf("summary: %+v", got)
 	}
 }

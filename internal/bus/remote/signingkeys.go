@@ -7,9 +7,9 @@ import (
 	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
-// fromGenSigningKey converts a wire key, refusing a state, provider or
+// FromGenSigningKey converts a wire key, refusing a state, provider or
 // algorithm outside the closed sets.
-func fromGenSigningKey(g gen.SigningKey) (ab2bus.SigningKey, error) {
+func FromGenSigningKey(g gen.SigningKey) (ab2bus.SigningKey, error) {
 	if !g.State.Valid() {
 		return ab2bus.SigningKey{}, unknownWire("state", string(g.State))
 	}
@@ -39,7 +39,7 @@ func (b *Bus) ListSigningKeys(ctx context.Context) ([]ab2bus.SigningKey, error) 
 	}
 	out := make([]ab2bus.SigningKey, 0, len(r.JSON200.Keys))
 	for _, g := range r.JSON200.Keys {
-		k, err := fromGenSigningKey(g)
+		k, err := FromGenSigningKey(g)
 		if err != nil {
 			return nil, err
 		}
@@ -65,11 +65,11 @@ func (b *Bus) RotateSigningKey(ctx context.Context, in ab2bus.RotateSigningKeyIn
 		return ab2bus.SigningKeyRotation{}, unparsable(r.StatusCode())
 	}
 	out := ab2bus.SigningKeyRotation{Revoked: r.JSON200.Revoked}
-	if out.Active, err = fromGenSigningKey(r.JSON200.Active); err != nil {
+	if out.Active, err = FromGenSigningKey(r.JSON200.Active); err != nil {
 		return ab2bus.SigningKeyRotation{}, err
 	}
 	if r.JSON200.Previous != nil {
-		if out.Previous, err = fromGenSigningKey(*r.JSON200.Previous); err != nil {
+		if out.Previous, err = FromGenSigningKey(*r.JSON200.Previous); err != nil {
 			return ab2bus.SigningKeyRotation{}, err
 		}
 	}

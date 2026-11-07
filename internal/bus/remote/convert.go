@@ -58,7 +58,7 @@ func fromGenIdentityKind(field, k string) (ab2bus.IdentityKind, error) {
 	return "", &ab2bus.Error{Code: ab2bus.CodeInternal, Message: fmt.Sprintf("server sent unknown %s %q", field, k)}
 }
 
-func fromGenMessage(m gen.Message) (ab2bus.Message, error) {
+func FromGenMessage(m gen.Message) (ab2bus.Message, error) {
 	kind, err := fromGenIdentityKind("sender_kind", string(m.SenderKind))
 	if err != nil {
 		return ab2bus.Message{}, err
@@ -86,7 +86,7 @@ func fromGenKind(k gen.ChannelKind) ab2bus.Kind { return ab2bus.Kind(k) }
 
 func toGenKind(k ab2bus.Kind) gen.ChannelKind { return gen.ChannelKind(k) }
 
-func fromGenACLEntry(e gen.ACLEntry) ab2bus.ACLEntry {
+func FromGenACLEntry(e gen.ACLEntry) ab2bus.ACLEntry {
 	out := ab2bus.ACLEntry{Identity: e.Identity}
 	if e.Permissions != nil {
 		out.Permissions = make([]ab2bus.Permission, len(e.Permissions))
@@ -105,7 +105,7 @@ func toGenACLEntry(e ab2bus.ACLEntry) gen.ACLEntry {
 	return out
 }
 
-func fromGenTask(t gen.Task) ab2bus.Task {
+func FromGenTask(t gen.Task) ab2bus.Task {
 	return ab2bus.Task{
 		ID: t.Id, Channel: t.Channel, Revision: t.Revision, Subject: t.Subject,
 		Description: deref(t.Description), Status: t.Status, Owner: deref(t.Owner),
@@ -127,7 +127,7 @@ func toGenTask(t ab2bus.Task) gen.Task {
 	}
 }
 
-func fromGenTaskSummary(s gen.TaskSummary) ab2bus.TaskSummary {
+func FromGenTaskSummary(s gen.TaskSummary) ab2bus.TaskSummary {
 	return ab2bus.TaskSummary{
 		ID: s.Id, Subject: s.Subject, Status: s.Status, Owner: deref(s.Owner),
 		Parent: deref(s.Parent), Depth: s.Depth, OpenBlockers: deref(s.OpenBlockers),
@@ -153,11 +153,11 @@ func unknownEnum(member, v string) error {
 	return &ab2bus.Error{Code: ab2bus.CodeInternal, Message: fmt.Sprintf("server sent unknown health %s %q", member, v)}
 }
 
-// fromGenHealth maps the wire health document; an enum value outside spec
+// FromGenHealth maps the wire health document; an enum value outside spec
 // 2026-10-25 section 4 is an internal error naming the member (a server
 // speaking another protocol). Absent members stay nil; the arrays of the
 // admin tier are never nil.
-func fromGenHealth(g gen.Health) (ab2bus.Health, error) {
+func FromGenHealth(g gen.Health) (ab2bus.Health, error) {
 	out := ab2bus.Health{
 		Status: ab2bus.HealthStatus(g.Status), Tier: ab2bus.HealthTier(g.Tier),
 		Version: g.Version, ProtocolVersion: g.ProtocolVersion, Now: g.Now, StartedAt: deref(g.StartedAt),
@@ -185,7 +185,7 @@ func fromGenHealth(g gen.Health) (ab2bus.Health, error) {
 		}
 	}
 	if u := g.Storage; u != nil {
-		su, err := fromGenUsage(*u)
+		su, err := FromGenUsage(*u)
 		if err != nil {
 			return ab2bus.Health{}, err
 		}
