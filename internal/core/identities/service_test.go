@@ -17,6 +17,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
+	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/store"
@@ -268,6 +269,24 @@ func TestRegisterUnsetOrUnknownMode(t *testing.T) {
 		if _, ok := identityRow(t, s, "pat"); ok {
 			t.Fatalf("mode %q: row created", mode)
 		}
+	}
+}
+
+// An enrollment token over rules.MaxTokenBytes is validation in either mode,
+// where it used to be forbidden (issue #34); one of exactly the bound is
+// looked up as before.
+func TestRegisterEnrollmentTokenBound(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newSvc(t, nil)
+	for _, mode := range []Mode{ModeOpen, ModeEnrollment} {
+		_, err := s.Register(ctx, mode, RegisterInput{Identity: "pat", Key: genKey(t), EnrollmentToken: strings.Repeat("a", rules.MaxTokenBytes+1)})
+		wantCode(t, err, bus.CodeValidation)
+		wantDetail(t, err, "enrollment_token must be at most 1024 bytes")
+	}
+	_, err := s.Register(ctx, ModeEnrollment, RegisterInput{Identity: "pat", Key: genKey(t), EnrollmentToken: strings.Repeat("a", rules.MaxTokenBytes)})
+	wantCode(t, err, bus.CodeForbidden)
+	if _, ok := identityRow(t, s, "pat"); ok {
+		t.Fatal("row created")
 	}
 }
 

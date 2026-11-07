@@ -71,6 +71,11 @@ type ReceiveResult struct {
 	Instruction string
 }
 
+// MaxWatchTimeout is the longest timeout one Watch call accepts; the server
+// refuses a longer one with validation. A caller that waits longer re-arms
+// the watch in a loop. core.WatchSecondsCeiling is this value in seconds.
+const MaxWatchTimeout = 240 * time.Second
+
 // WatchInput arms the wake primitive for a session. A Timeout above the
 // configured maximum is clamped to it; a negative one is rejected.
 type WatchInput struct {

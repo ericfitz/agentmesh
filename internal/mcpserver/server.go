@@ -689,7 +689,7 @@ func (s *server) addTools(srv *mcp.Server) {
 					deadline := time.Now().Add(wait)
 					var floor int64
 					for rest := wait; rest > 0 && len(res.Messages) == 0; rest = time.Until(deadline) {
-						w, err := b.Watch(ctx, bus.WatchInput{Session: id, After: floor, Timeout: rest, IncludeOwn: in.IncludeOwn})
+						w, err := b.Watch(ctx, bus.WatchInput{Session: id, After: floor, Timeout: min(rest, bus.MaxWatchTimeout), IncludeOwn: in.IncludeOwn})
 						if err != nil {
 							return receiveOut{}, err
 						}

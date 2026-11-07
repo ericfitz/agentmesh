@@ -35,6 +35,9 @@ func RequireOpen(ctx context.Context, tx store.Tx, name string) (store.Scope, er
 
 // load reads a scope that is not retired: unknown and retired are not_found.
 func load(ctx context.Context, tx store.Tx, name string) (store.Scope, error) {
+	if err := store.NameRule(name); err != nil {
+		return store.Scope{}, core.E(bus.CodeValidation, "scope %s", err)
+	}
 	sc, err := tx.Scope(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Scope{}, core.E(bus.CodeNotFound, "scope %q does not exist", name)

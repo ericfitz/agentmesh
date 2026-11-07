@@ -3,9 +3,9 @@ package core
 import (
 	"context"
 	"errors"
-	"github.com/ericfitz/agentmesh/internal/core/rules"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 

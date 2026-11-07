@@ -76,33 +76,31 @@ func TestChannelNameRoundTripsOnTheWire(t *testing.T) {
 			})
 		}
 
-		// Names no path can carry: not_found from every operation that
-		// takes the name in the path (the origin differs by transport and
-		// need not be told apart here), validation from CreateChannel.
+		// Names no path can carry. The core's name rule refuses them before
+		// any lookup, so validation from every operation that takes the name
+		// (issue #34); the one exception is the empty name on the wire, where
+		// the empty path segment is the router's 404 (not_found), and Send,
+		// whose empty channel is the required-field validation either way.
 		for _, name := range []string{"", "a/b"} {
 			t.Run("unaddressable "+name, func(t *testing.T) {
-				if err := pat.Subscribe(ctx, ab2bus.SubscribeInput{Channel: name}); ab2bus.CodeOf(err) != ab2bus.CodeNotFound {
-					t.Errorf("Subscribe = %v, want not_found", err)
+				want := ab2bus.CodeValidation
+				if name == "" && transport == "inproc" {
+					want = ab2bus.CodeNotFound
 				}
-				if _, err := pat.ACL(ctx, name); ab2bus.CodeOf(err) != ab2bus.CodeNotFound {
-					t.Errorf("ACL = %v, want not_found", err)
+				if err := pat.Subscribe(ctx, ab2bus.SubscribeInput{Channel: name}); ab2bus.CodeOf(err) != want {
+					t.Errorf("Subscribe = %v, want %s", err, want)
 				}
-				if err := pat.DeleteChannel(ctx, ab2bus.DeleteChannelInput{Name: name}); ab2bus.CodeOf(err) != ab2bus.CodeNotFound {
-					t.Errorf("DeleteChannel = %v, want not_found", err)
+				if _, err := pat.ACL(ctx, name); ab2bus.CodeOf(err) != want {
+					t.Errorf("ACL = %v, want %s", err, want)
 				}
-				// Send names the channel in the path too, but an empty name is
-				// the core's required-field validation; on the wire the empty
-				// segment would be the router's 404, so the remote Bus answers
-				// validation itself (Decision (Eric, 2026-10-21): Milestone 4 item 6).
-				wantSend := ab2bus.CodeNotFound
-				if name == "" {
-					wantSend = ab2bus.CodeValidation
+				if err := pat.DeleteChannel(ctx, ab2bus.DeleteChannelInput{Name: name}); ab2bus.CodeOf(err) != want {
+					t.Errorf("DeleteChannel = %v, want %s", err, want)
 				}
-				if _, err := pat.Send(ctx, ab2bus.SendInput{Channel: name, Content: "x"}); ab2bus.CodeOf(err) != wantSend {
-					t.Errorf("Send = %v, want %s", err, wantSend)
+				if _, err := pat.Send(ctx, ab2bus.SendInput{Channel: name, Content: "x"}); ab2bus.CodeOf(err) != ab2bus.CodeValidation {
+					t.Errorf("Send = %v, want validation", err)
 				}
-				if _, err := pat.History(ctx, ab2bus.HistoryInput{Channel: name}); ab2bus.CodeOf(err) != ab2bus.CodeNotFound {
-					t.Errorf("History = %v, want not_found", err)
+				if _, err := pat.History(ctx, ab2bus.HistoryInput{Channel: name}); ab2bus.CodeOf(err) != want {
+					t.Errorf("History = %v, want %s", err, want)
 				}
 				if _, err := pat.CreateChannel(ctx, ab2bus.CreateChannelInput{Name: name}); ab2bus.CodeOf(err) != ab2bus.CodeValidation {
 					t.Errorf("CreateChannel = %v, want validation", err)

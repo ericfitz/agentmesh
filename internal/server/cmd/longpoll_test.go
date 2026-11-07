@@ -158,8 +158,10 @@ func TestOddChannelNameOverTCP(t *testing.T) {
 	if err := json.Unmarshal(sr.Body, &p); err != nil {
 		t.Fatalf("a/b: body %q is not a problem document: %v", sr.Body, err)
 	}
-	if sr.StatusCode() != http.StatusNotFound || p.Code != gen.ProblemCodeNotFound ||
-		p.Detail == nil || *p.Detail != `channel "a/b" does not exist` {
-		t.Fatalf("a/b: status %d body %s, want not_found naming the channel", sr.StatusCode(), sr.Body)
+	// The decoded name reaches the core, whose name rule refuses a '/' before
+	// any lookup (issue #34); a route miss would be a 404 with another body.
+	if sr.StatusCode() != http.StatusBadRequest || p.Code != gen.ProblemCodeValidation ||
+		p.Detail == nil || *p.Detail != `channel must not contain '/'` {
+		t.Fatalf("a/b: status %d body %s, want validation naming the rule", sr.StatusCode(), sr.Body)
 	}
 }

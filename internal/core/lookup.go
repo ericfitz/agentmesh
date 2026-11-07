@@ -21,8 +21,12 @@ func (c *Core) RequireServerAdmin(ctx context.Context, tx store.Tx, identity str
 	return c.Access.Require(ctx, tx, p, access.Server{}, access.Administer)
 }
 
-// ChannelByName looks a channel up, not_found when it does not exist.
+// ChannelByName looks a channel up: validation for a name the name rule
+// refuses (a path parameter feeds it), not_found when it does not exist.
 func (c *Core) ChannelByName(ctx context.Context, tx store.Tx, name string) (store.Channel, error) {
+	if err := store.NameRule(name); err != nil {
+		return store.Channel{}, E(bus.CodeValidation, "channel %s", err)
+	}
 	ch, err := tx.ChannelByName(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Channel{}, E(bus.CodeNotFound, "channel %q does not exist", name)

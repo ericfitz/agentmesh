@@ -223,6 +223,9 @@ func noBridge(channel string) error {
 // bridgeOf finds the bridge of the channel name in tx. It matches the stored
 // name, so a bridge whose channel was removed behind its back is still found.
 func bridgeOf(ctx context.Context, tx store.Tx, channel string) (store.Bridge, error) {
+	if err := store.NameRule(channel); err != nil {
+		return store.Bridge{}, core.E(bus.CodeValidation, "channel %s", err)
+	}
 	all, err := tx.ListBridges(ctx)
 	if err != nil {
 		return store.Bridge{}, err

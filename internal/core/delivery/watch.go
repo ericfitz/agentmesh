@@ -12,9 +12,6 @@ import (
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
-// WatchCeiling is core.WatchSecondsCeiling as a duration.
-const WatchCeiling = core.WatchSecondsCeiling * time.Second
-
 // Watch is the wake primitive (Decisions 42, 45, 68): it registers a fresh
 // watch id on the session, replacing any older watch, and returns when a
 // message the session has not been handed arrives, the timeout passes (Woke
@@ -26,7 +23,7 @@ func (s Service) Watch(ctx context.Context, identity string, in bus.WatchInput) 
 	if in.Timeout < 0 {
 		return bus.WatchResult{}, core.E(bus.CodeValidation, "timeout must not be negative")
 	}
-	if in.Timeout > WatchCeiling {
+	if in.Timeout > bus.MaxWatchTimeout {
 		return bus.WatchResult{}, core.E(bus.CodeValidation, "timeout must be at most %d seconds", core.WatchSecondsCeiling)
 	}
 	if err := rules.NonNegative("after", in.After); err != nil {

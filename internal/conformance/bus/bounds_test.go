@@ -51,6 +51,7 @@ func TestOverBoundRefused(t *testing.T) {
 		memID := h.append(mem, "pat", "", "hello")
 		sess := h.session("pat", "pat/impl")
 		b := h.as("pat")
+		admin := h.admin("root")
 		ctx := context.Background()
 		sid := sess.ID
 		// A task carrying 16 metadata keys, for the merged-patch case.
@@ -241,6 +242,26 @@ func TestOverBoundRefused(t *testing.T) {
 				_, err := b.AgentStatusHistory(ctx, long(129))
 				return err
 			}, "1-128 bytes"},
+			{"send_channel_bytes", send(ab2bus.SendInput{Channel: long(129)}), "1-128 bytes"},
+			{"history_channel_bytes", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.History(ctx, ab2bus.HistoryInput{Channel: long(129)})
+				return err
+			}, "1-128 bytes"},
+			{"scope_get_name_bytes", func(ctx context.Context, _ ab2bus.Bus) error {
+				_, err := admin.GetScope(ctx, long(129))
+				return err
+			}, "1-128 bytes"},
+			{"scope_done_name_bytes", func(ctx context.Context, _ ab2bus.Bus) error {
+				_, err := admin.DoneScope(ctx, ab2bus.DoneScopeInput{Name: long(129), Retire: ab2bus.RetireNormal})
+				return err
+			}, "1-128 bytes"},
+			{"watch_session_bytes", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.Watch(ctx, ab2bus.WatchInput{Session: long(1025)})
+				return err
+			}, "at most 1024 bytes"},
+			{"close_session_bytes", func(ctx context.Context, b ab2bus.Bus) error {
+				return b.Close(ctx, ab2bus.CloseSessionInput{Session: long(1025)})
+			}, "at most 1024 bytes"},
 			{"idempotency_key_bytes", func(ctx context.Context, b ab2bus.Bus) error {
 				_, err := b.CreateChannel(ctx, ab2bus.CreateChannelInput{Name: "idem", IdempotencyKey: long(1025)})
 				return err
@@ -287,4 +308,65 @@ func TestRuneCountsAgree(t *testing.T) {
 			}
 		})
 	})
+}
+
+// TestAtBoundAccepted sends each bound exactly at its limit: the refusals
+// above are strictly "over", so an off-by-one (>= for >) fails here.
+func TestAtBoundAccepted(t *testing.T) {
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		h := newHarness(t, e, harnessOptions{})
+		ctx := context.Background()
+		dev := h.channel("dev", ab2store.KindOrdinary, "pat", nil)
+		b, sess := recvOpen(h, "pat", "dev")
+		h.append(dev, "sam", "", "pending")
+		long := func(n int) string { return boundsRep("a", n) }
+		ok := func(name string, err error) {
+			t.Helper()
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+		}
+
+		res, err := b.Watch(ctx, ab2bus.WatchInput{Session: sess.ID, Timeout: ab2bus.MaxWatchTimeout})
+		ok("watch 240s", err)
+		if err == nil && !res.Woke {
+			t.Error("watch 240s: did not wake on the pending message")
+		}
+		_, err = b.History(ctx, ab2bus.HistoryInput{Channel: "dev", Count: 10000})
+		ok("history count 10000", err)
+		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: sess.ID, Count: 10000})
+		ok("receive count 10000", err)
+		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: long(1024)})
+		codeOf(t, err, ab2bus.CodeNotFound) // past the bound check, then unknown
+		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: sess.ID, Ack: long(1024)})
+		ok("ack 1024 bytes", err)
+		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: sess.ID, Channels: slicesRepeat("dev", 256)})
+		ok("256 receive channels", err)
+		cs := make([]ab2bus.OfferedCursor, 256)
+		for i := range cs {
+			cs[i] = ab2bus.OfferedCursor{Channel: fmt.Sprintf("c%d", i)}
+		}
+		_, err = b.Open(ctx, ab2bus.OpenSessionInput{Cursors: cs})
+		ok("256 cursors", err)
+		acl := make([]ab2bus.ACLEntry, 256)
+		for i := range acl {
+			name := fmt.Sprintf("u%d", i)
+			h.ensureIdentity(name)
+			acl[i] = ab2bus.ACLEntry{Identity: name, Permissions: []ab2bus.Permission{"read"}}
+		}
+		_, err = b.CreateChannel(ctx, ab2bus.CreateChannelInput{Name: "acl256", ACL: acl})
+		ok("256 ACL entries", err)
+		_, err = b.CreateChannel(ctx, ab2bus.CreateChannelInput{Name: "perm3", ACL: []ab2bus.ACLEntry{{Identity: "everyone", Permissions: []ab2bus.Permission{"read", "write", "admin"}}}})
+		ok("3 permissions", err)
+		_, err = b.Send(ctx, ab2bus.SendInput{Channel: "dev", Content: "x", Metadata: boundsKeys(32), Tags: boundsTags(10), Session: sess.ID})
+		ok("32 metadata keys and 10 tags", err)
+	})
+}
+
+func slicesRepeat(s string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = s
+	}
+	return out
 }

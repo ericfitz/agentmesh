@@ -3,7 +3,9 @@ package core
 import (
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -147,7 +149,7 @@ const (
 	ReceiveCountCeiling = 10000
 	// WatchSecondsCeiling is the largest watch_max_seconds, and the longest
 	// timeout of a watch request, in seconds.
-	WatchSecondsCeiling = 240
+	WatchSecondsCeiling = int(bus.MaxWatchTimeout / time.Second)
 	// MessageKiBCeiling is the largest max_message_kib.
 	MessageKiBCeiling = 1024
 )

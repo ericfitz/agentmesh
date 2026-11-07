@@ -44,9 +44,10 @@ func (s Service) History(ctx context.Context, identity string, in bus.HistoryInp
 		if err := s.Access.Require(ctx, tx, p, access.Channel{ID: ch.ID}, access.Read); err != nil {
 			return err
 		}
-		// The inputs are checked after registration, the channel and the read
-		// permission, so a caller who may not read gets the auth code (v1 ran
-		// auth first).
+		// The bounds (count ceiling, negative after and before) were refused
+		// above, on the input alone. The rest of the inputs are checked after
+		// registration, the channel and the read permission, so a caller who
+		// may not read gets the auth code (v1 ran auth first).
 		count := in.Count
 		if count == 0 {
 			count = s.Cfg.ReceiveDefaultCount

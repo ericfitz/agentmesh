@@ -545,6 +545,26 @@ func TestReceiveAckRoundTrip(t *testing.T) {
 	r.mustFail(t, "receive", map[string]any{}, bus.CodeValidation)
 }
 
+// A wait_seconds above the server's per-call watch ceiling (240 s) loops on
+// shorter watches instead of failing validation (issue #34).
+func TestReceiveWaitSecondsAboveWatchCeiling(t *testing.T) {
+	e := newTestEnv(t)
+	r := startServer(t, e, newFakeTable(), "test-client")
+	sam := e.conn(t, "sam")
+	ctx := context.Background()
+
+	sid := str(r.must(t, "register", nil), "session")
+	r.must(t, "subscribe", map[string]any{"channel": "general"})
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_, _ = sam.Bus.Send(ctx, bus.SendInput{Channel: "general", Content: "wake"})
+	}()
+	got := r.must(t, "receive", map[string]any{"session": sid, "wait_seconds": 600})
+	if len(arr(got, "messages")) != 1 {
+		t.Fatalf("wait_seconds 600 receive: %v", got)
+	}
+}
+
 func TestReceiveWaitSecondsReplacesWatch(t *testing.T) {
 	e := newTestEnv(t)
 	r := startServer(t, e, newFakeTable(), "test-client")

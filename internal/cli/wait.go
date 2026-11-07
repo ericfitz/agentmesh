@@ -45,6 +45,8 @@ func waitOnce(ctx context.Context, s bus.Sessions, mf *wakeFilter, session strin
 				return errTimeout
 			}
 		}
+		// One call waits at most bus.MaxWatchTimeout; the loop re-arms.
+		remaining = min(remaining, bus.MaxWatchTimeout)
 		r, err := s.Watch(ctx, bus.WatchInput{Session: session, After: floor, Timeout: remaining, IncludeOwn: includeOwn})
 		if err != nil {
 			return err

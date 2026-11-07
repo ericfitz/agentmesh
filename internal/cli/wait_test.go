@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -277,5 +278,20 @@ func TestWaitResumesLapsedSession(t *testing.T) {
 	var so2, se2 testkit.LockedBuffer
 	if code := RunWait(ctx, nil, e2.Environ, strings.NewReader(""), &so2, &se2); code != 2 {
 		t.Fatalf("bad token: exit %d stderr %q", code, se2.String())
+	}
+}
+
+// waitOnce never asks one Watch for more than the server's per-call ceiling:
+// a -timeout of ten minutes arms a 240 s watch and loops (issue #34).
+func TestWaitOnceClampsWatchTimeout(t *testing.T) {
+	var got []time.Duration
+	stop := errors.New("stop")
+	s := stubSessions{watch: func(_ context.Context, in bus.WatchInput) (bus.WatchResult, error) {
+		got = append(got, in.Timeout)
+		return bus.WatchResult{}, stop
+	}}
+	err := waitOnce(context.Background(), s, nil, "sess", false, 10*time.Minute, io.Discard)
+	if !errors.Is(err, stop) || len(got) != 1 || got[0] != bus.MaxWatchTimeout {
+		t.Fatalf("waitOnce = %v, watch timeouts %v, want one call of %v", err, got, bus.MaxWatchTimeout)
 	}
 }
