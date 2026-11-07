@@ -6,9 +6,12 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus"
 )
 
-// The bounds of api/openapi.yaml that no older rule owns (issue #34, Eric's
-// decision of 2026-11-06). Each is a named constant so the spec test can
-// read it.
+// The bounds of api/openapi.yaml that no older rule owns (issue #34). Each is
+// a named constant so the spec test can read it. Who chose each value is in
+// the ADR 0001 addendum: MaxLabelRunes, MaxTokenBytes, the metadata constants
+// and MaxArrayItems are Eric's rule (b) values of 2026-11-06; MaxQueryRunes is
+// a plan ruling (Eric may overrule); MaxSearchCursorLen follows from the
+// cursor's format.
 const (
 	// MaxLabelRunes bounds a short free-form string (a message type, a status
 	// tag), in characters.
