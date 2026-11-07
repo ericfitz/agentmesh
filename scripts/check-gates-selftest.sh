@@ -1027,9 +1027,10 @@ block_eviction_message_floor_removed() {
 # internal/core/access/decide.go must be pinned by TestDecideSetStatus.
 # mutate_unit_block LABEL FILE FROM TO PKG RUN WANT: replace the anchor FROM
 # (exactly once in FILE) with TO in the worktree, require the change, run the
-# named unit test in PKG and require '--- FAIL: WANT' in its log.
+# named unit test in PKG and require '--- FAIL: WANT' (and, when given, the
+# text EXTRA) in its log.
 mutate_unit_block() {
-	local label="$1" file="$2" from="$3" to="$4" pkg="$5" run="$6" want="$7"
+	local label="$1" file="$2" from="$3" to="$4" pkg="$5" run="$6" want="$7" extra="${8:-}"
 	local log="$tmp/$label.log" f="$wt/$file" content
 	begin
 	if [ "$(grep -cF -- "$from" "$f")" -ne 1 ]; then
@@ -1042,6 +1043,7 @@ mutate_unit_block() {
 		else
 			(cd "$wt" && go test -count=1 -p 1 -v -run "$run" "$pkg" >"$log" 2>&1) || true
 			grep -qF -- "--- FAIL: $want" "$log" || problem "$label" "log lacks '--- FAIL: $want': $(tail -n 3 "$log" | tr '\n' ' ')"
+			if [ -n "$extra" ]; then grep -qF -- "$extra" "$log" || problem "$label" "log lacks '$extra'"; fi
 		fi
 	fi
 	finish "$label"
@@ -1231,6 +1233,118 @@ block_tool_coverage_fires() {
 		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/aliases
 }
 
+# --- 36. error-responses-fire ---------------------------------------------------------
+# issue #33: the code-to-status table (TestStatusTable), the per-operation table
+# (TestOperationErrorTable), the Retry-After header, the rate_limited constructor rule,
+# the strict unrouted-request assertion and the response validation wiring must each
+# turn red under one mutation. Spec mutations regenerate internal/gen in the worktree
+# first (mutate_spec_block), because the tests read the embedded document, not the YAML.
+# Docker-free except the two inproc conformance runs, which use the ambient Postgres
+# like block 7 (or testcontainers).
+
+# mutate_spec_block LABEL SCOPE FROM TO PKG RUN WANT: mutate api/openapi.yaml inside one
+# scope and regenerate internal/gen (both oapi-codegen configs) in $wt before the test.
+# SCOPE is a line of the file ("operationId: <id>" matches as a substring, a component key
+# such as "    TooManyRequests:" too) and must occur once; the span runs from that line to
+# the next line that is an operation method key (4 spaces), a path or top-level section
+# (2 spaces), or a top-level key, or to the end of the file. FROM must occur exactly once
+# in the span (whole-string count by length arithmetic, so a multi-line FROM works) and is
+# replaced by TO in that span only. A regeneration failure is a problem, not a skip.
+mutate_spec_block() {
+	local label="$1" scope="$2" from="$3" to="$4" pkg="$5" run="$6" want="$7"
+	local log="$tmp/$label.log" f="$wt/api/openapi.yaml" start end total span rest n
+	begin
+	start="$(awk -v s="$scope" 'index($0, s) { print NR }' "$f")"
+	if [ -z "$start" ] || [ "$(printf '%s\n' "$start" | wc -l | tr -d ' ')" -ne 1 ]; then
+		problem "$label" "scope not exactly once in api/openapi.yaml: $scope"
+		finish "$label"
+		revert
+		return
+	fi
+	total="$(wc -l <"$f" | tr -d ' ')"
+	end="$(awk -v st="$start" 'NR > st && ($0 ~ /^    [A-Za-z]+:$/ || $0 ~ /^  [^ ].*:$/ || $0 ~ /^[a-z]+:/) { print NR; exit }' "$f")"
+	[ -n "$end" ] || end=$((total + 1))
+	span="$(sed -n "${start},$((end - 1))p" "$f"; printf x)"
+	span="${span%x}"
+	rest="${span//"$from"/}"
+	n=$(((${#span} - ${#rest}) / ${#from}))
+	if [ "$n" -ne 1 ]; then
+		problem "$label" "anchor occurs $n times (want 1) in the span of '$scope': $from"
+	else
+		{
+			sed -n "1,$((start - 1))p" "$f"
+			printf '%s' "${span/"$from"/"$to"}"
+			sed -n "${end},\$p" "$f"
+		} >"$tmp/x" && cp "$tmp/x" "$f"
+		if cmp -s "$f" <(git -C "$wt" show HEAD:api/openapi.yaml); then
+			problem "$label" "mutation changed nothing in api/openapi.yaml"
+		elif ! (cd "$wt" && go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml && go tool oapi-codegen -config api/oapi-codegen-spec.yaml api/openapi.yaml) >"$log" 2>&1; then
+			problem "$label" "regenerate: $(tail -n 3 "$log" | tr '\n' ' ')"
+		else
+			(cd "$wt" && go test -count=1 -p 1 -v -run "$run" "$pkg" >"$log" 2>&1) || true
+			grep -qF -- "--- FAIL: $want" "$log" || problem "$label" "log lacks '--- FAIL: $want': $(tail -n 3 "$log" | tr '\n' ' ')"
+		fi
+	fi
+	finish "$label"
+	revert
+}
+
+# inproc_mutation_block LABEL FILE FROM TO TEST WANT...: mutate_block with the remote Bus
+# over the in-process transport (the run of block 11).
+inproc_mutation_block() {
+	AGENTMESH_BUS_TRANSPORT=inproc mutate_block "$@"
+}
+
+block_error_responses_fire() {
+	mutate_spec_block spec-status-undeclared 'operationId: sendMessage' \
+		$'        "429":\n          $ref: "#/components/responses/TooManyRequests"\n' '' \
+		./internal/server/ '^TestOperationErrorTable$' TestOperationErrorTable/sendMessage
+	# shellcheck disable=SC2016 # the anchors are literal YAML and Go text
+	mutate_spec_block spec-default-restored 'operationId: listChannels' \
+		'          $ref: "#/components/responses/ServiceUnavailable"' \
+		$'          $ref: "#/components/responses/ServiceUnavailable"\n        default:\n          $ref: "#/components/responses/BadRequest"' \
+		./internal/server/ '^TestStatusTable$' TestStatusTable/references
+	mutate_spec_block spec-code-narrowed-wrong '    TooManyRequests:' \
+		'enum: [rate_limited]' 'enum: [conflict]' \
+		./internal/server/ '^TestStatusTable$' TestStatusTable/shared_responses
+	mutate_spec_block spec-retry-after-optional '    TooManyRequests:' \
+		'required: true' 'required: false' \
+		./internal/server/ '^TestStatusTable$' TestStatusTable/shared_responses
+	mutate_unit_block status-for-wrong internal/server/problem.go \
+		'return http.StatusTooManyRequests' 'return http.StatusConflict' \
+		./internal/server/ '^TestStatusTable$' TestStatusTable/status_for
+	mutate_unit_block table-entry-spec-lacks internal/server/status_table_test.go \
+		'"listChannels": {},' '"listChannels": {bus.CodeRateLimited},' \
+		./internal/server/ '^TestOperationErrorTable$' TestOperationErrorTable/listChannels
+	# responseError and the one-second floor in writeProblemBody both set the header, so the
+	# mutation deletes it just before WriteHeader: every 429 answers header-less.
+	mutate_unit_block retry-after-header-dropped internal/server/problem.go \
+		'	w.WriteHeader(p.Status)' $'	w.Header().Del("Retry-After")\n	w.WriteHeader(p.Status)' \
+		./internal/server/ '^TestRateLimitedRetryAfterHeader$' TestRateLimitedRetryAfterHeader
+	mutate_unit_block problem-status-mismatch internal/server/problem.go \
+		'w.WriteHeader(p.Status)' 'w.WriteHeader(p.Status + 1)' \
+		./internal/server/ '^TestWriteProblemStatusMatches$' TestWriteProblemStatusMatches
+	mutate_unit_block rate-limited-site-unwrapped internal/core/messaging/send.go \
+		'		return core.AppendInput{}, 0, core.RateLimited(wait, "send_messages_per_second rate limit exceeded for %s", pl.p.Name)' \
+		$'		_ = core.E(bus.CodeRateLimited, "x")\n		return core.AppendInput{}, 0, core.RateLimited(wait, "send_messages_per_second rate limit exceeded for %s", pl.p.Name)' \
+		./internal/core/ '^TestRateLimitedSites$' TestRateLimitedSites
+	# a strict env.raw request on a mistyped path is counted as unrouted and fails the test
+	# shellcheck disable=SC2016
+	mutate_unit_block strict-raw-unrouted-caught internal/server/channels_test.go \
+		'jsonPost(t, "/v1/channels", `{"name":"dflt"}`)' 'jsonPost(t, "/v1/channelz", `{"name":"dflt"}`)' \
+		./internal/server/ '^TestCreateChannelACLNilVersusEmpty$' TestCreateChannelACLNilVersusEmpty \
+		'matched no operation of the document'
+	# the header's absence reaches the inproc suite through respcheck (header required: true)
+	inproc_mutation_block retry-after-unvalidated internal/server/problem.go \
+		'	w.WriteHeader(p.Status)' $'	w.Header().Del("Retry-After")\n	w.WriteHeader(p.Status)' \
+		TestSendRateLimited '--- FAIL: TestSendRateLimited' 'Retry-After'
+	# the one helper every inproc client goes through hands back the unwrapped transport
+	inproc_mutation_block respcheck-unwired internal/conformance/bus/main_test.go \
+		'return check.Transport(countEmptySegment{server.InProcessTransport(handlerFor(h), identity)}, respcheck.Report(h.t))' \
+		'return countEmptySegment{server.InProcessTransport(handlerFor(h), identity)}' \
+		TestInprocResponseCheckWired '--- FAIL: TestInprocResponseCheckWired'
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1266,6 +1380,7 @@ block_agent_status_rules_fire
 block_m10_deps_rule_fires
 block_wire_roundtrip_fires
 block_tool_coverage_fires
+block_error_responses_fire
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"
