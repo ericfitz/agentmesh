@@ -1351,9 +1351,9 @@ block_error_responses_fire() {
 # --- 37. spec-bounds-fire --------------------------------------------------------------
 # issue #34: every request field carries its bound (TestSpecBounds pins the spec to the Go
 # constants, TestValidatorRefusesOverBound the validator's refusal, TestOverBoundRefused the
-# core's). Mutations 1 to 8, 11 and 12 are Docker-free; 9 and 10 run the conformance suite on
-# the local transport (no AGENTMESH_BUS_TRANSPORT: the validator would answer first on inproc)
-# and need Docker or the ambient Postgres like blocks 9 to 11. The spec anchors are written
+# core's). Mutations 1 to 8 and 11 to 13 are Docker-free; 9 and 10 run the conformance suite on
+# the local transport (they set AGENTMESH_BUS_TRANSPORT=local: the validator would answer first
+# on inproc) and need Docker or the ambient Postgres like blocks 9 to 11. The spec anchors are written
 # against the committed text of api/openapi.yaml, scoped to SendRequest so each occurs once.
 block_spec_bounds_fire() {
 	local sub=TestSpecBounds/schemas/SendRequest.subject
@@ -1365,12 +1365,12 @@ block_spec_bounds_fire() {
 		./internal/server/ '^TestSpecBounds$' "$sub" 'spec lacks or differs'
 	mutate_unit_block go-constant-changed internal/core/rules/status.go \
 		'const MaxLineRunes = 200' 'const MaxLineRunes = 201' \
-		./internal/server/ '^TestSpecBounds$' "$sub"
+		./internal/server/ '^TestSpecBounds$' "$sub" 'want 201, spec has 200'
 	mutate_spec_block spec-field-unlisted '    SendRequest:' \
 		$'      properties:\n        subject:' \
 		$'      properties:\n        extra:\n          type: string\n          maxLength: 5\n        subject:' \
 		./internal/server/ '^TestSpecBounds$' TestSpecBounds/coverage \
-		'schemas/SendRequest.extra'
+		'has no row'
 	mutate_unit_block table-row-stale internal/server/spec_bounds_test.go \
 		'var bounds = map[string]bound{' \
 		$'var bounds = map[string]bound{\n\t"schemas/SendRequest.nope": {MaxLength: n(1), Unit: bytesUnit},' \
@@ -1385,23 +1385,29 @@ block_spec_bounds_fire() {
 	mutate_spec_block description-unit-missing '    SendRequest:' \
 		'description: At most 200 code points.' 'description: At most 200.' \
 		./internal/server/ '^TestSpecBounds$' "$sub" 'description lacks the unit'
-	mutate_block core-check-removed internal/core/rules/status.go \
+	AGENTMESH_BUS_TRANSPORT=local mutate_block core-check-removed internal/core/rules/status.go \
 		'if utf8.RuneCountInString(s) > MaxLineRunes {' 'if utf8.RuneCountInString(s) > MaxLineRunes*4 {' \
 		TestOverBoundRefused '--- FAIL: TestOverBoundRefused/sqlite/send_subject_runes' \
 		'--- FAIL: TestOverBoundRefused/postgres/send_subject_runes'
-	mutate_block tags-dedupe-restored internal/core/rules/tags.go \
+	AGENTMESH_BUS_TRANSPORT=local mutate_block tags-dedupe-restored internal/core/rules/tags.go \
 		$'	if len(tags) > MaxTags {\n		return nil, bus.Errorf(bus.CodeValidation, false, capFmt, MaxTags)\n	}\n' '' \
 		TestOverBoundRefused '--- FAIL: TestOverBoundRefused/sqlite/send_tags_duplicates' \
 		'--- FAIL: TestOverBoundRefused/postgres/send_tags_duplicates'
 	mutate_spec_block validator-bound-loosened '    SendRequest:' \
 		'maxLength: 200' 'maxLength: 100000' \
-		./internal/server/ '^TestValidatorRefusesOverBound$' TestValidatorRefusesOverBound/schemas/SendRequest.subject
+		./internal/server/ '^TestValidatorRefusesOverBound$' TestValidatorRefusesOverBound/schemas/SendRequest.subject \
+		"detail lacks the validator's"
 	# the probes are generated from the bounds table, so the row is the probe: commented out, the
 	# coverage subtest reports a spec bound with no probe
 	mutate_unit_block probe-missing internal/server/spec_bounds_test.go \
 		'"schemas/SendRequest.subject":' '// "schemas/SendRequest.subject":' \
 		./internal/server/ '^TestValidatorRefusesOverBound$' TestValidatorRefusesOverBound/coverage \
-		'schemas/SendRequest.subject'
+		'spec bound with no bounds row'
+	# the core's probe list is a shared file: a row dropped from it has neither a probe nor an exception
+	mutate_unit_block core-probe-row-dropped internal/conformance/bus/testdata/core_bound_rows.txt \
+		'probe schemas/SendRequest.subject send_subject_runes' '# dropped' \
+		./internal/server/ '^TestSpecBounds$' TestSpecBounds/core_probes \
+		'row schemas/SendRequest.subject has no probe line'
 }
 
 block_skip_in_wiring
