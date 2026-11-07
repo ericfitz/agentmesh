@@ -121,6 +121,7 @@ var ruleAllowed = map[string]map[string]int{
 	"internal/core/maintenance/service.go Tick":       {"Owner": 1},                    // this replica's lock owner name
 	"internal/core/maintenance/service.go Release":    {"Owner": 1},                    // this replica's lock owner name
 	"internal/slackbridge/runner.go Run":              {"Owner": 2},                    // this replica's lock owner name
+	"internal/server/oauth.go tokenFormFields":        {"Scope": 1},                    // the token request's OAuth scope string: a length check, no decision
 	// Task fields judged as state or query filters, never a principal.
 	"internal/core/tasks/doc.go taskContent":      {"Owner": 1},  // serializes the task's owner field
 	"internal/core/tasks/doc.go loadTasks":        {"Owner": 1},  // parses the task's owner field

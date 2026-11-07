@@ -3,10 +3,13 @@ package server
 import (
 	"errors"
 	"net/http"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
+	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
 func TestOAuthFromBus(t *testing.T) {
@@ -38,5 +41,33 @@ func TestOAuthFromBus(t *testing.T) {
 	// A server_error never carries the underlying text.
 	if got := oauthFromBus(errors.New("db password=hunter2"), false); got.Code != "server_error" || got.Description != "internal error" {
 		t.Errorf("plain error: %+v", got)
+	}
+}
+
+// TestTokenFormFieldsComplete fails when gen.TokenRequest gains a string member
+// that tokenFormFields does not bound.
+func TestTokenFormFieldsComplete(t *testing.T) {
+	listed := map[string]bool{}
+	for _, f := range tokenFormFields(&gen.TokenRequest{}) {
+		listed[f.name] = true
+	}
+	rt := reflect.TypeOf(gen.TokenRequest{})
+	for i := range rt.NumField() {
+		ft := rt.Field(i).Type
+		if ft.Kind() == reflect.Pointer {
+			ft = ft.Elem()
+		}
+		if ft.Kind() != reflect.String {
+			t.Errorf("%s is not a string: bound it in tokenFormFields", rt.Field(i).Name)
+			continue
+		}
+		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
+		if !listed[name] {
+			t.Errorf("TokenRequest.%s (%s) has no bound in tokenFormFields", rt.Field(i).Name, name)
+		}
+		delete(listed, name)
+	}
+	for name := range listed {
+		t.Errorf("tokenFormFields lists %q, which TokenRequest does not have", name)
 	}
 }

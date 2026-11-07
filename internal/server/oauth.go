@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"reflect"
-	"strings"
 
 	"github.com/ericfitz/agentmesh/internal/auth/assertion"
 	"github.com/ericfitz/agentmesh/internal/bus"
@@ -32,31 +30,45 @@ const MaxOAuthFieldBytes = 1024
 // description of an invalid_request refusal ("<field> exceeds <n> bytes"); the
 // value itself is never echoed. over is false when every field is within bounds.
 func checkTokenFormBounds(b *gen.TokenRequest) (msg string, over bool) {
-	// Walk the struct by its JSON names, in declaration order: the generated
-	// type is the one list of fields, so a new field falls under the default.
-	rv := reflect.ValueOf(*b)
-	rt := rv.Type()
-	for i := range rt.NumField() {
-		name, _, _ := strings.Cut(rt.Field(i).Tag.Get("json"), ",")
-		f := rv.Field(i)
-		if f.Kind() == reflect.Pointer {
-			if f.IsNil() {
-				continue
-			}
-			f = f.Elem()
-		}
-		limit := MaxOAuthFieldBytes
-		switch name {
-		case "client_assertion", "subject_token", "actor_token":
-			limit = assertion.MaxTokenBytes
-		case "client_id":
-			limit = store.MaxNameBytes
-		}
-		if f.Kind() == reflect.String && f.Len() > limit {
-			return fmt.Sprintf("%s exceeds %d bytes", name, limit), true
+	for _, f := range tokenFormFields(b) {
+		if len(f.value) > f.limit {
+			return fmt.Sprintf("%s exceeds %d bytes", f.name, f.limit), true
 		}
 	}
 	return "", false
+}
+
+// tokenFormField is one string member of a token request with its bound.
+type tokenFormField struct {
+	name  string
+	value string
+	limit int
+}
+
+// tokenFormFields lists every string member of the request (TestTokenFormFieldsComplete
+// fails when gen.TokenRequest gains one this table lacks).
+func tokenFormFields(b *gen.TokenRequest) []tokenFormField {
+	return []tokenFormField{
+		{"actor_token", deref(b.ActorToken), assertion.MaxTokenBytes},
+		{"actor_token_type", deref(b.ActorTokenType), MaxOAuthFieldBytes},
+		{"audience", deref(b.Audience), MaxOAuthFieldBytes},
+		{"client_assertion", deref(b.ClientAssertion), assertion.MaxTokenBytes},
+		{"client_assertion_type", deref(b.ClientAssertionType), MaxOAuthFieldBytes},
+		{"client_id", deref(b.ClientId), store.MaxNameBytes},
+		{"grant_type", b.GrantType, MaxOAuthFieldBytes},
+		{"requested_token_type", deref(b.RequestedTokenType), MaxOAuthFieldBytes},
+		{"resource", deref(b.Resource), MaxOAuthFieldBytes},
+		{"scope", deref(b.Scope), MaxOAuthFieldBytes},
+		{"subject_token", deref(b.SubjectToken), assertion.MaxTokenBytes},
+		{"subject_token_type", deref(b.SubjectTokenType), MaxOAuthFieldBytes},
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // oauthError is a refused token request. It is a gen.TokenResponseObject, so a
