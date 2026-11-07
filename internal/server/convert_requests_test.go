@@ -127,6 +127,20 @@ func TestRequestConvertersNilBody(t *testing.T) {
 	if b := remote.FromGenTaskResult(gen.TaskUpdateResult{Deleted: &d}); b.Replaced != 0 || !b.Deleted {
 		t.Fatalf("FromGenTaskResult deleted-only = %+v", b)
 	}
+	// Redelivered and AckIgnored are the one struct with two bools on the wire
+	// (the filler sets every bool true, so a swap would go unseen).
+	if g := receiveResultToGen(bus.ReceiveResult{Redelivered: true, AckIgnored: false}); !g.Redelivered || g.AckIgnored {
+		t.Fatalf("receiveResultToGen redelivered-only = %+v", g)
+	}
+	if g := receiveResultToGen(bus.ReceiveResult{Redelivered: false, AckIgnored: true}); g.Redelivered || !g.AckIgnored {
+		t.Fatalf("receiveResultToGen ack-ignored-only = %+v", g)
+	}
+	if b, err := remote.FromGenReceiveResult(gen.ReceiveResult{Redelivered: true, AckIgnored: false}); err != nil || !b.Redelivered || b.AckIgnored {
+		t.Fatalf("FromGenReceiveResult redelivered-only = %+v, %v", b, err)
+	}
+	if b, err := remote.FromGenReceiveResult(gen.ReceiveResult{Redelivered: false, AckIgnored: true}); err != nil || b.Redelivered || !b.AckIgnored {
+		t.Fatalf("FromGenReceiveResult ack-ignored-only = %+v, %v", b, err)
+	}
 	if raw := mustMarshal(t, remote.UpdateTaskRequest(bus.TaskPatch{ID: 1}).Body); raw != `{}` {
 		t.Fatalf("UpdateTaskRequest zero patch must be {}: %s", raw)
 	}

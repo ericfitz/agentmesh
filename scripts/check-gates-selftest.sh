@@ -1180,6 +1180,10 @@ block_wire_roundtrip_fires() {
 		'var exceptions = map[string]exception{' \
 		$'var exceptions = map[string]exception{\n\t"gen:Session.Nope": {Reason: "stale"},' \
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/exceptions
+	mutate_unit_block wire-bus-field-unmapped internal/bus/sessions.go \
+		'type ReceiveInput struct {' \
+		$'type ReceiveInput struct {\n\tExtra string' \
+		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/ReceiveRequestObject
 }
 
 # --- 35. tool-coverage-fires ----------------------------------------------------------
@@ -1213,6 +1217,14 @@ block_tool_coverage_fires() {
 	mutate_unit_block tool-bus-aliased internal/mcpserver/server.go \
 		'h, err := b.Health(ctx)' \
 		$'h, err := b.Health(ctx)\n\t\t\t\tbb := b\n\t\t\t\t_ = bb' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/aliases
+	mutate_unit_block tool-bus-returned internal/mcpserver/server.go \
+		'h, err := b.Health(ctx)' \
+		$'h, err := b.Health(ctx)\n\t\t\t\t_ = func() bus.Bus { return b }' \
+		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/aliases
+	mutate_unit_block tool-bus-param-renamed internal/mcpserver/sessions.go \
+		'f func(b bus.Bus, id string) (T, error)) (T, error) {' \
+		'f func(bb bus.Bus, id string) (T, error)) (T, error) {' \
 		./internal/mcpserver/ '^TestToolCoverage$' TestToolCoverage/aliases
 }
 

@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -139,9 +140,9 @@ type exception struct {
 
 var exceptions = map[string]exception{
 	"Problem": {Type: reflect.TypeFor[gen.Problem](), Fields: []string{"Code", "Detail", "Instance", "Retryable", "Status", "Title", "Type"},
-		Reason: "errors cross as RFC 9457 problems: WriteProblem writes (internal/server), errorOf reads (internal/bus/remote/remote.go)"},
+		Reason: "errors cross as RFC 9457 problems: WriteProblem writes (internal/server), errorOf reads (internal/bus/remote, function errorOf)"},
 	"OAuthError": {Type: reflect.TypeFor[gen.OAuthError](), Fields: []string{"Error", "ErrorDescription"},
-		Reason: "the token endpoint answers the RFC 6749 error body (internal/server/oauth.go); internal/bus/remote/auth.go reads it (:119), not a Bus domain type"},
+		Reason: "the token endpoint answers the RFC 6749 error body (internal/server/oauth.go); internal/bus/remote/auth.go reads it (function oauthErrorOf), not a Bus domain type"},
 	"Discovery": {Type: reflect.TypeFor[gen.Discovery](), Fields: []string{"ApiVersions", "AuthMethods", "AuthorizationServer", "Capabilities", "Issuers", "OpenidConfiguration", "ProtocolVersion", "ServerVersion"},
 		Reason: authReason},
 	"AuthMethod": {Type: reflect.TypeFor[gen.AuthMethod](), Fields: []string{"BearerFormat", "Name", "Scheme", "Type"}, Reason: authReason},
@@ -157,7 +158,7 @@ var exceptions = map[string]exception{
 	"TokenRequestObject":    {Type: reflect.TypeFor[gen.TokenRequestObject](), Fields: []string{"Body"}, Reason: authReason},
 	"TokenRequest": {Type: reflect.TypeFor[gen.TokenRequest](),
 		Fields: []string{"ActorToken", "ActorTokenType", "Audience", "ClientAssertion", "ClientAssertionType", "ClientId", "GrantType", "RequestedTokenType", "Resource", "Scope", "SubjectToken", "SubjectTokenType"},
-		Reason: "the token endpoint's form body (the body struct of TokenRequestObject): internal/bus/remote/auth.go builds it (TokenFormdataRequestBody, :75 and :86), internal/server/auth_handlers.go reads it; not a Bus domain type"},
+		Reason: "the token endpoint's form body (the body struct of TokenRequestObject): internal/bus/remote/auth.go builds it (TokenFormdataRequestBody, in the functions Token and TokenExchange), internal/server/auth_handlers.go reads it; not a Bus domain type"},
 	"GetTaskRequestObject":             {Type: reflect.TypeFor[gen.GetTaskRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
 	"GetMemoryRequestObject":           {Type: reflect.TypeFor[gen.GetMemoryRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
 	"ListMemoryRevisionsRequestObject": {Type: reflect.TypeFor[gen.ListMemoryRevisionsRequestObject](), Fields: []string{"Id"}, Reason: pathReason},
@@ -194,16 +195,29 @@ func isPlumbing(name string) bool {
 	return false
 }
 
-// genStructs parses internal/gen/gen.go and returns every struct type that is
-// not plumbing, with its exported field names.
+// genStructs parses every non-test Go file of the generated package
+// (internal/gen) and returns every struct type that is not plumbing, with its
+// exported field names.
 func genStructs(t *testing.T) map[string][]string {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "../gen/gen.go", nil, parser.ParseComments)
+	paths, err := filepath.Glob("../gen/*.go")
 	if err != nil {
-		t.Fatalf("parse gen.go: %v", err)
+		t.Fatalf("glob internal/gen: %v", err)
 	}
 	out := map[string][]string{}
-	for _, d := range f.Decls {
+	fset := token.NewFileSet()
+	var decls []ast.Decl
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		decls = append(decls, f.Decls...)
+	}
+	for _, d := range decls {
 		gd, isGen := d.(*ast.GenDecl)
 		if !isGen || gd.Tok != token.TYPE {
 			continue
@@ -494,16 +508,19 @@ func TestWireRoundTrip(t *testing.T) {
 		if len(structs) < 120 {
 			t.Fatalf("only %d generated struct types enumerated (want at least 120): the generator's output changed; the enumeration is blind", len(structs))
 		}
-		var roots []reflect.Type
+		var pairGens []reflect.Type
 		for _, p := range pairs {
-			roots = append(roots, p.gen)
+			pairGens = append(pairGens, p.gen)
 		}
+		// A pair covers every struct reachable from it (fill sets them all).
+		// An exception covers only its own root: a struct nested under an
+		// exception root needs its own entry (issue #29 review, Finding 7).
+		covered := reachable(pairGens...)
 		for _, e := range exceptions {
 			if e.Type != nil {
-				roots = append(roots, e.Type)
+				covered[e.Type.Name()] = true
 			}
 		}
-		covered := reachable(roots...)
 		var missing []string
 		for name, fields := range structs {
 			if len(fields) == 0 || covered[name] {

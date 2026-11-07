@@ -449,7 +449,14 @@ func toolHandlers(files []*ast.File) (map[string]ast.Expr, int) {
 			if !ok || len(ce.Args) != 3 {
 				return true
 			}
-			sel, ok := ce.Fun.(*ast.SelectorExpr)
+			fun := ce.Fun
+			switch ix := fun.(type) { // mcp.AddTool[In, Out](...)
+			case *ast.IndexExpr:
+				fun = ix.X
+			case *ast.IndexListExpr:
+				fun = ix.X
+			}
+			sel, ok := fun.(*ast.SelectorExpr)
 			if !ok || sel.Sel.Name != "AddTool" {
 				return true
 			}
@@ -619,6 +626,10 @@ func collectBusStructs(t reflect.Type, seen map[string]reflect.Type) {
 	}
 }
 
+// coverageToolCount is the tool count (server_test.go toolCount, which lives
+// in the external test package); the scan must find every one.
+const coverageToolCount = 26
+
 func TestToolCoverage(t *testing.T) {
 	files, fset := parseMCPServer(t)
 	idx := funcIndex(t, files, fset)
@@ -628,6 +639,9 @@ func TestToolCoverage(t *testing.T) {
 	t.Run("tools", func(t *testing.T) {
 		if addToolCalls != len(handlers) {
 			t.Errorf("%d AddTool calls but %d literal tool names: a tool registered with a non-literal name (or twice) escapes the table", addToolCalls, len(handlers))
+		}
+		if addToolCalls != coverageToolCount || len(handlers) != coverageToolCount {
+			t.Errorf("%d AddTool calls and %d named handlers found, want %d (26 tools): the scan no longer sees every tool", addToolCalls, len(handlers), coverageToolCount)
 		}
 		missing, extra := diffSets(sortedKeys(toolCalls), sortedKeys(handlers))
 		if len(missing) > 0 || len(extra) > 0 {
@@ -738,6 +752,42 @@ func TestToolCoverage(t *testing.T) {
 					for _, e := range v.Rhs {
 						if isBus(e) {
 							t.Errorf("%s: alias the Bus and the walk goes blind: call through c.Bus or the b parameter", pos)
+						}
+					}
+				case *ast.ReturnStmt:
+					for _, e := range v.Results {
+						if isBus(e) {
+							t.Errorf("%s: returning the Bus and the walk goes blind: call through c.Bus or the b parameter", pos)
+						}
+					}
+				case *ast.CompositeLit:
+					for _, e := range v.Elts {
+						if kv, ok := e.(*ast.KeyValueExpr); ok {
+							e = kv.Value
+						}
+						if isBus(e) {
+							t.Errorf("%s: storing the Bus in a composite literal and the walk goes blind: call through c.Bus or the b parameter", pos)
+						}
+					}
+				case *ast.FuncType:
+					if v.Params == nil {
+						return true
+					}
+					for _, fld := range v.Params.List {
+						sel, ok := fld.Type.(*ast.SelectorExpr)
+						if !ok || sel.Sel.Name != "Bus" {
+							continue
+						}
+						if pk, ok := sel.X.(*ast.Ident); !ok || pk.Name != "bus" {
+							continue
+						}
+						if len(fld.Names) == 0 {
+							t.Errorf("%s: a bus.Bus parameter must be named b: the walk recognizes the Bus by that name", pos)
+						}
+						for _, nm := range fld.Names {
+							if nm.Name != "b" {
+								t.Errorf("%s: a bus.Bus parameter is named %s, not b: the walk recognizes the Bus by that name", pos, nm.Name)
+							}
 						}
 					}
 				case *ast.ValueSpec:
