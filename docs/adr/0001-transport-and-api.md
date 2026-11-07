@@ -427,21 +427,32 @@ Decisions of Eric, 2026-11-06 (human-made), the rules for choosing a bound:
 - (b) Otherwise: free-form short strings 256 code points, opaque tokens 1024 bytes, metadata 32 keys of 64 code points with values of 1024 code points, request arrays 256 items, page counts the existing server maximum else 1000, sequence numbers `int64` with `minimum: 0`.
 - (c) Every new limit is a named Go constant, a row in `TestSpecBounds` (`internal/server/spec_bounds_test.go`) and a line here, each labeled "Eric's decision of 2026-11-06". Eric may tighten any value afterwards.
 
-New limits under rule (b), each "Eric's decision of 2026-11-06":
+New limits, in three groups.
+
+Group 1, values chosen under rule (b), each "Eric's decision of 2026-11-06":
 
 - `rules.MaxLabelRunes` 256 code points (`type`, status tag and task status fields).
 - `rules.MaxTokenBytes` 1024 bytes (session ids, `ack`, `Idempotency-Key`, `enrollment_token`).
 - `rules.MaxMetadataKeys` 32, `rules.MaxMetadataKeyRunes` 64, `rules.MaxMetadataValueRunes` 1024.
 - `rules.MaxArrayItems` 256 items (cursors, receive channels, ACL lists).
-- `rules.MaxQueryRunes` 1024 code points (`search` `q`).
-- `rules.MaxTagPatternLen` 33 and `rules.MaxSearchCursorLen` 19 (shapes of existing rules).
-- `core.ReceiveCountCeiling` 10000, `core.WatchSecondsCeiling` 240 (derived from `bus.MaxWatchTimeout`), `core.MessageKiBCeiling` 1024 (the largest values of `receive_max_count`, `watch_max_seconds`, `max_message_kib`).
-- `tasks.MaxSubjectRunes` 256 and `tasks.MaxBlockers` 64.
-- `store.MaxNameBytes` 128 and `store.AllPermissions` (3 permissions).
-- `sessions.ResumeTokenLen` 43 and `sessions.ResumeTokenPattern`.
-- `assertion.MaxTokenBytes` 16384 bytes (JWT inputs of the token endpoint), `server.MaxOAuthFieldBytes` 1024, `keys.MaxJWKMembers` 16.
-- `slackapi.MaxChannelNameLen` 80 and `slackapi.ChannelNamePattern`.
+- `server.MaxOAuthFieldBytes` 1024 bytes (the token endpoint's non-JWT form fields).
 - `int64` fields: `minimum: 0` (1 for `thread` and `if_revision`), `maximum: 9223372036854775807`.
+
+Group 2, existing limits that only gained a Go name under rule (c); the value was already enforced, so this is not a new decision and not Eric's decision of 2026-11-06:
+
+- `store.MaxNameBytes` 128 and `store.AllPermissions` (3 permissions).
+- `tasks.MaxBlockers` 64 (was the unexported `maxBlockers`).
+- `sessions.ResumeTokenLen` 43 and `sessions.ResumeTokenPattern`; `rules.MaxSearchCursorLen` 19 (the shapes of existing rules).
+- `rules.MaxTagPatternLen` 33 (the shape of the tag pattern rule).
+- `core.ReceiveCountCeiling` 10000, `core.WatchSecondsCeiling` 240 (derived from `bus.MaxWatchTimeout`), `core.MessageKiBCeiling` 1024 (the largest values of `receive_max_count`, `watch_max_seconds`, `max_message_kib`).
+- `slackapi.MaxChannelNameLen` 80 and `slackapi.ChannelNamePattern`.
+
+Group 3, plan rulings that pick a value outside rule (b); ruling; Eric may overrule (they are listed again in the rulings below):
+
+- `assertion.MaxTokenBytes` 16384 bytes (JWT inputs of the token endpoint; ruling 8, rule (b) would say 1024).
+- `rules.MaxQueryRunes` 1024 code points (`search` `q`; ruling 9, rule (b) would say 256).
+- `keys.MaxJWKMembers` 16 (a registration key's member count; rule (b) has no number for it).
+- `tasks.MaxSubjectRunes` 256 (the task subject counted in characters instead of bytes; ruling 3).
 
 Units: names count bytes (they also name files) and the spec says `maxLength: 128` with "bytes" in the description; one-line text, labels, metadata values, the query and the task subject count code points; tags, patterns, the resume token, the cursor and Slack names are ASCII, so bytes equal code points; opaque tokens, JWTs, OAuth fields and content count bytes with the same number in `maxLength`. JSON Schema `maxLength` counts code points, so the validator never refuses what the core admits.
 
@@ -462,6 +473,8 @@ Plan and controller rulings (2026-11-07; Eric may overrule; not his decisions):
 - Ruling 13: over-long session ids, acks, Idempotency-Keys and enrollment tokens answer `validation`.
 - Ruling 14: `rules.NormalizeLine` counts before trimming.
 - Ruling 15: path parameters are bounded on their percent-encoded form at three times the byte bound (384 and 3072), because the validator checks the encoded segment (`TestValidatorCountsEncodedPath`).
+- Ordering on the wire: the validator refuses an out-of-bound value before registration or a permission check, so an unregistered or forbidden caller who sends one gets `validation` where the `local` transport gives `not_registered`, `forbidden` or `not_found` (`internal/conformance/bus/history_test.go`).
+- `ReceiveRequest.channels[]` names over 128 bytes answer `validation` from `delivery.Receive` (a by-name lookup, like the controller ruling below).
 - Controller ruling: a name over 128 bytes answers `validation` at every by-name lookup (channel, scope, identity path; a bridge is addressed by its channel name), not `not_found`.
 - `EditMemoryRequest.if_revision` says `minimum: 1` in the spec while the core treats 0 as "skip the check"; they differ only at an explicit 0, which the validator refuses.
 - The `env:*,x` comma-no-split check of `internal/gen/openapi31_test.go` was dropped: the tag pattern now refuses a comma.

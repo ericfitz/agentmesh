@@ -240,7 +240,7 @@ Resolved on 2026-10-20:
 
 ## Request bounds addendum (issue #34, 2026-11-07)
 
-- `x-go-type: int` (or `string`) beside a `format: int32` (or an `enum`) keeps the generated Go types when a bound needs the format, so `internal/gen` changes only in comments; kin-openapi counts `maxLength` in code points; the validator enforces every bound before the handler. ADR 0001's request bounds addendum has the decisions.
+- `x-go-type: int` beside a `format: int32` keeps the generated Go type when a bound needs the format, so no generated Go type changes; the four `count` query-parameter option lines (`history` and `search`, client and server) now carry `Format: "int32"`, which the runtime ignores for a concrete `*int` destination. The same technique with `x-go-type: string` beside an `enum` is available and unused here (ruling 5 added no enum). kin-openapi counts `maxLength` in code points; the validator enforces every bound before the handler. ADR 0001's request bounds addendum has the decisions.
 
 ## Error responses addendum (issue #33, 2026-11-07)
 
