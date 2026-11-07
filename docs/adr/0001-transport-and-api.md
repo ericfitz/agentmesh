@@ -416,3 +416,54 @@ Plan and controller rulings (2026-11-07; Eric may overrule; not his decisions):
 - Amends choice 13: the remote `Bus` (`errorOf`) decodes a problem body at any status and reads `Retry-After` (integer seconds, capped at 86400) into `bus.Error.RetryAfter`; a 429 without a problem body is a retryable `rate_limited`. It still never imports kin-openapi (decision 47).
 - Checks: `TestStatusTable` (every code maps to one status; `bus.Codes()` lists the codes) and `TestOperationErrorTable` in `internal/server/status_table_test.go`. `internal/respcheck` validates every wire response against the embedded spec in tests only, never in production; it is wired into the inproc Bus suite (`TestInprocResponseCheckWired`; the limiter's wait reaching the header is pinned by `TestSendRateLimitedRetryAfterIsTheLimitersWait` in `internal/server`, and the Bus suite's `TestSendRateLimited` asserts a wait of at least 500 ms), `TestAuthEndToEnd`, the `internal/server` and `internal/server/cmd` tests (`TestMain` fails on `respcheck.Late()`) and the e2e validating proxy. The m4 rule (`check_deps` in `scripts/m4-exit-checks.sh`, run by `make verify` as `--deps-only`) forbids `.` and `./cmd/agentmesh-mcponly` importing it. Mutations: `scripts/check-gates-selftest.sh` block 36 (12).
 - The protocol version stays `1.0.0` (pre-release rule).
+
+## Request bounds addendum (Eric's decision of 2026-11-06; issue #34)
+
+Every request field of `api/openapi.yaml` carries the bound the server enforces, the validator refuses a request just over it and the core refuses it too, so the `local` transport agrees with the wire.
+
+Decisions of Eric, 2026-11-06 (human-made), the rules for choosing a bound:
+
+- (a) A field that is the same kind of thing as an existing Go limit reuses it (names follow `store.NameRule`, tags `rules.MaxTagLen`).
+- (b) Otherwise: free-form short strings 256 code points, opaque tokens 1024 bytes, metadata 32 keys of 64 code points with values of 1024 code points, request arrays 256 items, page counts the existing server maximum else 1000, sequence numbers `int64` with `minimum: 0`.
+- (c) Every new limit is a named Go constant, a row in `TestSpecBounds` (`internal/server/spec_bounds_test.go`) and a line here, each labeled "Eric's decision of 2026-11-06". Eric may tighten any value afterwards.
+
+New limits under rule (b), each "Eric's decision of 2026-11-06":
+
+- `rules.MaxLabelRunes` 256 code points (`type`, status tag and task status fields).
+- `rules.MaxTokenBytes` 1024 bytes (session ids, `ack`, `Idempotency-Key`, `enrollment_token`).
+- `rules.MaxMetadataKeys` 32, `rules.MaxMetadataKeyRunes` 64, `rules.MaxMetadataValueRunes` 1024.
+- `rules.MaxArrayItems` 256 items (cursors, receive channels, ACL lists).
+- `rules.MaxQueryRunes` 1024 code points (`search` `q`).
+- `rules.MaxTagPatternLen` 33 and `rules.MaxSearchCursorLen` 19 (shapes of existing rules).
+- `core.ReceiveCountCeiling` 10000, `core.WatchSecondsCeiling` 240 (derived from `bus.MaxWatchTimeout`), `core.MessageKiBCeiling` 1024 (the largest values of `receive_max_count`, `watch_max_seconds`, `max_message_kib`).
+- `tasks.MaxSubjectRunes` 256 and `tasks.MaxBlockers` 64.
+- `store.MaxNameBytes` 128 and `store.AllPermissions` (3 permissions).
+- `sessions.ResumeTokenLen` 43 and `sessions.ResumeTokenPattern`.
+- `assertion.MaxTokenBytes` 16384 bytes (JWT inputs of the token endpoint), `server.MaxOAuthFieldBytes` 1024, `keys.MaxJWKMembers` 16.
+- `slackapi.MaxChannelNameLen` 80 and `slackapi.ChannelNamePattern`.
+- `int64` fields: `minimum: 0` (1 for `thread` and `if_revision`), `maximum: 9223372036854775807`.
+
+Units: names count bytes (they also name files) and the spec says `maxLength: 128` with "bytes" in the description; one-line text, labels, metadata values, the query and the task subject count code points; tags, patterns, the resume token, the cursor and Slack names are ASCII, so bytes equal code points; opaque tokens, JWTs, OAuth fields and content count bytes with the same number in `maxLength`. JSON Schema `maxLength` counts code points, so the validator never refuses what the core admits.
+
+Plan and controller rulings (2026-11-07; Eric may overrule; not his decisions):
+
+- Ruling 1: a clamp above the ceiling becomes a refusal. `bus.MaxWatchTimeout` is 240 s and `core.WatchSecondsCeiling` derives from it. A `count` above 10000 (`receive`, `history`), 1000 (`search`) or a watch `timeout` above 240 s answers `validation`; below the ceiling and above the configured setting the server still clamps. `agentmesh wait` and MCP `receive` `wait_seconds` clamp each watch call to `bus.MaxWatchTimeout` and their loops re-arm.
+- Ruling 2: names stay bytes (`store.MaxNameBytes`).
+- Ruling 3: the task subject is counted in characters (`tasks.MaxSubjectRunes`); "subject must be 1-256 characters".
+- Ruling 4: array bounds count raw entries, not entries after deduplication.
+- Ruling 5: core-owned enums (status tag, task status) stay strings with `maxLength: 256`; no spec `enum`, so the core's messages stand.
+- Ruling 6: a negative id answers `validation` (`rules.NonNegative`), not `not_found`. Nothing can pass an integer above `int64` to the core; the strict decoder refuses it (`TestInt64OverflowRefused`).
+- Ruling 7: the resume token and the search cursor get their real shapes (43 and 19 characters with patterns).
+- Ruling 8: the token endpoint's JWT fields are bounded at 16384 bytes, the other form fields at 1024. The validator refuses an over-bound field first, with the generic RFC 6749 `invalid_request` body; the handler's own `checkTokenFormBounds` stays as defense in depth (`TestCheckTokenFormBounds`).
+- Ruling 9: `search` `q` is 1024 code points.
+- Ruling 10: content fields are bounded by the envelope in bytes (`maxLength: 1048576`); `limitBody` answers 413 first unless `max_message_kib` is at its ceiling.
+- Ruling 11: metadata keys are bounded by the core only (OpenAPI 3.0.3 has no `propertyNames`).
+- Ruling 12: response fields are out of scope; shared schemas carry their bounds into responses, which `internal/respcheck` validates.
+- Ruling 13: over-long session ids, acks, Idempotency-Keys and enrollment tokens answer `validation`.
+- Ruling 14: `rules.NormalizeLine` counts before trimming.
+- Ruling 15: path parameters are bounded on their percent-encoded form at three times the byte bound (384 and 3072), because the validator checks the encoded segment (`TestValidatorCountsEncodedPath`).
+- Controller ruling: a name over 128 bytes answers `validation` at every by-name lookup (channel, scope, identity path; a bridge is addressed by its channel name), not `not_found`.
+- `EditMemoryRequest.if_revision` says `minimum: 1` in the spec while the core treats 0 as "skip the check"; they differ only at an explicit 0, which the validator refuses.
+- The `env:*,x` comma-no-split check of `internal/gen/openapi31_test.go` was dropped: the tag pattern now refuses a comma.
+- The protocol version stays `1.0.0` (pre-release rule).
+- Checks: `TestSpecBounds`, `TestValidatorRefusesOverBound`, `TestOverBoundRefused` and `TestAtBoundAccepted` (Bus suite, `local` transport); mutations: `scripts/check-gates-selftest.sh` block 37.

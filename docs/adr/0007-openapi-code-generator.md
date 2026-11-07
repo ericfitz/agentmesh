@@ -238,6 +238,10 @@ Resolved on 2026-10-20:
 
 - The Consequences line "kept in step with the OpenAPI document by hand, whichever generator is chosen" is superseded as recorded in ADR 0001's addendum of the same date. The generator choice is unaffected.
 
+## Request bounds addendum (issue #34, 2026-11-07)
+
+- `x-go-type: int` (or `string`) beside a `format: int32` (or an `enum`) keeps the generated Go types when a bound needs the format, so `internal/gen` changes only in comments; kin-openapi counts `maxLength` in code points; the validator enforces every bound before the handler. ADR 0001's request bounds addendum has the decisions.
+
 ## Error responses addendum (issue #33, 2026-11-07)
 
 - Need 2 changed: no operation has a `default` response any more; each declares its error statuses from 11 shared `components/responses` (Eric's decision 2026-11-06).

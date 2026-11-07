@@ -76,8 +76,10 @@ type ReceiveResult struct {
 // the watch in a loop. core.WatchSecondsCeiling is this value in seconds.
 const MaxWatchTimeout = 240 * time.Second
 
-// WatchInput arms the wake primitive for a session. A Timeout above the
-// configured maximum is clamped to it; a negative one is rejected.
+// WatchInput arms the wake primitive for a session. A Timeout above
+// MaxWatchTimeout is refused with validation, a negative one likewise; one
+// above the configured watch_max_seconds and within MaxWatchTimeout is
+// clamped to the configured value.
 type WatchInput struct {
 	Session    string
 	After      int64
