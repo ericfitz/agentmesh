@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -129,7 +130,15 @@ func frameworkDetail(err error) string {
 }
 
 // requestDetail is the detail of a refusal by the validator middleware.
-func requestDetail(err error, status int) string {
+func requestDetail(ctx context.Context, err error, status int) string {
+	if status == http.StatusUnauthorized {
+		// An authenticator's refusal keeps its text; a request with no
+		// credential gets one fixed sentence, not the validator's.
+		if aerr := authErrorFrom(ctx); aerr != nil {
+			return aerr.Error()
+		}
+		return "a bearer token is required"
+	}
 	if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
 		return validationDetail(err)
 	}

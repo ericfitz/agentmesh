@@ -121,11 +121,11 @@ func New(c *core.Core, o Options) http.Handler {
 				return nil
 			},
 		},
-		ErrorHandlerWithOpts: func(_ context.Context, err error, w http.ResponseWriter, r *http.Request, opts nethttpmiddleware.ErrorHandlerOpts) {
+		ErrorHandlerWithOpts: func(ctx context.Context, err error, w http.ResponseWriter, r *http.Request, opts nethttpmiddleware.ErrorHandlerOpts) {
 			if tokenRequestError(w, r) {
 				return
 			}
-			WriteProblem(w, r, opts.StatusCode, validatorCode(opts.StatusCode), requestDetail(err, opts.StatusCode), false)
+			WriteProblem(w, r, opts.StatusCode, validatorCode(opts.StatusCode), requestDetail(ctx, err, opts.StatusCode), false)
 		},
 	})
 

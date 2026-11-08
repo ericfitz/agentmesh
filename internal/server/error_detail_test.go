@@ -1,9 +1,12 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/ericfitz/agentmesh/internal/gen"
 )
 
 // secretValue stands for a submitted token: no refusal may echo it.
@@ -48,4 +51,29 @@ func TestValidationDetailNeverEchoes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUnauthenticatedDetailIsFixed: a protected operation without a bearer
+// answers a fixed detail, not the validator's text (issue #30, CATS finding
+// RB3); an authenticator's own refusal keeps its text.
+func TestUnauthenticatedDetailIsFixed(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	resp := e.raw("", newReq(t, "GET", "/v1/channels", nil))
+	p := readProblem(t, resp)
+	if resp.StatusCode != 401 || p.Detail == nil || *p.Detail != "a bearer token is required" {
+		t.Fatalf("got %d detail %q, want 401 with the fixed detail", resp.StatusCode, detailText(p))
+	}
+	e2 := newEnv(t, envOptions{auth: authFunc(func(*http.Request) (string, error) { return "", errors.New("invalid bearer token: expired") })})
+	resp = e2.raw("", newReq(t, "GET", "/v1/channels", nil))
+	p = readProblem(t, resp)
+	if resp.StatusCode != 401 || p.Detail == nil || *p.Detail != "invalid bearer token: expired" {
+		t.Fatalf("got %d detail %q, want the authenticator's text", resp.StatusCode, detailText(p))
+	}
+}
+
+func detailText(p gen.Problem) string {
+	if p.Detail == nil {
+		return ""
+	}
+	return *p.Detail
 }
