@@ -562,8 +562,10 @@ func kindOf(v any) string {
 // element of a non-empty array against the first element of the example's)
 // is in example with the same JSON kind. Values are not compared. An empty
 // live array where the example's is not fails unless its JSON pointer is in
-// emptyOK: an empty answer checks nothing, so it must be a decision.
-func shapeCheck(t testing.TB, live, example any, path, ptr string, emptyOK map[string]bool) {
+// emptyOK: an empty answer checks nothing, so it must be a decision. A
+// pointer that excuses an empty array is recorded in fired, so the caller can
+// fail an emptyOK entry that never fired.
+func shapeCheck(t testing.TB, live, example any, path, ptr string, emptyOK, fired map[string]bool) {
 	t.Helper()
 	if kindOf(live) != kindOf(example) {
 		t.Errorf("member %s is %s in the live body and %s in the example", path, kindOf(live), kindOf(example))
@@ -587,11 +589,14 @@ func shapeCheck(t testing.TB, live, example any, path, ptr string, emptyOK map[s
 				t.Errorf("member %s of the live body is not in the example", name)
 				continue
 			}
-			shapeCheck(t, l[k], ev, name, ptr+"/"+k, emptyOK)
+			shapeCheck(t, l[k], ev, name, ptr+"/"+k, emptyOK, fired)
 		}
 	case []any:
 		e := example.([]any)
 		if len(l) == 0 {
+			if len(e) > 0 && emptyOK[ptr] {
+				fired[ptr] = true
+			}
 			if len(e) > 0 && !emptyOK[ptr] {
 				t.Errorf("member %s is an empty array in the live body and the example's is not (%s is not in the row's emptyOK)", path, ptr)
 			}
@@ -601,7 +606,7 @@ func shapeCheck(t testing.TB, live, example any, path, ptr string, emptyOK map[s
 			t.Errorf("member %s is a non-empty array in the live body and an empty one in the example", path)
 			return
 		}
-		shapeCheck(t, l[0], e[0], path+"[0]", ptr+"/0", emptyOK)
+		shapeCheck(t, l[0], e[0], path+"[0]", ptr+"/0", emptyOK, fired)
 	}
 }
 
@@ -908,7 +913,13 @@ func TestRequestExamples(t *testing.T) {
 				for _, p := range row.emptyOK {
 					ok[p] = true
 				}
-				shapeCheck(t, body, responseExample(t, s, row.status), "", "", ok)
+				fired := map[string]bool{}
+				shapeCheck(t, body, responseExample(t, s, row.status), "", "", ok, fired)
+				for _, p := range row.emptyOK {
+					if !fired[p] {
+						t.Errorf("emptyOK %s never fired: the live array is not empty there (or the example's is), remove the entry", p)
+					}
+				}
 				if t.Failed() {
 					t.FailNow()
 				}

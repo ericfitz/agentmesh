@@ -1487,6 +1487,61 @@ block_spec_validation_fires() {
 		./internal/e2e/ '^TestArazzoWorkflows$' TestArazzoWorkflows/register-and-login 'failed (status 200'
 }
 
+# --- 39. spec-examples-fire ------------------------------------------------------------
+# issue #35: every operation, response, parameter, schema and property of api/openapi.yaml is
+# described and cites its source (TestSpecDescriptions), every schema and response carries a valid
+# example with no real host or token (TestSpecExamples, spec-lint's oas3-missing-example), and every
+# request example is replayed against the e2e server and its answer checked against the documented
+# response (TestRequestExamples). Docker-free; mutations 1 to 7 regenerate internal/gen, 5 needs the
+# pinned vacuum on the PATH (the same as make verify), 8 and 9 run the e2e package (about 40 s).
+# Mutation 8 removes `parent: 41` from the Task example: `parent` is optional in Task.required, so
+# kin still accepts the example, and the live createTask answer echoes the parent (row 38 sets it).
+block_spec_examples_fire() {
+	# 1. the operation's description is gone
+	mutate_spec_block operation-description-removed 'operationId: listChannels' \
+		$'      description: >-\n        Lists the channels the caller may list, by name in byte order, each with its\n        kind and its capabilities (bridged: a live Slack bridge). A channel is\n        listed when the caller holds a stored ACL entry on it, for its own name,\n        everyone, admins (an administrator) or humans (a human), whatever\n        permissions the entry grants; a server administrator lists every channel,\n        and a scoped agent lists only channels of its scope. The channel ACL\'s list\n        action. Writes nothing. No idempotency key: a read has nothing to repeat.\n        Source: ADR 0011.\n' '' \
+		./internal/gen/ '^TestSpecDescriptions$' TestSpecDescriptions/operations/listChannels \
+		'undocumented: operations/listChannels (description is empty)'
+	# 2. the description's one citation is replaced
+	mutate_spec_block citation-removed 'operationId: listChannels' \
+		'        Source: ADR 0011.' '        Source: the design.' \
+		./internal/gen/ '^TestSpecDescriptions$' TestSpecDescriptions/operations/listChannels/cites-source \
+		'description cites no spec section, ADR or Decision'
+	# 3. a property loses its description
+	mutate_spec_block property-description-removed '    SendRequest:' \
+		'          description: "A one-line subject; surrounding space is trimmed and a line break is 400 validation. At most 200 code points."' '' \
+		./internal/gen/ '^TestSpecDescriptions$' TestSpecDescriptions/properties/SendRequest.subject \
+		'undocumented: properties/SendRequest.subject'
+	# 4. a schema loses its example (the block becomes an unknown extension; the YAML stays valid)
+	mutate_spec_block schema-example-removed '    Session:' \
+		'      example:' '      x-example-removed:' \
+		./internal/gen/ '^TestSpecExamples$' TestSpecExamples/schemas/Session \
+		'undocumented: schemas/Session'
+	# 5. the same mutation is a vacuum finding
+	mutate_lint_block spec-lint-example-fires api/openapi.yaml \
+		$'    Session:\n      example:' $'    Session:\n      x-example-removed:' \
+		oas3-missing-example
+	# 6. an example the schema refuses (kin validates examples in the document test)
+	mutate_spec_block example-invalid '    Session:' \
+		'        resumed: false' '        resumed: "no"' \
+		./internal/gen/ '^TestDocumentIs31AndValidates$' TestDocumentIs31AndValidates
+	# 7. a real host in an example
+	mutate_spec_block real-host-in-example '    AuthorizationServerMetadata:' \
+		'        issuer: http://localhost:8420' '        issuer: https://mesh.corp.internal' \
+		./internal/gen/ '^TestSpecExamples$' TestSpecExamples/no-real-values \
+		'HOSTEXTRA'
+	# 8. the live answer carries a member the example lacks
+	mutate_spec_block replay-shape-fires '    Task:' \
+		'        parent: 41' '' \
+		./internal/e2e/ '^TestRequestExamples$' TestRequestExamples/createTask \
+		'member parent of the live body is not in the example'
+	# 9. an operation loses its replay row
+	mutate_unit_block replay-row-missing internal/e2e/zz_examples_test.go \
+		'		{op: "peek", status: 200, live: sessionPath},' '' \
+		./internal/e2e/ '^TestRequestExamples$' TestRequestExamples/coverage \
+		'no row for peek'
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1525,6 +1580,7 @@ block_tool_coverage_fires
 block_error_responses_fire
 block_spec_bounds_fire
 block_spec_validation_fires
+block_spec_examples_fire
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"
