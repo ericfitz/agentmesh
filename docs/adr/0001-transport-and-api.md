@@ -566,3 +566,10 @@ Open for Eric:
 - Item 5 (candidate new issue): `resetCredential` declares a 404 it cannot reach (it answers 403 `not_registered`); dropping it is a wire change.
 
 Mutations: `scripts/check-gates-selftest.sh` block 39 (twelve mutations).
+
+## No-500 rule (Eric's decision, 2026-11-08)
+
+Decision (Eric): the server keeps a path that answers 500 (`internal`), because it is the answer to cases nobody anticipated. A 500 seen in any test (unit, conformance, e2e, the validating proxy, a CATS campaign or a manual run) is always a must-fix bug: it means a scenario the code does not expect and does not handle. It is never accepted as a known answer, never suppressed by a false-positive rule, and never closed by documenting it; the fix is to handle the case with its proper status and code.
+
+Scope: the status 500 itself. The documented 503 (`store unreachable`, `unavailable`) and the net/http transport answers that run before any handler (ADR 0018, issue #30 Open item 1) are outside it.
+
