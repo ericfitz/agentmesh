@@ -667,3 +667,11 @@ One commit `fix(spec): JWK requires kty (issue #30, CATS OnlyRequiredFields)` wi
 - Any 500 this guard exposes in the existing suites is a must-fix bug: list them in the report; each becomes its own fix task (Task 8.7 and up) before the branch merges.
 - Gates: `make verify`; block 40 gets a mutation that makes a handler answer 500 and expects the guard's failure text.
 
+Final campaign (2026-11-08, `task-7-final.md`): every run valid; Q1, Q1b, Q2 empty; 44 rules; Q3 holds one cluster, SG8.
+- Ruling 40: SG8 (register 400 `unsupported key type/format` once `JWK` declared only `kty`) is a spec gap Task 8.5 created: `JWK` declares the members the server accepts as properties: `kty` with `enum` of the supported key types, `crv` with `enum` of the supported curves, `x`, `y` (EC only) and `kid`, each with its bound and description, while `additionalProperties: true` and `x-go-type: map[string]interface{}` stay; the example stays the real Ed25519 key. The server's accepted set (`internal/auth/keys`) is the source; the descriptions say which members each key type needs.
+- Ruling 41: the getMemory description states that the id may name a task row too (served by design, `internal/server/memories.go` Get), a documentation fix.
+
+### Task 8.7: SG8 and the getMemory description (`api/openapi.yaml`, `make generate`)
+
+One commit `fix(spec): JWK declares the accepted key members (issue #30, CATS HappyPath)` with a reproducing test (a register request built from the schema's own properties, as CATS builds it, e.g. `{"kty":"OKP","crv":"Ed25519","x":<example x>}` with the right kid, registers; `{"kty":"zzz"}` is refused by the validator with the enum, not by go-jose), and one `docs(spec): ...` commit for ruling 41. Then `bash scripts/cats-harness.sh run --paths /v1/auth/register` and `go run ./tools/catscheck classify --rules api/cats-false-positives.yaml <report>` exit 0 (SG8 gone), then `down`. Bounds rows, `propertyCount`, the issue #29/#34/#35 checks follow; protocol 1.0.0.
+
