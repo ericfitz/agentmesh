@@ -30,6 +30,7 @@ func TestValidationDetailNeverEchoes(t *testing.T) {
 		{"body enum outside", "POST", "/v1/channels", `{"name":"a","kind":"` + secretValue + `"}`},
 		{"body unknown member", "POST", "/v1/channels", `{"name":"a","` + secretValue + `":1}`},
 		{"query parameter", "GET", "/v1/sessions/s/watch?timeout=" + secretValue, ""},
+		{"numeric query parameter", "GET", "/v1/channels/zz/messages?count=123456789", ""},
 		{"path parameter", "GET", "/v1/memories/" + secretValue, ""},
 	}
 	for _, c := range cases {
@@ -45,7 +46,7 @@ func TestValidationDetailNeverEchoes(t *testing.T) {
 			if resp.StatusCode != 400 || p.Detail == nil {
 				t.Fatalf("got %d %+v, want a 400 with a detail", resp.StatusCode, p)
 			}
-			for _, bad := range []string{"Schema:", "Value:", "SECRETVALUE"} {
+			for _, bad := range []string{"Schema:", "Value:", "SECRETVALUE", "123456789", "1.23456789"} {
 				if strings.Contains(*p.Detail, bad) {
 					t.Errorf("detail contains %q: %s", bad, *p.Detail)
 				}

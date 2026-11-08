@@ -91,6 +91,9 @@ var (
 	// memberMessage is the validator's refusal of a member the schema does not
 	// declare; it names the caller's member.
 	memberMessage = regexp.MustCompile(`^additional propert(?:y|ies) .* not allowed$`)
+	// boundMessage is a bound failure ("maximum: got 1.2345×10⁸, want 10,000"):
+	// the bound stays, the submitted number does not.
+	boundMessage = regexp.MustCompile(`^(\w+): got [^"']*, want ([^"']*)$`)
 )
 
 // schemaCauses words a SchemaError one line per cause: the pointer (with every
@@ -137,6 +140,9 @@ func plainMessage(msg string) string {
 	switch {
 	case patternMessage.MatchString(msg):
 		return "does not match pattern " + patternMessage.FindStringSubmatch(msg)[1]
+	case boundMessage.MatchString(msg):
+		m := boundMessage.FindStringSubmatch(msg)
+		return m[1] + ": want " + m[2]
 	case memberMessage.MatchString(msg), strings.HasSuffix(msg, "is unsupported"):
 		return "has a member the schema does not declare"
 	case !strings.ContainsAny(msg, `'"`),
