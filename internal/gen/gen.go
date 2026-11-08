@@ -615,34 +615,50 @@ type AgentIdentity struct {
 
 // AgentStatus One status revision of one identity: its tag, text, problem, session and the time it was set.
 type AgentStatus struct {
+	// DisplayName The display name of that session when it set the status.
 	DisplayName string `json:"display_name"`
-	Identity    string `json:"identity"`
+
+	// Identity The identity the status belongs to.
+	Identity string `json:"identity"`
 
 	// LastTag listAgentStatuses only: the stored tag; tag reads offline when live is false.
 	LastTag *string `json:"last_tag,omitempty"`
 
-	// Problem Absent when empty.
-	Problem  *string `json:"problem,omitempty"`
-	Revision int64   `json:"revision"`
-	Session  string  `json:"session"`
+	// Problem The problem line the agent set; absent when empty.
+	Problem *string `json:"problem,omitempty"`
 
-	// SetAt Unix milliseconds.
-	SetAt int64  `json:"set_at"`
-	Tag   string `json:"tag"`
-	Text  string `json:"text"`
+	// Revision The revision number, which increases by one with every status the identity sets.
+	Revision int64 `json:"revision"`
+
+	// Session The id of the session that set the status.
+	Session string `json:"session"`
+
+	// SetAt When the status was set, in Unix milliseconds.
+	SetAt int64 `json:"set_at"`
+
+	// Tag The status tag; offline when the identity has no live session (in listAgentStatuses only).
+	Tag string `json:"tag"`
+
+	// Text The one line the agent set.
+	Text string `json:"text"`
 }
 
 // AgentStatusEntry One identity's current status in the agent list, with whether the identity is live.
 type AgentStatusEntry struct {
-	Identity string               `json:"identity"`
-	Kind     AgentStatusEntryKind `json:"kind"`
-	Live     bool                 `json:"live"`
+	// Identity The identity the status belongs to.
+	Identity string `json:"identity"`
+
+	// Kind Whether the identity is an agent or a human.
+	Kind AgentStatusEntryKind `json:"kind"`
+
+	// Live True when the identity has a live session; false reads the tag as offline.
+	Live bool `json:"live"`
 
 	// Status One status revision of one identity: its tag, text, problem, session and the time it was set.
 	Status AgentStatus `json:"status"`
 }
 
-// AgentStatusEntryKind defines model for AgentStatusEntry.Kind.
+// AgentStatusEntryKind Whether the identity is an agent or a human.
 type AgentStatusEntryKind string
 
 // AuthMethod One authentication method the server accepts, as advertised in the discovery document.
@@ -864,9 +880,14 @@ type EditResult struct {
 
 // Gap A range of sequence numbers on a channel that the receiver will never see because retention removed them.
 type Gap struct {
+	// Channel The channel the range was on.
 	Channel string `json:"channel"`
-	From    int64  `json:"from"`
-	To      int64  `json:"to"`
+
+	// From The first sequence number of the removed range, just above the session's old position.
+	From int64 `json:"from"`
+
+	// To The last sequence number of the removed range.
+	To int64 `json:"to"`
 }
 
 // Health The server's health as the caller's tier may see it (spec 2026-10-25 section 4). Members above the probe tier are absent, never null, below their tier. An unreachable store is a 503 problem with code unavailable, never a document.
@@ -997,16 +1018,23 @@ type HumanIdentity struct {
 
 // Identity An identity that has a live session, with its kind, administrator flag, live sessions and current status.
 type Identity struct {
-	Admin    bool          `json:"admin"`
-	Kind     IdentityKind  `json:"kind"`
-	Name     string        `json:"name"`
+	// Admin True when the identity holds the administrator flag.
+	Admin bool `json:"admin"`
+
+	// Kind Whether the identity is an agent or a human.
+	Kind IdentityKind `json:"kind"`
+
+	// Name The identity name.
+	Name string `json:"name"`
+
+	// Sessions The identity's live sessions, oldest first.
 	Sessions []SessionInfo `json:"sessions"`
 
 	// Status One status revision of one identity: its tag, text, problem, session and the time it was set.
 	Status *AgentStatus `json:"status,omitempty"`
 }
 
-// IdentityKind defines model for Identity.Kind.
+// IdentityKind Whether the identity is an agent or a human.
 type IdentityKind string
 
 // JWK A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key.
@@ -1020,25 +1048,56 @@ type JWKS struct {
 
 // Message A delivered, read or searched message: sender, session, channel, sequence number, subject, content, tags and, on a memory channel, the memory id and revision.
 type Message struct {
-	Channel     string             `json:"channel"`
-	Content     string             `json:"content"`
-	CreatedAt   int64              `json:"created_at"`
-	Display     string             `json:"display"`
-	MatchedTags *[]string          `json:"matched_tags,omitempty"`
-	MemoryId    *int64             `json:"memory_id,omitempty"`
-	Metadata    *map[string]string `json:"metadata,omitempty"`
-	ReplyTo     *int64             `json:"reply_to,omitempty"`
-	Revision    *int64             `json:"revision,omitempty"`
-	Sender      string             `json:"sender"`
-	SenderKind  MessageSenderKind  `json:"sender_kind"`
-	Seq         int64              `json:"seq"`
-	Session     *string            `json:"session,omitempty"`
-	Subject     string             `json:"subject"`
-	Tags        *[]string          `json:"tags,omitempty"`
-	Type        string             `json:"type"`
+	// Channel The name of the channel the message is on.
+	Channel string `json:"channel"`
+
+	// Content The text of the message.
+	Content string `json:"content"`
+
+	// CreatedAt When the server stored the message, in Unix milliseconds.
+	CreatedAt int64 `json:"created_at"`
+
+	// Display The sending session's display name, the sender's name once that session row is gone, empty when the message names no session.
+	Display string `json:"display"`
+
+	// MatchedTags The tags of the receiver's tag subscriptions that matched, on a message that arrived through them rather than through a subscribed channel.
+	MatchedTags *[]string `json:"matched_tags,omitempty"`
+
+	// MemoryId The id of the memory this message is a revision of; present only on a memory channel's messages.
+	MemoryId *int64 `json:"memory_id,omitempty"`
+
+	// Metadata Free-form string pairs the sender attached; absent when none.
+	Metadata *map[string]string `json:"metadata,omitempty"`
+
+	// ReplyTo The sequence number of the message this one replies to, on the same channel; absent when it replies to none.
+	ReplyTo *int64 `json:"reply_to,omitempty"`
+
+	// Revision The revision number of the memory this message holds; present only on a memory channel's messages.
+	Revision *int64 `json:"revision,omitempty"`
+
+	// Sender The identity that sent the message.
+	Sender string `json:"sender"`
+
+	// SenderKind Whether the sender is an agent or a human.
+	SenderKind MessageSenderKind `json:"sender_kind"`
+
+	// Seq The message's sequence number: one counter for the whole server, increasing with every message.
+	Seq int64 `json:"seq"`
+
+	// Session The id of the sending session; absent when the message names none.
+	Session *string `json:"session,omitempty"`
+
+	// Subject A one-line subject the sender gave; empty when none.
+	Subject string `json:"subject"`
+
+	// Tags The tags the sender put on the message; absent when none.
+	Tags *[]string `json:"tags,omitempty"`
+
+	// Type A label the sender chose to classify the message; free-form and often empty.
+	Type string `json:"type"`
 }
 
-// MessageSenderKind defines model for Message.SenderKind.
+// MessageSenderKind Whether the sender is an agent or a human.
 type MessageSenderKind string
 
 // Notice A server notice shown to administrators: its kind, message and the time it was set.
@@ -1059,36 +1118,47 @@ type OAuthError struct {
 
 // OfferedCursor A position a client offers on open: a channel and the last sequence number it holds.
 type OfferedCursor struct {
-	// Channel At most 128 bytes (the server counts bytes).
+	// Channel The channel the client holds messages of. A channel that does not exist, or one the identity is not subscribed to, is rejected as unsubscribed. At most 128 bytes (the server counts bytes).
 	Channel string `json:"channel"`
-	Seq     int64  `json:"seq"`
+
+	// Seq The sequence number of the last message the client holds on the channel; delivery resumes above it. It is rejected as before_retention when messages after it are already removed, and as ahead when it is above the newest sequence number the server has assigned.
+	Seq int64 `json:"seq"`
 }
 
 // OpenSessionRequest Opens or resumes a session: an optional hint, an optional resume token and the cursors the client offers.
 type OpenSessionRequest struct {
-	// Cursors At most 256 items.
+	// Cursors Positions the client kept from an earlier session, so the new session resumes where it stopped instead of at the identity's acknowledged position; a channel may be offered once, and a resume does not apply them. At most 256 items.
 	Cursors *[]OfferedCursor `json:"cursors,omitempty"`
 
-	// Hint At most 128 bytes (the server counts bytes).
+	// Hint A short role label for a second session or a subagent, such as builder: the display name becomes identity/hint. It never affects what the session may do, must not contain a slash or a control character, and is ignored when resuming. At most 128 bytes (the server counts bytes).
 	Hint *string `json:"hint,omitempty"`
 
-	// ResumeToken Exactly 43 code points of base64url.
+	// ResumeToken The token of the session to resume, as the open that created it returned it. It is valid while the server retains the session row after its lease lapsed; a token the server no longer holds opens a fresh session. Exactly 43 code points of base64url.
 	ResumeToken *string `json:"resume_token,omitempty"`
 }
 
 // Peek The read-only pending counts of a session: the total and the non-zero count of each channel.
 type Peek struct {
+	// Channels The channels that have pending messages, by name; a channel with none is left out.
 	Channels []struct {
+		// Channel The channel name.
 		Channel string `json:"channel"`
-		Count   int    `json:"count"`
+
+		// Count How many messages are pending on this channel, at most receive_max_count.
+		Count int `json:"count"`
 	} `json:"channels"`
+
+	// Count The total number of pending messages above the watch floor, over every channel.
 	Count int `json:"count"`
 }
 
 // PendingChannel The number of messages waiting on one subscribed channel.
 type PendingChannel struct {
+	// Channel A channel the identity is subscribed to and may receive.
 	Channel string `json:"channel"`
-	Pending int64  `json:"pending"`
+
+	// Pending How many messages wait above the session's position on the channel, counted up to receive_max_count.
+	Pending int64 `json:"pending"`
 }
 
 // Problem The body of every error response (application/problem+json): the stable code, the HTTP status, whether a retry can succeed, and a human-readable title and detail.
@@ -1120,26 +1190,41 @@ type ProblemCode string
 
 // ReceiveRequest Reads the next batch for a session: the batch token to acknowledge, a count, an optional channel filter and whether the session's own messages count.
 type ReceiveRequest struct {
-	// Ack At most 1024 bytes.
+	// Ack The token of the previous batch, to acknowledge it so the session's position advances past it. A token that is not the pending one is ignored and reported as ack_ignored. At most 1024 bytes.
 	Ack *string `json:"ack,omitempty"`
 
-	// Channels At most 256 items.
+	// Channels Read only these channels; absent or empty reads every subscribed channel and the tag matches. A channel that holds a pending batch is redelivered whether named or not. At most 256 items.
 	Channels *[]string `json:"channels,omitempty"`
 
-	// Count At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
-	Count      *int  `json:"count,omitempty"`
+	// Count The most messages to return; absent or 0 means receive_default_count (100 by default), and a redelivered batch ignores it. At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
+	Count *int `json:"count,omitempty"`
+
+	// IncludeOwn Whether the session's own messages are delivered; default false. The setting is stored with the batch, so a redelivery repeats it.
 	IncludeOwn *bool `json:"include_own,omitempty"`
 }
 
 // ReceiveResult One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice and an instruction.
 type ReceiveResult struct {
-	AckIgnored  bool      `json:"ack_ignored"`
-	Batch       string    `json:"batch"`
-	Gaps        []Gap     `json:"gaps"`
-	Instruction *string   `json:"instruction,omitempty"`
-	Messages    []Message `json:"messages"`
-	Notice      *string   `json:"notice,omitempty"`
-	Redelivered bool      `json:"redelivered"`
+	// AckIgnored True when the request carried an ack that was not the pending token, so nothing was acknowledged.
+	AckIgnored bool `json:"ack_ignored"`
+
+	// Batch The token to pass as ack on the next receive to acknowledge this batch; empty when the batch is empty.
+	Batch string `json:"batch"`
+
+	// Gaps The ranges retention removed before the session received them; the position has moved past each.
+	Gaps []Gap `json:"gaps"`
+
+	// Instruction A sentence saying what to pass as ack, or to call receive again when more gap notices wait; present with a batch or when gap notices are deferred.
+	Instruction *string `json:"instruction,omitempty"`
+
+	// Messages The batch, oldest first; empty when nothing is pending.
+	Messages []Message `json:"messages"`
+
+	// Notice The server's capacity notice, present while one is set.
+	Notice *string `json:"notice,omitempty"`
+
+	// Redelivered True when this is a batch delivered before and not yet acknowledged.
+	Redelivered bool `json:"redelivered"`
 }
 
 // RegisterRequest Registers a public key for an identity, with an enrollment token where the server requires one.
@@ -1174,11 +1259,14 @@ type RegistrationAlgorithm string
 
 // RejectedCursor An offered cursor that was not adopted, with the reason (before_retention, ahead, unreadable or unsubscribed).
 type RejectedCursor struct {
-	Channel string               `json:"channel"`
-	Reason  RejectedCursorReason `json:"reason"`
+	// Channel The channel of the offered cursor that was not adopted.
+	Channel string `json:"channel"`
+
+	// Reason Why: unsubscribed (the channel does not exist, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after the offered position are already removed) or ahead (the position is above the newest sequence number).
+	Reason RejectedCursorReason `json:"reason"`
 }
 
-// RejectedCursorReason defines model for RejectedCursor.Reason.
+// RejectedCursorReason Why: unsubscribed (the channel does not exist, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after the offered position are already removed) or ahead (the position is above the newest sequence number).
 type RejectedCursorReason string
 
 // RenameChannelRequest Renames a channel to a new name.
@@ -1254,32 +1342,52 @@ type SendResult struct {
 
 // Session An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors and the pending counts.
 type Session struct {
-	DisplayName     string           `json:"display_name"`
-	Id              string           `json:"id"`
-	Identity        string           `json:"identity"`
-	Pending         []PendingChannel `json:"pending"`
+	// DisplayName The name the server gave the session: the identity, or identity/hint, with -2, -3 and so on added to be unique among the identity's sessions that are not closed.
+	DisplayName string `json:"display_name"`
+
+	// Id The session id, 32 lowercase hex characters. Pass it as the session path parameter, and as the session of send.
+	Id string `json:"id"`
+
+	// Identity The identity that owns the session: the authenticated caller.
+	Identity string `json:"identity"`
+
+	// Pending One entry for each subscribed channel the caller may receive, with the messages waiting on it.
+	Pending []PendingChannel `json:"pending"`
+
+	// RejectedCursors The offered cursors that were not adopted, each with its reason; empty when none were offered or all were adopted, and always empty on a resume.
 	RejectedCursors []RejectedCursor `json:"rejected_cursors"`
-	ResumeToken     string           `json:"resume_token"`
-	Resumed         bool             `json:"resumed"`
+
+	// ResumeToken The secret that resumes this session later, 43 base64url characters. The server keeps only a hash of it, so keep it; a resume returns the same token.
+	ResumeToken string `json:"resume_token"`
+
+	// Resumed True when an existing session was resumed, with its cursors and pending batch intact; false for a new session.
+	Resumed bool `json:"resumed"`
 }
 
 // SessionInfo One live session: its id, identity, display name and the time it was opened.
 type SessionInfo struct {
+	// DisplayName The name the server gave the session when it was opened.
 	DisplayName string `json:"display_name"`
-	Id          string `json:"id"`
-	Identity    string `json:"identity"`
-	OpenedAt    int64  `json:"opened_at"`
+
+	// Id The session id, 32 lowercase hex characters.
+	Id string `json:"id"`
+
+	// Identity The identity that owns the session.
+	Identity string `json:"identity"`
+
+	// OpenedAt When the session was opened, in Unix milliseconds.
+	OpenedAt int64 `json:"opened_at"`
 }
 
 // SetAgentStatusRequest Sets the caller's status: a tag, a text and, for a problem, a description of the problem.
 type SetAgentStatusRequest struct {
-	// Problem At most 200 code points.
+	// Problem One line saying what blocks the agent; optional, usually with blocked or needs-human. At most 200 code points.
 	Problem *string `json:"problem,omitempty"`
 
-	// Tag One of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server. At most 256 code points.
+	// Tag The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed. At most 256 code points.
 	Tag string `json:"tag"`
 
-	// Text At most 200 code points.
+	// Text One line saying what the agent is doing now; required, and surrounding spaces are trimmed. At most 200 code points.
 	Text string `json:"text"`
 }
 
@@ -1520,9 +1628,14 @@ type UsageTier string
 
 // Wake The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on.
 type Wake struct {
+	// Channels The names of the channels the pending messages are on, sorted and without repeats; a channel reached only through a tag subscription is included.
 	Channels []string `json:"channels"`
-	Count    int      `json:"count"`
-	Seq      int64    `json:"seq"`
+
+	// Count How many messages are pending above the watch floor, each source (a channel, or the tag matches) counting at most receive_max_count.
+	Count int `json:"count"`
+
+	// Seq The highest sequence number among the pending messages that woke the watch.
+	Seq int64 `json:"seq"`
 }
 
 // WellKnown The answer of the well-known document: the path of the discovery document.
@@ -1758,7 +1871,7 @@ type CloseSessionParams struct {
 
 // PeekParams defines parameters for Peek.
 type PeekParams struct {
-	// IncludeOwn Whether messages sent by the session itself count; default false
+	// IncludeOwn Whether the session's own messages count; default false
 	IncludeOwn *bool `form:"include_own,omitempty" json:"include_own,omitempty"`
 }
 
@@ -1770,13 +1883,13 @@ type SetAgentStatusParams struct {
 
 // WatchParams defines parameters for Watch.
 type WatchParams struct {
-	// After Wake only for messages with a sequence number above this one (and above the session's cursor); default 0
+	// After Wake only for messages with a sequence number above this one, as well as above the session's position (the higher of the two counts); default 0
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 
 	// Timeout Seconds to wait; fractional allowed; 0 or absent means the server cap. At most 240 seconds, the largest value of watch_max_seconds; above the configured watch_max_seconds the server waits at most that long.
 	Timeout *float64 `form:"timeout,omitempty" json:"timeout,omitempty"`
 
-	// IncludeOwn Whether messages sent by the session itself count; default false
+	// IncludeOwn Whether the session's own messages count, so a message it sent wakes it; default false
 	IncludeOwn *bool `form:"include_own,omitempty" json:"include_own,omitempty"`
 }
 
@@ -2109,7 +2222,7 @@ type ClientInterface interface {
 
 	// ListAgentStatuses List every visible identity's stored status
 	//
-	// Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
+	// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 	//
 	// Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 	ListAgentStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2287,12 +2400,14 @@ type ClientInterface interface {
 
 	// ListIdentities List identities that have a live session
 	//
+	// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+	//
 	// Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 	ListIdentities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AgentStatusHistory List one identity's stored statuses, oldest first
 	//
-	// One identity's status revisions, oldest first, at most status_history_count.
+	// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 	//
 	// Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 	AgentStatusHistory(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2333,12 +2448,16 @@ type ClientInterface interface {
 
 	// OpenSessionWithBody Open a session for the caller's identity, resuming by token or offering cursors
 	//
+	// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 	OpenSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// OpenSession Open a session for the caller's identity, resuming by token or offering cursors
+	//
+	// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2347,17 +2466,21 @@ type ClientInterface interface {
 
 	// CloseSession Close a session, freeing its display name
 	//
+	// Closes one of the caller's own sessions, live or lapsed: the row is marked closed and its display name is free for the next open (a lapsed row may be closed, which is how a client frees a crashed session's name). A closed session cannot be resumed (its token answers 410 session_closed), and a call that names it answers 410 session_closed. Closing a closed session succeeds and changes nothing; a session of another identity, or one that does not exist, is 404 not_found. Any registered identity. Only the caller's own sessions. Side effects: sets the closed time and the lease to now; the retention sweep removes the row later. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.3, Decision 15, ADR 0003.
+	//
 	// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 	CloseSession(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 	//
-	// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
+	// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 	//
 	// Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 	Peek(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReceiveWithBody Receive the next batch of messages for a session, acknowledging the previous one
+	//
+	// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2366,6 +2489,8 @@ type ClientInterface interface {
 
 	// Receive Receive the next batch of messages for a session, acknowledging the previous one
 	//
+	// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
@@ -2373,7 +2498,7 @@ type ClientInterface interface {
 
 	// SetAgentStatusWithBody Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2382,7 +2507,7 @@ type ClientInterface interface {
 
 	// SetAgentStatus Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2390,6 +2515,8 @@ type ClientInterface interface {
 	SetAgentStatus(ctx context.Context, session SessionParam, params *SetAgentStatusParams, body SetAgentStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Watch Long-poll until the session has something to receive or the timeout passes
+	//
+	// Waits until the session has something to receive or the timeout passes. It wakes for a message above the watch floor, the highest of the session's position, the end of any pending batch and after, so a batch already handed out never wakes it. After a wake the server waits up to watch_merge_seconds (default 2) so a burst is reported as one wake. It answers 200 with seq, count and channels, or 204 when the wait ended with nothing new. The wait is cut to watch_max_seconds (default 50), which also applies to a timeout of 0. A newer watch on the same session replaces this one, which answers 409 replaced and must not retry. A watch delivers and acknowledges nothing: call receive to read. Any registered identity. Only the caller's own sessions. Side effects: registers the watch on the session, replacing the older one, and renews the lease. No idempotency key: a watch is a wait, and repeating it registers a new watch that replaces the first. Source: spec 3.5, Decisions 42, 45, 68, ADR 0003.
 	//
 	// Corresponds with GET /v1/sessions/{session}/watch (the `Watch` operationId).
 	Watch(ctx context.Context, session SessionParam, params *WatchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2859,7 +2986,7 @@ func (c *Client) AdminUsage(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 // ListAgentStatuses List every visible identity's stored status
 //
-// Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
+// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 //
 // Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 func (c *Client) ListAgentStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3297,6 +3424,8 @@ func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*ht
 
 // ListIdentities List identities that have a live session
 //
+// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+//
 // Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 func (c *Client) ListIdentities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListIdentitiesRequest(c.Server)
@@ -3312,7 +3441,7 @@ func (c *Client) ListIdentities(ctx context.Context, reqEditors ...RequestEditor
 
 // AgentStatusHistory List one identity's stored statuses, oldest first
 //
-// One identity's status revisions, oldest first, at most status_history_count.
+// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 //
 // Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 func (c *Client) AgentStatusHistory(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3423,6 +3552,8 @@ func (c *Client) Search(ctx context.Context, params *SearchParams, reqEditors ..
 
 // OpenSessionWithBody Open a session for the caller's identity, resuming by token or offering cursors
 //
+// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/sessions (the `OpenSession` operationId).
@@ -3439,6 +3570,8 @@ func (c *Client) OpenSessionWithBody(ctx context.Context, contentType string, bo
 }
 
 // OpenSession Open a session for the caller's identity, resuming by token or offering cursors
+//
+// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3457,6 +3590,8 @@ func (c *Client) OpenSession(ctx context.Context, body OpenSessionJSONRequestBod
 
 // CloseSession Close a session, freeing its display name
 //
+// Closes one of the caller's own sessions, live or lapsed: the row is marked closed and its display name is free for the next open (a lapsed row may be closed, which is how a client frees a crashed session's name). A closed session cannot be resumed (its token answers 410 session_closed), and a call that names it answers 410 session_closed. Closing a closed session succeeds and changes nothing; a session of another identity, or one that does not exist, is 404 not_found. Any registered identity. Only the caller's own sessions. Side effects: sets the closed time and the lease to now; the retention sweep removes the row later. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.3, Decision 15, ADR 0003.
+//
 // Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
 func (c *Client) CloseSession(ctx context.Context, session SessionParam, params *CloseSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCloseSessionRequest(c.Server, session, params)
@@ -3472,7 +3607,7 @@ func (c *Client) CloseSession(ctx context.Context, session SessionParam, params 
 
 // Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 //
-// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
+// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 //
 // Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 func (c *Client) Peek(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3488,6 +3623,8 @@ func (c *Client) Peek(ctx context.Context, session SessionParam, params *PeekPar
 }
 
 // ReceiveWithBody Receive the next batch of messages for a session, acknowledging the previous one
+//
+// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3506,6 +3643,8 @@ func (c *Client) ReceiveWithBody(ctx context.Context, session SessionParam, cont
 
 // Receive Receive the next batch of messages for a session, acknowledging the previous one
 //
+// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
@@ -3523,7 +3662,7 @@ func (c *Client) Receive(ctx context.Context, session SessionParam, body Receive
 
 // SetAgentStatusWithBody Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3542,7 +3681,7 @@ func (c *Client) SetAgentStatusWithBody(ctx context.Context, session SessionPara
 
 // SetAgentStatus Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3560,6 +3699,8 @@ func (c *Client) SetAgentStatus(ctx context.Context, session SessionParam, param
 }
 
 // Watch Long-poll until the session has something to receive or the timeout passes
+//
+// Waits until the session has something to receive or the timeout passes. It wakes for a message above the watch floor, the highest of the session's position, the end of any pending batch and after, so a batch already handed out never wakes it. After a wake the server waits up to watch_merge_seconds (default 2) so a burst is reported as one wake. It answers 200 with seq, count and channels, or 204 when the wait ended with nothing new. The wait is cut to watch_max_seconds (default 50), which also applies to a timeout of 0. A newer watch on the same session replaces this one, which answers 409 replaced and must not retry. A watch delivers and acknowledges nothing: call receive to read. Any registered identity. Only the caller's own sessions. Side effects: registers the watch on the session, replacing the older one, and renews the lease. No idempotency key: a watch is a wait, and repeating it registers a new watch that replaces the first. Source: spec 3.5, Decisions 42, 45, 68, ADR 0003.
 //
 // Corresponds with GET /v1/sessions/{session}/watch (the `Watch` operationId).
 func (c *Client) Watch(ctx context.Context, session SessionParam, params *WatchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6725,7 +6866,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListAgentStatusesWithResponse List every visible identity's stored status
 	//
-	// Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
+	// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6923,6 +7064,8 @@ type ClientWithResponsesInterface interface {
 
 	// ListIdentitiesWithResponse List identities that have a live session
 	//
+	// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/identities (the `ListIdentities` operationId).
@@ -6930,7 +7073,7 @@ type ClientWithResponsesInterface interface {
 
 	// AgentStatusHistoryWithResponse List one identity's stored statuses, oldest first
 	//
-	// One identity's status revisions, oldest first, at most status_history_count.
+	// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6981,12 +7124,16 @@ type ClientWithResponsesInterface interface {
 
 	// OpenSessionWithBodyWithResponse Open a session for the caller's identity, resuming by token or offering cursors
 	//
+	// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/sessions (the `OpenSession` operationId).
 	OpenSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*OpenSessionResponse, error)
 
 	// OpenSessionWithResponse Open a session for the caller's identity, resuming by token or offering cursors
+	//
+	// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6995,6 +7142,8 @@ type ClientWithResponsesInterface interface {
 
 	// CloseSessionWithResponse Close a session, freeing its display name
 	//
+	// Closes one of the caller's own sessions, live or lapsed: the row is marked closed and its display name is free for the next open (a lapsed row may be closed, which is how a client frees a crashed session's name). A closed session cannot be resumed (its token answers 410 session_closed), and a call that names it answers 410 session_closed. Closing a closed session succeeds and changes nothing; a session of another identity, or one that does not exist, is 404 not_found. Any registered identity. Only the caller's own sessions. Side effects: sets the closed time and the lease to now; the retention sweep removes the row later. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.3, Decision 15, ADR 0003.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
@@ -7002,7 +7151,7 @@ type ClientWithResponsesInterface interface {
 
 	// PeekWithResponse Count the messages pending above the watch floor, without delivering or acknowledging them
 	//
-	// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
+	// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7011,12 +7160,16 @@ type ClientWithResponsesInterface interface {
 
 	// ReceiveWithBodyWithResponse Receive the next batch of messages for a session, acknowledging the previous one
 	//
+	// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
 	ReceiveWithBodyWithResponse(ctx context.Context, session SessionParam, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReceiveResponse, error)
 
 	// ReceiveWithResponse Receive the next batch of messages for a session, acknowledging the previous one
+	//
+	// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7025,7 +7178,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetAgentStatusWithBodyWithResponse Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7034,7 +7187,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetAgentStatusWithResponse Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7042,6 +7195,8 @@ type ClientWithResponsesInterface interface {
 	SetAgentStatusWithResponse(ctx context.Context, session SessionParam, params *SetAgentStatusParams, body SetAgentStatusJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAgentStatusResponse, error)
 
 	// WatchWithResponse Long-poll until the session has something to receive or the timeout passes
+	//
+	// Waits until the session has something to receive or the timeout passes. It wakes for a message above the watch floor, the highest of the session's position, the end of any pending batch and after, so a batch already handed out never wakes it. After a wake the server waits up to watch_merge_seconds (default 2) so a burst is reported as one wake. It answers 200 with seq, count and channels, or 204 when the wait ended with nothing new. The wait is cut to watch_max_seconds (default 50), which also applies to a timeout of 0. A newer watch on the same session replaces this one, which answers 409 replaced and must not retry. A watch delivers and acknowledges nothing: call receive to read. Any registered identity. Only the caller's own sessions. Side effects: registers the watch on the session, replacing the older one, and renews the lease. No idempotency key: a watch is a wait, and repeating it registers a new watch that replaces the first. Source: spec 3.5, Decisions 42, 45, 68, ADR 0003.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12387,7 +12542,7 @@ func (c *ClientWithResponses) AdminUsageWithResponse(ctx context.Context, reqEdi
 
 // ListAgentStatusesWithResponse List every visible identity's stored status
 //
-// Every visible identity with a stored status, by identity. An entry whose identity has no live session reads tag offline, with last_tag the stored tag.
+// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12741,6 +12896,8 @@ func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors
 
 // ListIdentitiesWithResponse List identities that have a live session
 //
+// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/identities (the `ListIdentities` operationId).
@@ -12754,7 +12911,7 @@ func (c *ClientWithResponses) ListIdentitiesWithResponse(ctx context.Context, re
 
 // AgentStatusHistoryWithResponse List one identity's stored statuses, oldest first
 //
-// One identity's status revisions, oldest first, at most status_history_count.
+// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12847,6 +13004,8 @@ func (c *ClientWithResponses) SearchWithResponse(ctx context.Context, params *Se
 
 // OpenSessionWithBodyWithResponse Open a session for the caller's identity, resuming by token or offering cursors
 //
+// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/sessions (the `OpenSession` operationId).
@@ -12859,6 +13018,8 @@ func (c *ClientWithResponses) OpenSessionWithBodyWithResponse(ctx context.Contex
 }
 
 // OpenSessionWithResponse Open a session for the caller's identity, resuming by token or offering cursors
+//
+// Opens a session for the caller, or resumes one. When resume_token names a session row the server still retains (live, or lapsed and not yet swept: Decision 79), that session is resumed: its lease is renewed, its cursors, pending batch and token are untouched, resumed is true, and hint and cursors are not applied. A token the server no longer holds opens a fresh session; a malformed token is 400 validation, another identity's token is 404 not_found, and a closed session's token is 410 session_closed. A fresh session gets a display name (the identity, or identity/hint, with -2, -3 and so on until it is unique among the identity's sessions that are not closed: Decisions 15 and 39; the hint never affects what the session may do), a cursor on every subscribed channel at the identity's acknowledged position, and each offered cursor adopted where it can be. An offered cursor is rejected as unsubscribed (no such channel, or the identity is not subscribed to it), unreadable (the identity may not receive it), before_retention (messages after it are already removed) or ahead (above the newest sequence number the server has assigned); that channel then starts at the acknowledged position (Decision 44). pending counts, for each subscribed channel the caller may receive, the messages above the session's position, up to receive_max_count. A resume answers 201 like a new session. Any registered identity. Side effects: creates the session row and its cursors (a fresh open), or renews the lease (a resume). No idempotency key: a retried open creates another session, and the first, never used, lapses and the retention sweep removes it; resume with the token you hold instead. Source: spec 4.3, Decisions 15, 39, 40, 44, 79, ADR 0003.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12873,6 +13034,8 @@ func (c *ClientWithResponses) OpenSessionWithResponse(ctx context.Context, body 
 
 // CloseSessionWithResponse Close a session, freeing its display name
 //
+// Closes one of the caller's own sessions, live or lapsed: the row is marked closed and its display name is free for the next open (a lapsed row may be closed, which is how a client frees a crashed session's name). A closed session cannot be resumed (its token answers 410 session_closed), and a call that names it answers 410 session_closed. Closing a closed session succeeds and changes nothing; a session of another identity, or one that does not exist, is 404 not_found. Any registered identity. Only the caller's own sessions. Side effects: sets the closed time and the lease to now; the retention sweep removes the row later. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.3, Decision 15, ADR 0003.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/sessions/{session} (the `CloseSession` operationId).
@@ -12886,7 +13049,7 @@ func (c *ClientWithResponses) CloseSessionWithResponse(ctx context.Context, sess
 
 // PeekWithResponse Count the messages pending above the watch floor, without delivering or acknowledging them
 //
-// Read-only pending counts above the watch floor. Writes nothing (no lease renewal, no cursor, no watch row, no receipt).
+// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12901,6 +13064,8 @@ func (c *ClientWithResponses) PeekWithResponse(ctx context.Context, session Sess
 
 // ReceiveWithBodyWithResponse Receive the next batch of messages for a session, acknowledging the previous one
 //
+// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/sessions/{session}/receive (the `Receive` operationId).
@@ -12913,6 +13078,8 @@ func (c *ClientWithResponses) ReceiveWithBodyWithResponse(ctx context.Context, s
 }
 
 // ReceiveWithResponse Receive the next batch of messages for a session, acknowledging the previous one
+//
+// Delivers the next batch for the session and, in the same call, acknowledges the previous one. The batch holds the messages above the session's position on every subscribed channel the caller may receive, plus the messages whose tags match a tag subscription (an unfiltered receive only; those carry matched_tags), oldest first, at most count and cut to fit result_default_kib. The server records the batch as pending and returns its token in batch; the position advances only when a later receive passes that token as ack, so a lost response redelivers the same batch (redelivered is true, whatever count and channels say, with the include_own of the first delivery) until it is acknowledged. An ack that is not the pending token changes nothing and is reported as ack_ignored. When retention removed messages the session had not received, gaps names each range and the position moves past it. notice carries the capacity notice when one is set, and instruction says what to pass as ack. An empty batch has no token. Agents are never delivered memory channels; they find a memory with search and read it with getMemory. Any registered identity. Only the caller's own sessions; channels the caller may not receive are skipped, and naming one it cannot see in channels is 404 not_found. Side effects: renews the session lease and stores the pending batch; a matching ack advances the session's positions and the identity's acknowledged marks. No idempotency key: repeating a receive redelivers the same pending batch, and repeating an ack is ignored. Source: spec 3.5 and 4.3, Decisions 16, 40, 75, 95, ADR 0003.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12927,7 +13094,7 @@ func (c *ClientWithResponses) ReceiveWithResponse(ctx context.Context, session S
 
 // SetAgentStatusWithBodyWithResponse Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12942,7 +13109,7 @@ func (c *ClientWithResponses) SetAgentStatusWithBodyWithResponse(ctx context.Con
 
 // SetAgentStatusWithResponse Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status from one of its live sessions. Only an agent sets a status, and only its own.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12956,6 +13123,8 @@ func (c *ClientWithResponses) SetAgentStatusWithResponse(ctx context.Context, se
 }
 
 // WatchWithResponse Long-poll until the session has something to receive or the timeout passes
+//
+// Waits until the session has something to receive or the timeout passes. It wakes for a message above the watch floor, the highest of the session's position, the end of any pending batch and after, so a batch already handed out never wakes it. After a wake the server waits up to watch_merge_seconds (default 2) so a burst is reported as one wake. It answers 200 with seq, count and channels, or 204 when the wait ended with nothing new. The wait is cut to watch_max_seconds (default 50), which also applies to a timeout of 0. A newer watch on the same session replaces this one, which answers 409 replaced and must not retry. A watch delivers and acknowledges nothing: call receive to read. Any registered identity. Only the caller's own sessions. Side effects: registers the watch on the session, replacing the older one, and renews the lease. No idempotency key: a watch is a wait, and repeating it registers a new watch that replaces the first. Source: spec 3.5, Decisions 42, 45, 68, ADR 0003.
 //
 // Returns a wrapper object for the known response body format(s).
 //
