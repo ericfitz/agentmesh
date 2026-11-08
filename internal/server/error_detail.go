@@ -141,23 +141,32 @@ func plainMessage(msg string) string {
 		return "has a member the schema does not declare"
 	case !strings.ContainsAny(msg, `'"`),
 		strings.HasPrefix(msg, "missing propert"), // names come from the schema
-		strings.HasPrefix(msg, "value must be one of "), strings.HasPrefix(msg, "value must be '"):
+		strings.HasPrefix(msg, "value must be one of "), strings.HasPrefix(msg, "value is not one of the allowed values ["), strings.HasPrefix(msg, "value must be '"):
 		return msg
 	}
 	return "is not valid"
 }
 
-// maskPointer masks every segment of a JSON pointer that is neither an array
-// index nor a member name some schema of the document declares: such a segment
-// is a key the caller chose (a metadata key).
+// maskPointer masks every segment of a JSON pointer that the schemas of the
+// document do not account for: an index is kept only below a declared array
+// member (or at the root), and a name only when some schema declares it. Any
+// other segment is a key the caller chose (a metadata key, even a numeric one).
 func maskPointer(ptr string) string {
 	if ptr == "" {
 		return ""
 	}
-	names := declaredNames()
+	names, arrays := declaredNames()
 	segs := strings.Split(strings.TrimPrefix(ptr, "/"), "/")
 	for i, seg := range segs {
-		if _, err := strconv.Atoi(seg); err != nil && !names[seg] {
+		n, err := strconv.Atoi(seg)
+		if err == nil && n >= 0 && strconv.Itoa(n) == seg {
+			if i == 0 || arrays[segs[i-1]] {
+				continue
+			}
+			segs[i] = "<key>"
+			continue
+		}
+		if !names[seg] {
 			segs[i] = "<key>"
 		}
 	}
@@ -167,13 +176,15 @@ func maskPointer(ptr string) string {
 var (
 	namesOnce sync.Once
 	namesSet  map[string]bool
+	arraysSet map[string]bool // declared members whose schema is an array
 )
 
 // declaredNames is every property name any schema of the embedded document
 // declares.
-func declaredNames() map[string]bool {
+func declaredNames() (names, arrays map[string]bool) {
 	namesOnce.Do(func() {
 		namesSet = map[string]bool{}
+		arraysSet = map[string]bool{}
 		seen := map[*openapi3.Schema]bool{}
 		var walk func(r *openapi3.SchemaRef)
 		walk = func(r *openapi3.SchemaRef) {
@@ -184,6 +195,9 @@ func declaredNames() map[string]bool {
 			seen[sc] = true
 			for name, prop := range sc.Properties {
 				namesSet[name] = true
+				if prop != nil && prop.Value != nil && (prop.Value.Items != nil || prop.Value.Type.Includes("array")) {
+					arraysSet[name] = true
+				}
 				walk(prop)
 			}
 			walk(sc.Items)
@@ -198,7 +212,7 @@ func declaredNames() map[string]bool {
 			walk(sc)
 		}
 	})
-	return namesSet
+	return namesSet, arraysSet
 }
 
 // requestErrorReason is the fixed wording of a request error that carries no

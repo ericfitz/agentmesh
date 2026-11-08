@@ -193,11 +193,25 @@ func TestDetailDropsEscapedLiteralsAndNames(t *testing.T) {
 		{"unknown member with an apostrophe", "/v1/channels", `{"it's SECRETVALUE":1}`},
 		{"map key", "/v1/channels/dev/messages", `{"content":"x","metadata":{"SECRETKEY":1}}`},
 		{"map key with an apostrophe", "/v1/channels/dev/messages", `{"content":"x","metadata":{"it's SECRETKEY":1}}`},
+		{"numeric map key", "/v1/channels/dev/messages", `{"content":"x","metadata":{"4242424242":1}}`},
+		{"negative numeric map key", "/v1/channels/dev/messages", `{"content":"x","metadata":{"-123456":1}}`},
 		{"map key with a backslash", "/v1/channels/dev/messages", `{"content":"x","metadata":{"a\\SECRETKEY":1}}`},
 	}
 	for _, c := range names {
 		t.Run(c.name, func(t *testing.T) {
-			check(t, e.rawAllowUnrouted("pat", newReq(t, "POST", c.path, strings.NewReader(c.body))), "SECRET")
+			check(t, e.rawAllowUnrouted("pat", newReq(t, "POST", c.path, strings.NewReader(c.body))), "SECRET", "4242424242", "123456")
 		})
+	}
+}
+
+// TestEnumDetailKeepsAllowedValues: an enum refusal lists the schema's allowed
+// values and never the submitted one.
+func TestEnumDetailKeepsAllowedValues(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.identity("pat", false)
+	resp := e.rawAllowUnrouted("pat", newReq(t, "POST", "/v1/channels", strings.NewReader(`{"name":"a","kind":"SECRETVALUE"}`)))
+	d := detailText(readProblem(t, resp))
+	if resp.StatusCode != 400 || !strings.Contains(d, "allowed values") || !strings.Contains(d, "ordinary") || strings.Contains(d, "SECRET") {
+		t.Fatalf("got %d %q", resp.StatusCode, d)
 	}
 }
