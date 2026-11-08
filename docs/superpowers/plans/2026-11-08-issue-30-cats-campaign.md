@@ -659,3 +659,11 @@ Open item 9 (Eric): SG7 as a `oneOf` in `TaskPatch` instead of rule. Default: th
 
 One commit `fix(spec): JWK requires kty (issue #30, CATS OnlyRequiredFields)` with a reproducing test (a register request whose JWK lacks `kty` is refused by the validator), the issue #29/#34/#35 checks green, protocol 1.0.0.
 
+### Task 8.6: enforce the no-500 rule in the test layers (Eric 2026-11-08: "A: enforce in #30")
+
+**Decision (Eric):** the no-500 rule (ADR 0001 addendum, CLAUDE.md): a 500 seen in any test is a must-fix bug. **Files:** `internal/respcheck` (the in-process and inproc Bus response check), the e2e validating proxy (`internal/e2e`), `scripts/check-gates-selftest.sh` block 40 (a mutation).
+- respcheck and the e2e proxy record every 500 answer and fail the test (the same `Late()`/`TestMain` path respcheck already uses), naming the method, path and problem detail. A test that deliberately provokes a 500 (if any exists today) must say so through one explicit, listed exception with a reason; a stale exception fails.
+- The CATS acceptance Q1 already fails any 5xx but 503 and the transport 501; `TestCommittedRules` already refuses any 5xx rule; keep both, and cite the rule in their messages.
+- Any 500 this guard exposes in the existing suites is a must-fix bug: list them in the report; each becomes its own fix task (Task 8.7 and up) before the branch merges.
+- Gates: `make verify`; block 40 gets a mutation that makes a handler answer 500 and expects the guard's failure text.
+
