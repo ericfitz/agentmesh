@@ -1,4 +1,4 @@
-.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run
+.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run cats-selftest
 export CGO_ENABLED=0
 PKGS_UNIT = $$(go list ./... | grep -v '^github.com/ericfitz/agentmesh/internal/conformance')
 
@@ -64,7 +64,7 @@ release-check: ## Not part of verify (its own CI job). Release tooling: check-pi
 release-lint: ## actionlint over the workflows and shellcheck over release/, scripts/ and install.sh (not part of verify; its own CI job)
 	@for t in actionlint shellcheck; do command -v $$t >/dev/null || { echo "release-lint: $$t is not installed"; exit 1; }; done
 	actionlint .github/workflows/*.yml
-	shellcheck -x release/*.sh scripts/*.sh
+	shellcheck -x release/*.sh scripts/*.sh scripts/testdata/cats-fake/cats
 	shellcheck -s sh install.sh
 release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; its own CI job)
 	bash release/test-install.sh $(RELEASE_INSTALL_ARGS)
@@ -88,3 +88,5 @@ verify:      ## Done gate (CLAUDE.md): build, the m4, m6 and m10 dependency rule
 
 cats-run:    ## One CATS campaign against a throwaway server (needs cats and Java; not part of verify)
 	bash scripts/cats-harness.sh run
+cats-selftest: ## The harness selftest with the fake cats (no Java; block 40 of check-gates-selftest runs it once unmutated and under mutation)
+	bash scripts/cats-harness-selftest.sh

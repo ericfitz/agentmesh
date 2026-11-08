@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# A fake `cats` for scripts/cats-harness-selftest.sh: records its argv, checks the
+# headers file the harness hands it and writes a canned report. Never prints a
+# header value.
+set -euo pipefail
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+
+: "${CATS_FAKE_LOG:?CATS_FAKE_LOG is required}"
+printf '%s\n' "$@" >>"$CATS_FAKE_LOG"
+
+# Test hooks: CATS_FAKE_SLEEP holds the run open (the overlap case);
+# CATS_FAKE_PLANT writes a fake JWT-shaped string to stdout (the leak-scan case).
+sleep "${CATS_FAKE_SLEEP:-0}"
+if [ -n "${CATS_FAKE_PLANT:-}" ]; then
+  echo 'planted: eyJfake0000000000.eyJfake1111111111.fakesignature'
+fi
+
+if [ "${1:-}" = smoke ]; then
+  echo 'Summary: fake'
+  exit 0
+fi
+
+headers=
+out=
+prev=
+for a in "$@"; do
+  case "$a" in --headers=*) headers=${a#--headers=} ;; esac
+  [ "$prev" = -o ] && out=$a
+  prev=$a
+done
+
+fail() {
+  echo "fake-cats: FAIL $*"
+  exit 9
+}
+[ -n "$headers" ] || fail "no --headers argument"
+[ -n "$out" ] || fail "no -o argument"
+[ -f "$headers" ] || fail "headers file does not exist"
+mode=$(stat -c %a "$headers" 2>/dev/null || stat -f %Lp "$headers")
+[ "$mode" = 600 ] || fail "headers file mode is $mode, want 600"
+grep -q -E '^all:$' "$headers" || fail "headers file has no all: key"
+grep -q -E '^/v1/admin/status:$' "$headers" || fail "headers file has no /v1/admin/status: key"
+
+mkdir -p "$out"
+echo '{"totalTests":"3","success":"1","warnings":"1","errors":"1","runStatus":"COMPLETED","qualityGatePassed":false}' \
+  >"$out/cats-summary-report.json"
+for n in 1 2 3; do cp "$HERE/report/Test$n.json" "$out/Test$n.json"; done
+echo "fake-cats: wrote 3 tests"
+exit 1

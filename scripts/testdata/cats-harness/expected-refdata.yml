@@ -1,0 +1,47 @@
+/v1/channels:
+  acl[*]#identity: cats-agent
+  acl[*]#permissions: [read, write, admin]
+  scope: cats_remove_field
+/v1/channels/{channel}:
+  channel: cats-ordinary-decoy
+/v1/channels/{channel}/acl:
+  channel: cats-acl
+  identity: cats-agent
+  permissions: [read, write, admin]
+/v1/channels/{channel}/subscription:
+  channel: cats-sub
+/v1/channels/{channel}/messages:
+  channel: cats-ordinary
+  reply_to: cats_remove_field
+  session: <SESSION>
+/v1/channels/{channel}/tasks:
+  channel: cats-tasks
+/v1/tasks/{id}:
+  id: <DECOY_TASK>
+/v1/tasks/{id}/claim:
+  id: <TASK>
+/v1/tasks/{id}/release:
+  id: <TASK>
+/v1/memories/{id}:
+  id: <DECOY_MEMORY>
+/v1/memories/{id}/revisions:
+  id: <MEMORY>
+/v1/sessions/{session}:
+  session: <DECOY_SESSION>
+/v1/sessions/{session}/peek:
+  session: <SESSION>
+/v1/sessions/{session}/receive:
+  session: <SESSION>
+/v1/sessions/{session}/watch:
+  session: <SESSION>
+/v1/sessions/{session}/status:
+  session: <SESSION>
+/v1/identities/{identity}/statuses:
+  identity: cats-agent
+/v1/admin/scopes/{scope}:
+  scope: cats-scope
+/v1/admin/scopes/{scope}/done:
+  scope: cats-scope-decoy
+  retire: normal
+/v1/admin/identities:
+  scope: cats-scope

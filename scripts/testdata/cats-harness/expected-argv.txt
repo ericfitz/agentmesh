@@ -1,0 +1,13 @@
+-c
+<REPO>/api/openapi.yaml
+-s
+<URL>
+--headers=<DIR>/headers.yml
+--no-checkUpdate
+--noEnvFile
+--refData=<DIR>/refdata.yml
+-o
+<OUT>/report
+--maxRequestsPerMinute=10000
+--printExecutionStatistics
+--skipPaths=/v1/admin/reset,/v1/admin/signing-keys/rotate,/v1/admin/identities/{identity}/reset-credential,/v1/admin/bridges,/v1/admin/bridges/{channel}

@@ -1,0 +1,519 @@
+#!/usr/bin/env bash
+# cats-harness-selftest.sh: tests scripts/cats-harness.sh against recorded output
+# (issue #30, Definition of Done C). It runs the real server with a fake `cats`
+# (scripts/testdata/cats-fake/cats) in its own temporary --dir, never the
+# default directory. Every case runs; the exit code is 1 when any failed.
+#
+#   scripts/cats-harness-selftest.sh [--real]
+#
+# CATS_HARNESS_RECORD=1 writes the expectation files in
+# scripts/testdata/cats-harness/ instead of comparing against them.
+# --real adds real-campaign (the installed cats; needs Java; never in CI).
+#
+# State (Definition of Done D): everything lives under one mktemp directory that
+# the EXIT trap removes after running `down` on each harness directory in it and
+# killing any server still started from it; a second run starts from nothing.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+HARNESS=$ROOT/scripts/cats-harness.sh
+FAKE=$ROOT/scripts/testdata/cats-fake/cats
+EXPECT=$ROOT/scripts/testdata/cats-harness
+RECORD=${CATS_HARNESS_RECORD:-0}
+REAL=0
+case "${1:-}" in
+  '') ;;
+  --real) REAL=1 ;;
+  *) echo "usage: $0 [--real]" >&2; exit 2 ;;
+esac
+
+unset CATS_HARNESS_DIR CATS_SMOKE CATS_IDENTITY CATS_FAKE_SLEEP CATS_FAKE_PLANT \
+  AGENTMESH_PROFILE AGENTMESH_IDENTITY AGENTMESH_SERVER AGENTMESH_CREDENTIAL \
+  AGENTMESH_CONFIG_DIR AGENTMESH_DATA_DIR
+
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/cats-selftest.XXXXXX")
+TMP=$(cd "$TMP" && pwd -P)
+mkdir "$TMP/cap"
+export CATS_BIN=$FAKE
+export CATS_FAKE_LOG=$TMP/fake.log
+BG=
+D=$TMP/h # the main harness directory
+
+cleanup() {
+  local rc=$?
+  trap - EXIT INT TERM
+  if [ -n "$BG" ]; then
+    kill "$BG" 2>/dev/null || true
+    wait "$BG" 2>/dev/null || true
+  fi
+  if [ -d "$TMP" ]; then
+    local d pid
+    for d in "$TMP"/*/; do
+      [ -f "${d}.agentmesh-cats" ] || continue
+      bash "$HARNESS" down --dir "${d%/}" >/dev/null 2>&1 || true
+    done
+    for pid in $(pgrep -f "$TMP/[^ ]*/agentmesh server" 2>/dev/null || true); do
+      kill -KILL "$pid" 2>/dev/null || true
+    done
+    rm -rf "$TMP"
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# ---------------------------------------------------------------- helpers
+
+CASE=
+CASE_FAIL=0
+FAILED=()
+RUNS=0
+
+fail() { # fail WHY: records a failure of the current case
+  echo "cats-harness-selftest: FAIL $CASE: $*"
+  CASE_FAIL=1
+}
+
+run_case() { # run_case NAME FUNCTION
+  CASE=$1
+  CASE_FAIL=0
+  RUNS=$((RUNS + 1))
+  "$2" || true
+  if [ "$CASE_FAIL" -eq 0 ]; then
+    echo "cats-harness-selftest: ok $CASE"
+  else
+    FAILED+=("$CASE")
+  fi
+}
+
+RC=0
+# h NAME ARGS...: runs the harness, stdout and stderr to $TMP/cap/NAME.{out,err}, exit code in RC.
+h() {
+  local name=$1
+  shift
+  RC=0
+  bash "$HARNESS" "$@" >"$TMP/cap/$name.out" 2>"$TMP/cap/$name.err" || RC=$?
+  echo "$RC" >"$TMP/cap/$name.rc"
+}
+out_of() { cat "$TMP/cap/$1.out"; }
+err_of() { cat "$TMP/cap/$1.err"; }
+
+expect_rc() { # expect_rc WANT WHAT
+  [ "$RC" -eq "$1" ] || fail "$2: exit $RC, want $1 (stderr: $(head -c 300 "$TMP/cap/${3:-x}.err" 2>/dev/null | tr '\n' ' '))"
+}
+contains() { # contains NAME FILE-SUFFIX NEEDLE (fixed string)
+  grep -q -F -e "$3" "$TMP/cap/$1.$2" || fail "$1.$2 lacks '$3'"
+}
+log_has_line() { grep -q -x -F -e "$1" "$CATS_FAKE_LOG" 2>/dev/null; }
+alive() { kill -0 "$1" 2>/dev/null; }
+
+tokenize() { # tokenize OUT_DIR: stdin to stdout, paths and the port replaced by tokens
+  sed -e "s|$1|<OUT>|g" -e "s|$D|<DIR>|g" -e "s|$ROOT|<REPO>|g" \
+    -E -e 's#http://127\.0\.0\.1:[0-9]+#<URL>#g'
+}
+
+compare() { # compare ACTUAL_FILE EXPECTED_NAME
+  if [ "$RECORD" = 1 ]; then
+    cp "$1" "$EXPECT/$2"
+    echo "cats-harness-selftest: recorded $EXPECT/$2"
+    return 0
+  fi
+  if ! diff -u "$EXPECT/$2" "$1" >"$TMP/diff.txt" 2>&1; then
+    fail "$2 differs: $(head -n 12 "$TMP/diff.txt" | tr '\n' '|')"
+  fi
+}
+
+wait_for() { # wait_for SECONDS CMD...: polls every 0.2 s
+  local n=$(($1 * 5)) i
+  shift
+  for ((i = 0; i < n; i++)); do
+    "$@" && return 0
+    sleep 0.2
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------- cases
+
+# Cases 1, 2, 5 (part), 6 share one run.
+OUT1=$TMP/out
+case_run_completes() {
+  : >"$CATS_FAKE_LOG"
+  h run1 run --dir "$D" --out "$OUT1"
+  expect_rc 0 "run" run1
+  contains run1 out 'tests=3 success=1 warnings=1 errors=1 status=COMPLETED'
+  contains run1 out 'report='
+  cp "$CATS_FAKE_LOG" "$TMP/argv-run1.txt"
+}
+
+case_argv_recorded() {
+  local a=$TMP/argv-tokenized.txt joined
+  tokenize "$OUT1" <"$TMP/argv-run1.txt" >"$a"
+  joined=$(tr '\n' ' ' <"$a")
+  local want
+  for want in '--noEnvFile' '--no-checkUpdate' '-o <OUT>/report ' '--headers=<DIR>/headers.yml' \
+    '--refData=<DIR>/refdata.yml' '-c <REPO>/api/openapi.yaml '; do
+    case "$joined" in *"$want"*) ;; *) fail "argv lacks '$want'" ;; esac
+  done
+  case "$joined" in *--showSecrets* | *Bearer*) fail "argv has --showSecrets or Bearer" ;; esac
+  compare "$a" expected-argv.txt
+}
+
+# ids are replaced by section: a value counts only when it is the seeded one.
+tokenize_refdata() { # tokenize_refdata SEED_JSON REFDATA
+  local sj=$1
+  awk -v ses="$(jq -r .session "$sj")" -v sesd="$(jq -r .session_decoy "$sj")" \
+    -v task="$(jq -r .task "$sj")" -v taskd="$(jq -r .task_decoy "$sj")" \
+    -v mem="$(jq -r .memory "$sj")" -v memd="$(jq -r .memory_decoy "$sj")" '
+    BEGIN {
+      tok["/v1/channels/{channel}/messages"] = "SESSION"
+      tok["/v1/tasks/{id}"] = "DECOY_TASK"
+      tok["/v1/tasks/{id}/claim"] = "TASK"
+      tok["/v1/tasks/{id}/release"] = "TASK"
+      tok["/v1/memories/{id}"] = "DECOY_MEMORY"
+      tok["/v1/memories/{id}/revisions"] = "MEMORY"
+      tok["/v1/sessions/{session}"] = "DECOY_SESSION"
+      tok["/v1/sessions/{session}/peek"] = "SESSION"
+      tok["/v1/sessions/{session}/receive"] = "SESSION"
+      tok["/v1/sessions/{session}/watch"] = "SESSION"
+      tok["/v1/sessions/{session}/status"] = "SESSION"
+      val["SESSION"] = ses; val["DECOY_SESSION"] = sesd; val["TASK"] = task
+      val["DECOY_TASK"] = taskd; val["MEMORY"] = mem; val["DECOY_MEMORY"] = memd
+    }
+    /^\// { sec = $0; sub(/:$/, "", sec); print; next }
+    /^  (id|session): / {
+      v = $0; sub(/^  (id|session): /, "", v)
+      t = tok[sec]
+      if (t != "" && val[t] == v) { sub(/: .*$/, ": <" t ">"); }
+      print; next
+    }
+    { print }' "$2"
+}
+
+case_refdata_recorded() {
+  local s=$TMP/seed
+  h up1 up --dir "$D"
+  expect_rc 0 "up" up1
+  h seed1 seed --dir "$D" --out "$s"
+  expect_rc 0 "seed" seed1
+  [ "$CASE_FAIL" -eq 0 ] || return 0
+  tokenize_refdata "$s/seed.json" "$s/refdata.yml" >"$TMP/refdata-tokenized.yml"
+  compare "$TMP/refdata-tokenized.yml" expected-refdata.yml
+  jq -r '.fixtures[].key' "$s/fixtures.json" >"$TMP/fixtures-keys.txt"
+  compare "$TMP/fixtures-keys.txt" expected-fixtures-keys.txt
+  local t
+  for t in SESSION DECOY_SESSION TASK DECOY_TASK MEMORY DECOY_MEMORY; do
+    grep -q -F "<$t>" "$TMP/refdata-tokenized.yml" || fail "refdata has no <$t> after tokenizing (an id changed shape?)"
+  done
+  # A second seed re-reads the same fixtures (state, Definition of Done D).
+  h seed2 seed --dir "$D" --out "$TMP/seed2"
+  expect_rc 0 "second seed" seed2
+  [ "$(jq -S .task "$s/seed.json")" = "$(jq -S .task "$TMP/seed2/seed.json")" ] || fail "second seed returned another task id"
+}
+
+JWT_RE='^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
+case_token_prints_one_line() {
+  h tok1 token --dir "$D" agent
+  expect_rc 0 "token agent" tok1
+  [ "$(wc -l <"$TMP/cap/tok1.out" | tr -d ' ')" = 1 ] || fail "token agent printed other than one line"
+  grep -q -E "$JWT_RE" "$TMP/cap/tok1.out" || fail "token agent output is not JWT-shaped"
+  [ -s "$TMP/cap/tok1.err" ] && fail "token agent wrote to stderr"
+  h tok2 token --dir "$D" nobody
+  expect_rc 2 "token nobody" tok2
+  h tok3 token --dir "$D"
+  expect_rc 2 "token with no argument" tok3
+}
+
+case_no_bearer_leaks() {
+  local f
+  for f in "$OUT1/cats.log" "$D/harness.log" "$D/server.log"; do
+    [ -f "$f" ] || { fail "$f is missing"; continue; }
+    if grep -q -E 'Bearer ey|eyJ[A-Za-z0-9_-]{10,}\.|abe_[A-Za-z0-9_-]{20,}' "$f"; then
+      fail "a bearer pattern is in $f"
+    fi
+  done
+  if grep -r -q -E 'Bearer ey|eyJ[A-Za-z0-9_-]{10,}\.|abe_[A-Za-z0-9_-]{20,}' "$OUT1/report"; then
+    fail "a bearer pattern is in the report"
+  fi
+  # The harness's own output, apart from the token line, carries no eyJ.
+  for f in "$TMP"/cap/*.out "$TMP"/cap/*.err; do
+    case "$f" in */tok1.out) continue ;; esac
+    if grep -q 'eyJ' "$f"; then fail "eyJ in $(basename "$f")"; fi
+  done
+}
+
+case_headers_file_removed() {
+  [ ! -e "$D/headers.yml" ] || fail "$D/headers.yml exists after run"
+  local found
+  found=$(find "$TMP" -name headers.yml -not -path "$D/*" 2>/dev/null || true)
+  [ -z "$found" ] || fail "a headers file is left: $found"
+}
+
+case_second_up_refused() {
+  h up2 up --dir "$D"
+  expect_rc 3 "second up" up2
+  contains up2 err 'down'
+  if [ ! -f "$D/server.pid" ] || ! alive "$(cat "$D/server.pid")"; then fail "the first server died"; fi
+}
+
+case_server_argv() {
+  local cmd pair
+  cmd=$(ps -o command= -p "$(cat "$D/server.pid")")
+  for pair in 'send_messages_per_second=10000' 'send_kib_per_second=65536' \
+    'token_lifetime_seconds=86400' 'session_lease_seconds=86400' \
+    'watch_max_seconds=1' 'maintenance_interval_seconds=3600'; do
+    case "$cmd" in *"-set $pair"*) ;; *) fail "server argv lacks '-set $pair'" ;; esac
+  done
+  case "$cmd" in *'-listen 127.0.0.1:'*) ;; *) fail "server argv lacks '-listen 127.0.0.1:'" ;; esac
+}
+
+case_leftovers_cleaned() {
+  # $D is up (case up1). Kill its server hard, then run over the leftovers.
+  local old
+  old=$(cat "$D/server.pid")
+  kill -9 "$old" 2>/dev/null || true
+  wait_for 10 sh -c "! kill -0 $old 2>/dev/null" || fail "could not kill $old"
+  : >"$CATS_FAKE_LOG"
+  h run2 run --dir "$D" --out "$TMP/out2" --paths /v1/discover
+  expect_rc 0 "run over leftovers" run2
+  contains run2 out "cleaned leftovers (pid $old dead)"
+  cp "$CATS_FAKE_LOG" "$TMP/argv-run2.txt"
+}
+
+case_down_removes_dir() {
+  local d=$TMP/h9
+  h dn_up up --dir "$d"
+  expect_rc 0 "up" dn_up
+  h dn1 down --dir "$d"
+  expect_rc 0 "down" dn1
+  [ ! -e "$d" ] || fail "$d exists after down"
+  h dn2 down --dir "$d"
+  expect_rc 0 "second down" dn2
+  [ ! -e "$D" ] || fail "$D exists after run"
+}
+
+SKIP_ARG='--skipPaths=/v1/admin/reset,/v1/admin/signing-keys/rotate,/v1/admin/identities/{identity}/reset-credential,/v1/admin/bridges,/v1/admin/bridges/{channel}'
+case_skip_paths_vs_paths() {
+  grep -q -x -F -e "$SKIP_ARG" "$TMP/argv-run1.txt" || fail "default run lacks the five-entry $SKIP_ARG"
+  grep -q -x -F -e '--paths=/v1/discover' "$TMP/argv-run2.txt" || fail "--paths run lacks --paths=/v1/discover"
+  if grep -q -F -e '--skipPaths=' "$TMP/argv-run2.txt"; then fail "--paths run passes --skipPaths="; fi
+
+  : >"$CATS_FAKE_LOG"
+  h sk3 run --dir "$D" --out "$TMP/out-sk3" --paths /v1/discover,/v1/admin/reset
+  expect_rc 0 "paths with a skipped entry" sk3
+  contains sk3 out 'skipped: /v1/admin/reset (use --no-skip)'
+  log_has_line '--paths=/v1/discover' || fail "mixed list did not pass --paths=/v1/discover"
+
+  : >"$CATS_FAKE_LOG"
+  h sk4 run --dir "$D" --out "$TMP/out-sk4" --paths /v1/admin/reset --no-skip
+  expect_rc 0 "--no-skip" sk4
+  log_has_line '--paths=/v1/admin/reset' || fail "--no-skip did not pass --paths=/v1/admin/reset"
+  if grep -q -F -e '--skipPaths=' "$CATS_FAKE_LOG"; then fail "--no-skip passes --skipPaths="; fi
+
+  rm -f "$CATS_FAKE_LOG"
+  h sk5 run --dir "$D" --out "$TMP/out-sk5" --paths /v1/admin/reset
+  expect_rc 0 "only a skipped path" sk5
+  contains sk5 out 'nothing to fuzz'
+  [ ! -e "$CATS_FAKE_LOG" ] || fail "the fake ran for a skipped-only list"
+  [ ! -e "$D" ] || fail "a skipped-only run started a server"
+}
+
+case_cats_not_found() {
+  local d=$TMP/nf
+  CATS_BIN=/nonexistent h nf1 run --dir "$d" --out "$TMP/out-nf"
+  expect_rc 2 "CATS_BIN=/nonexistent" nf1
+  contains nf1 err 'missing tool: /nonexistent'
+  CATS_BIN=cats-not-installed-here h nf2 run --dir "$d" --out "$TMP/out-nf"
+  expect_rc 2 "a missing cats" nf2
+  contains nf2 err 'cats'
+  [ ! -e "$d" ] && [ ! -e "$d/server.pid" ] || fail "a server directory appeared before the tool check"
+}
+
+case_shellcheck() {
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    echo "cats-harness-selftest: (shellcheck absent)"
+    return 0
+  fi
+  shellcheck -x "$ROOT/scripts/cats-harness.sh" "$ROOT/scripts/cats-harness-selftest.sh" "$FAKE" >"$TMP/sc.txt" 2>&1 ||
+    fail "shellcheck: $(head -n 8 "$TMP/sc.txt" | tr '\n' '|')"
+}
+
+case_admin_paths_match_spec() {
+  local want got
+  got=$(bash "$HARNESS" admin-paths | LC_ALL=C sort)
+  want=$(awk '/^paths:/ { p = 1; next } /^[^ ]/ { p = 0 } p && /^  \/v1\/admin\// { sub(/^  /, ""); sub(/:$/, ""); print }' \
+    "$ROOT/api/openapi.yaml" | LC_ALL=C sort)
+  [ -n "$want" ] || fail "no /v1/admin paths found in api/openapi.yaml"
+  [ "$got" = "$want" ] || fail "ADMIN_PATHS differs from the spec: $(diff <(echo "$got") <(echo "$want") | tr '\n' '|')"
+}
+
+case_dir_guard() {
+  local nm=$TMP/not-mine
+  mkdir "$nm"
+  echo keep >"$nm/file"
+  h dg1 up --dir "$nm"
+  expect_rc 2 "up on a foreign directory" dg1
+  contains dg1 err 'not a harness directory'
+  h dg2 down --dir "$nm"
+  expect_rc 2 "down on a foreign directory" dg2
+  contains dg2 err 'not a harness directory'
+  [ -f "$nm/file" ] || fail "the foreign directory's file did not survive"
+}
+
+case_dir_symlink_dots() {
+  local t=$TMP/target link=$TMP/link
+  mkdir "$t"
+  ln -s "$t" "$link"
+  h sl1 down --dir "$link/"
+  expect_rc 2 "down on link/" sl1
+  [ -d "$t" ] || fail "down --dir link/ removed the target"
+  h sl2 down --dir "$link"
+  expect_rc 2 "down on link" sl2
+  touch "$t/.agentmesh-cats"
+  h sl3 down --dir "$link//"
+  expect_rc 2 "down on link// with a marked target" sl3
+  [ -f "$t/.agentmesh-cats" ] || fail "a marked target was removed through a symlink"
+  local m=$TMP/marked
+  mkdir "$m"
+  touch "$m/.agentmesh-cats"
+  h dd1 down --dir "$TMP/./marked"
+  expect_rc 2 "down on a . component" dd1
+  h dd2 down --dir "$TMP/marked/../marked"
+  expect_rc 2 "down on a .. component" dd2
+  [ -f "$m/.agentmesh-cats" ] || fail "a . or .. path removed a marked directory"
+  h dd3 down --dir relative/path
+  expect_rc 2 "down on a relative path" dd3
+}
+
+case_overlap() {
+  local d=$TMP/ov pid
+  : >"$CATS_FAKE_LOG"
+  CATS_FAKE_SLEEP=20 bash "$HARNESS" run --dir "$d" --out "$TMP/out-ov" >"$TMP/cap/ov1.out" 2>"$TMP/cap/ov1.err" &
+  BG=$!
+  if ! wait_for 240 test -s "$CATS_FAKE_LOG"; then
+    fail "the first run never reached cats"
+    return 0
+  fi
+  pid=$(cat "$d/server.pid")
+  h ov2 run --dir "$d" --out "$TMP/out-ov2"
+  expect_rc 3 "second run while the first lives" ov2
+  contains ov2 err 'another harness command is active'
+  h ov3 up --dir "$d"
+  expect_rc 3 "up while a run lives" ov3
+  alive "$pid" || fail "the first run's server died"
+  [ -f "$d/.agentmesh-cats" ] || fail "the first run's directory was removed"
+  local rc=0
+  wait "$BG" || rc=$?
+  BG=
+  [ "$rc" -eq 0 ] || fail "the first run exited $rc"
+  [ ! -e "$d" ] || fail "$d remains after the first run"
+  [ ! -e "$d.lock" ] || fail "the lock $d.lock remains"
+}
+
+case_repo_checks() {
+  local d=$TMP/rp
+  : >"$CATS_FAKE_LOG"
+  (cd "$(dirname "$ROOT")" && h rp1 run --dir "$d" --out "$TMP/out-rp" --repo "./$(basename "$ROOT")" --paths /v1/discover)
+  RC=$(cat "$TMP/cap/rp1.rc")
+  expect_rc 0 "a relative --repo" rp1
+  grep -q -x -F -e "$ROOT/api/openapi.yaml" "$CATS_FAKE_LOG" || fail "cats did not get the absolute $ROOT/api/openapi.yaml"
+  mkdir "$TMP/emptyrepo"
+  h rp2 run --dir "$d" --out "$TMP/out-rp" --repo "$TMP/emptyrepo"
+  expect_rc 2 "a repo without the spec" rp2
+  contains rp2 err 'no api/openapi.yaml'
+  h rp3 up --dir "$d" --repo "$TMP/does-not-exist"
+  expect_rc 2 "a missing repo" rp3
+  [ ! -e "$d" ] || fail "a refused repo left a directory"
+}
+
+case_flag_checks() {
+  local d=$TMP/fl
+  h fl1 status --dir "$d" extra
+  expect_rc 2 "status with an extra argument" fl1
+  h fl2 down --dir "$d" --paths /v1/discover
+  expect_rc 2 "down --paths" fl2
+  h fl3 up --dir "$d" --out "$TMP/x"
+  expect_rc 2 "up --out" fl3
+  h fl4 run --dir "$d" --paths ""
+  expect_rc 2 'run --paths ""' fl4
+  h fl5 run --dir "$d" extra
+  expect_rc 2 "run with an extra argument" fl5
+  h fl6 admin-paths --dir "$d"
+  expect_rc 2 "admin-paths --dir" fl6
+  h fl7 bogus
+  expect_rc 2 "an unknown subcommand" fl7
+  h fl8 up --bogus
+  expect_rc 2 "an unknown option" fl8
+  h fl9 up --dir "$d" --port abc
+  expect_rc 2 "a non-numeric port" fl9
+  [ ! -e "$d" ] || fail "a refused command created $d"
+}
+
+case_leak_scan_detects() {
+  local d=$TMP/lk
+  CATS_FAKE_PLANT=1 h lk1 run --dir "$d" --out "$TMP/out-lk" --paths /v1/discover
+  expect_rc 1 "a planted JWT-shaped string" lk1
+  contains lk1 out 'bearer leaked into'
+  contains lk1 out 'cats.log'
+  [ ! -e "$d" ] || fail "the failed run left $d"
+}
+
+case_fake_rejects_bad_headers() {
+  local f=$TMP/badheaders.yml o=$TMP/fake-out rc=0
+  printf 'all:\n  Authorization: Bearer fake-secret-value\n' >"$f"
+  chmod 644 "$f"
+  : >"$CATS_FAKE_LOG"
+  "$FAKE" -c x --headers="$f" -o "$o" >"$TMP/cap/fk.out" 2>&1 || rc=$?
+  [ "$rc" -eq 9 ] || fail "wrong mode: exit $rc, want 9"
+  grep -q 'fake-cats: FAIL' "$TMP/cap/fk.out" || fail "no FAIL line for a wrong mode"
+  chmod 600 "$f"
+  rc=0
+  "$FAKE" -c x --headers="$f" -o "$o" >"$TMP/cap/fk.out" 2>&1 || rc=$?
+  [ "$rc" -eq 9 ] || fail "missing admin key: exit $rc, want 9"
+  if grep -q 'fake-secret-value' "$TMP/cap/fk.out"; then fail "the fake printed a header value"; fi
+  rc=0
+  "$FAKE" smoke -c x >"$TMP/cap/fk.out" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ] || ! grep -q '^Summary: fake$' "$TMP/cap/fk.out"; then fail "smoke: exit $rc or no summary"; fi
+}
+
+case_real_campaign() {
+  local d=$TMP/real n
+  CATS_BIN=cats h real1 run --dir "$d" --out "$TMP/out-real" --paths /v1/discover,/v1/channels
+  expect_rc 0 "real run" real1
+  n=$(sed -n 's/.*tests=\([0-9]*\) .*/\1/p' "$TMP/cap/real1.out")
+  [ "${n:-0}" -gt 500 ] || fail "tests=${n:-none}, want above 500"
+}
+
+# Order matters: the first cases share the run of case 1 and the server of
+# refdata-recorded, which later cases use and then run over.
+run_case run-completes case_run_completes
+run_case argv-recorded case_argv_recorded
+run_case headers-file-removed case_headers_file_removed
+run_case refdata-recorded case_refdata_recorded
+run_case token-prints-one-line case_token_prints_one_line
+run_case no-bearer-leaks case_no_bearer_leaks
+run_case second-up-refused case_second_up_refused
+run_case server-argv case_server_argv
+run_case leftovers-cleaned case_leftovers_cleaned
+run_case down-removes-dir case_down_removes_dir
+run_case skip-paths-vs-paths case_skip_paths_vs_paths
+run_case cats-not-found case_cats_not_found
+run_case shellcheck case_shellcheck
+run_case admin-paths-match-spec case_admin_paths_match_spec
+run_case dir-guard case_dir_guard
+run_case dir-symlink-and-dots case_dir_symlink_dots
+run_case overlapping-runs case_overlap
+run_case repo-checks case_repo_checks
+run_case flag-checks case_flag_checks
+run_case leak-scan-detects case_leak_scan_detects
+run_case fake-rejects-bad-headers case_fake_rejects_bad_headers
+if [ "$REAL" -eq 1 ]; then
+  run_case real-campaign case_real_campaign
+fi
+
+if [ "${#FAILED[@]}" -gt 0 ]; then
+  echo "cats-harness-selftest: $RUNS cases, ${#FAILED[@]} failed: ${FAILED[*]}"
+  exit 1
+fi
+echo "cats-harness-selftest: $RUNS cases, all passed"

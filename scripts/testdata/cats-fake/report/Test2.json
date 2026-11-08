@@ -1,0 +1,94 @@
+{
+  "testId": "Test 412",
+  "traceId": "049196a7-96c2-45fe-894d-29de7f814d6e",
+  "scenario": "Send a happy flow request with undocumented HTTP method: CONNECT",
+  "expectedResult": "Should return 405",
+  "result": "warn",
+  "resultReason": "Unexpected response code: 404",
+  "resultDetails": "Unexpected response code for http method [CONNECT]: expected [405], actual [404]",
+  "resultIgnoreDetails": null,
+  "request": {
+    "headers": [
+      {
+        "key": "Accept",
+        "value": "application/json"
+      },
+      {
+        "key": "User-Agent",
+        "value": "cats/15.4.0 (Test 412 - NonRestHttpMethods)"
+      },
+      {
+        "key": "X-Cats-Trace-Id",
+        "value": "049196a7-96c2-45fe-894d-29de7f814d6e"
+      },
+      {
+        "key": "Authorization",
+        "value": "$$Authorization"
+      },
+      {
+        "key": "Content-Type",
+        "value": "application/json"
+      }
+    ],
+    "payload": "",
+    "httpMethod": "CONNECT",
+    "url": "http://127.0.0.1:57694/v1/channels",
+    "sendBody": false,
+    "preserveContentType": false,
+    "timestamp": "Sun, 8 Nov 2026 11:33:04 GMT"
+  },
+  "response": {
+    "responseCode": 404,
+    "httpMethod": "CONNECT",
+    "responseTimeInMs": "0",
+    "numberOfWordsInResponse": "4",
+    "numberOfLinesInResponse": "1",
+    "contentLengthInBytes": "169",
+    "capturedBodyBytes": "169",
+    "declaredContentLength": "169",
+    "responseBodyLimit": "10485760",
+    "bodyTruncated": false,
+    "jsonBody": {
+      "code": "not_found",
+      "detail": "method not allowed",
+      "instance": "/v1/channels",
+      "retryable": false,
+      "status": 404,
+      "title": "Not Found",
+      "type": "urn:agentmesh:problem:not_found"
+    },
+    "headers": [
+      {
+        "key": "connection",
+        "value": "close"
+      },
+      {
+        "key": "content-length",
+        "value": "169"
+      },
+      {
+        "key": "content-type",
+        "value": "application/problem+json"
+      },
+      {
+        "key": "date",
+        "value": "Sun, 08 Nov 2026 11:33:04 GMT"
+      }
+    ],
+    "responseContentType": "application/problem+json"
+  },
+  "path": "/v1/channels",
+  "fuzzer": "FakeCatsFuzzer",
+  "fullRequestPath": "http://127.0.0.1:57694/v1/channels",
+  "contractPath": "/v1/channels",
+  "server": "http://127.0.0.1:57694",
+  "requestProvenance": {
+    "mutationTargets": [
+      {
+        "location": "HTTP_METHOD",
+        "name": "Request method"
+      }
+    ],
+    "runtimeCorrelations": []
+  }
+}
