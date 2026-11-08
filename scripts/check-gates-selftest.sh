@@ -1506,6 +1506,7 @@ block_spec_validation_fires() {
 		'		bridges = br' '		bridges = nil' \
 		./internal/e2e/ '^TestSlackBridgeFixture$' TestSlackBridgeFixture 'the Slack bridge is not configured'
 	# the document's criteria are live: a wrong literal in workflow 1 fails its subtest (CriteriaError: 'criterion ... failed')
+	# shellcheck disable=SC2016 # the anchors are literal Arazzo text
 	mutate_unit_block arazzo-criteria-fire api/arazzo.yaml \
 		'          - condition: $response.body#/token_type == "Bearer"' \
 		'          - condition: $response.body#/token_type == "Basic"' \
