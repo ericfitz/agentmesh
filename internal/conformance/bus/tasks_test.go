@@ -559,7 +559,7 @@ func TestTaskChargesOncePerCommit(t *testing.T) {
 		want := 2
 		if e.Name == "sqlite" {
 			// The fault surfaces unretried; nothing committed or charged.
-			codeOf(t, create(), ab2bus.CodeInternal)
+			codeOf(t, create(), ab2bus.CodeUnavailable)
 		} else if err := create(); err != nil {
 			t.Fatalf("postgres retries the fault: %v", err)
 		}

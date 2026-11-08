@@ -474,7 +474,7 @@ func TestSendChargesOncePerCommit(t *testing.T) {
 			committed("faulted then retried send", key, res, want)
 		} else {
 			key, _, err := send()
-			codeOf(t, err, ab2bus.CodeInternal)
+			codeOf(t, err, ab2bus.CodeUnavailable)
 			refused("faulted send", key, 0)
 		}
 		for want < 2 {

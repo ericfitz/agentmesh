@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -91,13 +92,16 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 // first call only (fired flips under the mutex), discards fn's nil and
 // returns failFirst instead. The inner store's own retry loop classifies it:
 // on Postgres 40001 is retryable, so fn runs a second time and commits once;
-// on SQLite the dialect does not classify it, so it surfaces unwrapped and
-// nothing committed. Returning failFirst after the inner Append had
+// on SQLite the fault is the store's own retry-exhausted error
+// (store.ErrRetryable: the dialect does not retry it), which surfaces as the
+// retryable unavailable and nothing committed. A Postgres error injected into
+// SQLite would be an unclassified store error, a 500 under the no-500 rule
+// (issue #30 Task 8.9: the fixture, not the product, was the bug). Returning failFirst after the inner Append had
 // committed would leave the message committed and break both halves of the
 // test, which is why the wrapper is inside fn.
 type faultStore struct {
 	ab2store.Store
-	failFirst *pgconn.PgError
+	failFirst error
 
 	mu    sync.Mutex
 	fired bool
@@ -175,7 +179,11 @@ func (h *harness) build(s ab2store.Store, o harnessOptions) {
 	}
 	h.raw = s
 	if o.fault != nil {
-		s = &faultStore{Store: s, failFirst: o.fault}
+		var fail error = o.fault
+		if h.e.Name != "postgres" {
+			fail = fmt.Errorf("injected serialization failure: %w", ab2store.ErrRetryable)
+		}
+		s = &faultStore{Store: s, failFirst: fail}
 	}
 	h.store = s
 	h.clock = &fakeClock{t: time.UnixMilli(fixedNowMs)}

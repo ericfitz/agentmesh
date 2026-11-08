@@ -369,7 +369,7 @@ func TestInspectSendRetriedTxInspectsOnce(t *testing.T) {
 				t.Errorf("MaxSeq = %d, want %d", n, before+1)
 			}
 		} else {
-			codeOf(t, err, ab2bus.CodeInternal)
+			codeOf(t, err, ab2bus.CodeUnavailable)
 			if n := inspectMaxSeq(h); n != before {
 				t.Errorf("MaxSeq = %d, want %d (nothing committed)", n, before)
 			}
