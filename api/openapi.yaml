@@ -1553,7 +1553,7 @@ paths:
         first use, the default on a loopback or Unix-socket listener) lets anyone
         claim a name that has no credential, and enrollment (the default on any
         other listener) requires an enrollment token, which a host administrator
-        creates. A name that already has a credential cannot take another key (409
+        creates. A keyless administrator row (after reset-credential) needs an enrollment token even in open mode. A name that already has a credential cannot take another key (409
         conflict; a lost credential is recovered with the host command
         reset-credential), a scoped identity registers only with the enrollment
         token bound to it, and a human identity cannot register (403). Registering
@@ -2315,7 +2315,7 @@ components:
             type: urn:agentmesh:problem:internal
             title: 'Internal Server Error'
             status: 500
-            detail: 'internal error'
+            detail: 'database is locked (5) (SQLITE_BUSY)'
             instance: /v1/channels
             code: internal
             retryable: true
@@ -2396,7 +2396,7 @@ components:
           description: "The HTTP status code of the response, repeated in the body."
         detail:
           type: string
-          description: "An explanation specific to this occurrence; absent when there is none. It never carries the text of a driver or store failure."
+          description: "An explanation specific to this occurrence; absent when there is none. The health 503 and the token endpoint never carry the text of a store failure; an internal problem carries the truncated text of the failure."
         instance:
           type: string
           description: "The path of the request that failed, for example /v1/channels/release-train/acl; absent when the request is unknown."
@@ -3471,9 +3471,8 @@ components:
         maintenance:
           interval_seconds: 60
           owner: a31950eb95b5c835988bcf17
-          lock: unknown
+          lock: held
           last_tick_at: 1794095940000
-          lock_error: 'could not take the maintenance lock: connection reset'
           jobs:
             - name: lapsed sessions
               changed: 2
@@ -3585,9 +3584,8 @@ components:
       example:
         interval_seconds: 60
         owner: a31950eb95b5c835988bcf17
-        lock: unknown
+        lock: held
         last_tick_at: 1794095940000
-        lock_error: 'could not take the maintenance lock: connection reset'
         jobs:
           - name: lapsed sessions
             changed: 2
@@ -3616,10 +3614,10 @@ components:
           description: "When this process last ticked, in Unix milliseconds; absent before its first tick."
         lock_error:
           type: string
-          description: "The last lock error, truncated; absent when there is none."
+          description: "The last lock error, truncated; present only when lock is unknown after a failed attempt (that tick lists no jobs), absent otherwise."
         jobs:
           type: array
-          description: "The jobs of the last tick; empty before the first tick."
+          description: "The jobs of the last tick; empty before the first tick, when the lock is held elsewhere and after a lock error."
           items:
             $ref: "#/components/schemas/HealthJob"
     HealthJob:
@@ -3647,7 +3645,7 @@ components:
       example:
         grant_type: client_credentials
         client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
-        client_assertion: eyJhbGciOiJFZERTQSIsImtpZCI6IlpYaGhiWEJzWlMxcmFXUSIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhY21lLWNvZGVyLTEiLCJzdWIiOiJhY21lLWNvZGVyLTEiLCJhdWQiOiJodHRwOi8vbG9jYWxob3N0Ojg0MjAiLCJqdGkiOiJleGFtcGxlLWp0aS0xIiwiZXhwIjoxNzk0MDk5NjAwfQ.ZXhhbXBsZS1zaWduYXR1cmUtbm90LXJlYWw
+        client_assertion: eyJhbGciOiJFZERTQSIsImtpZCI6IlpYaGhiWEJzWlMxemFXZHVhVzVuTFd0bGVTMXBaQzF1YjNRdGNtVmhiREUiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJhY21lLWNvZGVyLTEiLCJzdWIiOiJhY21lLWNvZGVyLTEiLCJhdWQiOiJodHRwOi8vbG9jYWxob3N0Ojg0MjAiLCJqdGkiOiJleGFtcGxlLWp0aS0xIiwiZXhwIjoxNzk0MDk5NjAwfQ.ZXhhbXBsZS1zaWduYXR1cmUtbm90LXJlYWw
       type: object
       description: >-
         RFC 6749 section 4.4.2 and RFC 8693 section 2.1 token request. The
@@ -3720,7 +3718,7 @@ components:
           description: "A human-readable explanation; a server fault always says internal error and never carries the underlying text."
     AccessToken:
       example:
-        access_token: eyJhbGciOiJFZERTQSIsImtpZCI6IlpYaGhiWEJzWlMxcmFXUSIsInR5cCI6ImF0K2p3dCJ9.eyJpc3MiOiJhY21lLWNvZGVyLTEiLCJzdWIiOiJhY21lLWNvZGVyLTEiLCJhdWQiOiJodHRwOi8vbG9jYWxob3N0Ojg0MjAiLCJqdGkiOiJleGFtcGxlLWp0aS0xIiwiZXhwIjoxNzk0MDk5NjAwfQ.ZXhhbXBsZS1zaWduYXR1cmUtbm90LXJlYWw
+        access_token: eyJhbGciOiJFZERTQSIsImtpZCI6IlpYaGhiWEJzWlMxemFXZHVhVzVuTFd0bGVTMXBaQzF1YjNRdGNtVmhiREUiLCJ0eXAiOiJhdCtqd3QifQ.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0Ojg0MjAiLCJzdWIiOiJhY21lLWNvZGVyLTEiLCJhdWQiOiJodHRwOi8vbG9jYWxob3N0Ojg0MjAiLCJjbGllbnRfaWQiOiJhY21lLWNvZGVyLTEiLCJqdGkiOiJleGFtcGxlLWp0aS0xIiwiaWF0IjoxNzk0MDk2MDAwLCJleHAiOjE3OTQwOTk2MDAsImFnZW50bWVzaF9raW5kIjoiYWdlbnQifQ.ZXhhbXBsZS1zaWduYXR1cmUtbm90LXJlYWw
         token_type: Bearer
         expires_in: 3600
         issued_token_type: urn:ietf:params:oauth:token-type:access_token
