@@ -159,11 +159,12 @@ func withCommas(n int) string {
 }
 
 // gotWant is the two spellings of kin's keyword refusal (the plain one for a
-// short value, the one with grouped digits for a long one).
+// short bound, the one with grouped digits for a long one); the server drops
+// the submitted number ("got N") and keeps the bound.
 func gotWant(kw string, got, want int) []string {
 	return []string{
-		fmt.Sprintf("%s: got %d, want %d", kw, got, want),
-		fmt.Sprintf("%s: got %s, want %s", kw, withCommas(got), withCommas(want)),
+		fmt.Sprintf("%s: want %d", kw, want),
+		fmt.Sprintf("%s: want %s", kw, withCommas(want)),
 	}
 }
 
@@ -209,10 +210,10 @@ func overValue(b bound, l leaf) (v any, phrases []string, err error) {
 		return m, append(gotWant("maxProperties", len(m), *b.MaxProps), fmt.Sprintf("there must be at most %d properties", *b.MaxProps)), nil
 	case "integer", "number":
 		if b.Max != nil && b.Format != "int64" {
-			return *b.Max + 1, []string{"maximum: got", "number must be at most"}, nil
+			return *b.Max + 1, []string{"maximum: want", "number must be at most"}, nil
 		}
 		if b.Min != nil {
-			return *b.Min - 1, []string{"minimum: got", "number must be at least"}, nil
+			return *b.Min - 1, []string{"minimum: want", "number must be at least"}, nil
 		}
 	}
 	return nil, nil, fmt.Errorf("no over-bound value for a %s row", l.kind)

@@ -469,14 +469,14 @@ func TestValidatorCountsCodePoints(t *testing.T) {
 		t.Fatalf("status %d: %s", code, body)
 	}
 	_, detail := problemDetail(t, body)
-	if strings.Contains(detail, "maxLength: got") {
+	if strings.Contains(detail, "maxLength: want") {
 		t.Errorf("the validator refused 128 code points: %s", detail)
 	}
 	code, body = statusReq(t, e, "alice", http.MethodGet, "/v1/search?q=hello&channel="+url.QueryEscape(cjk(129)), "", "")
 	if code != 400 {
 		t.Fatalf("status %d: %s", code, body)
 	}
-	if _, detail = problemDetail(t, body); !strings.Contains(detail, "maxLength: got 129, want 128") {
+	if _, detail = problemDetail(t, body); !strings.Contains(detail, "maxLength: want 128") {
 		t.Errorf("129 code points: detail %q lacks the validator's maxLength refusal", detail)
 	}
 }
@@ -504,7 +504,7 @@ func TestValidatorCountsEncodedPath(t *testing.T) {
 		t.Fatalf("fixture: %d bytes, %d encoded", len(name), len(url.PathEscape(name)))
 	}
 	code, body = statusReq(t, e, "alice", http.MethodGet, "/v1/channels/"+url.PathEscape(name)+"/acl", "", "")
-	if strings.Contains(string(body), "maxLength: got") {
+	if strings.Contains(string(body), "maxLength: want") {
 		t.Errorf("the validator refused 384 encoded characters (status %d): %s", code, body)
 	}
 }

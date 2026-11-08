@@ -887,7 +887,7 @@ func TestTaskBlockersRawCount(t *testing.T) {
 		// On the wire the validator's maxItems answers first, with its own text.
 		wantText := func(field string) string {
 			if transport == "inproc" {
-				return "maxItems: got 65, want 64"
+				return "maxItems: want 64"
 			}
 			return field + " accepts at most 64 tasks"
 		}
