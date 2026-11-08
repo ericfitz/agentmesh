@@ -675,3 +675,13 @@ Final campaign (2026-11-08, `task-7-final.md`): every run valid; Q1, Q1b, Q2 emp
 
 One commit `fix(spec): JWK declares the accepted key members (issue #30, CATS HappyPath)` with a reproducing test (a register request built from the schema's own properties, as CATS builds it, e.g. `{"kty":"OKP","crv":"Ed25519","x":<example x>}` with the right kid, registers; `{"kty":"zzz"}` is refused by the validator with the enum, not by go-jose), and one `docs(spec): ...` commit for ruling 41. Then `bash scripts/cats-harness.sh run --paths /v1/auth/register` and `go run ./tools/catscheck classify --rules api/cats-false-positives.yaml <report>` exit 0 (SG8 gone), then `down`. Bounds rows, `propertyCount`, the issue #29/#34/#35 checks follow; protocol 1.0.0.
 
+Task 8.6 (7277aa1) found four 500s in the existing suites; under the no-500 rule each is a must-fix bug:
+
+### Task 8.8: the token endpoint answers 500 when the store is down (`internal/server/oauth.go`)
+
+`TestTokenServerError`: `POST /v1/auth/token` with the store closed answers 500 `server_error`. A store outage is RFC 6749's `temporarily_unavailable` with 503 and `Retry-After` (the same outage answers 503 `unavailable` everywhere else, `docs/ops/health.md`). Fix the mapping, change the test to assert the 503 body, declare 503 on `token` in `api/openapi.yaml` if it is not declared (`make generate`, `TestOperationErrorTable`), and search for every other place that maps an unclassified store error to a 500. One commit `fix(server): token endpoint answers 503 temporarily_unavailable on a store outage (issue #30, no-500 rule)`.
+
+### Task 8.9: an injected serialization failure answers 500 (inproc `Send`, `CreateTask`)
+
+`TestInspectSendRetriedTxInspectsOnce`, `TestSendChargesOncePerCommit`, `TestTaskChargesOncePerCommit` (`internal/conformance/bus`, inproc, SQLite): the write answers 500 with detail `: could not serialize access (SQLSTATE 40001)`. Root-cause first (superpowers:systematic-debugging): why the retried transaction's serialization error reaches the handler unclassified on the inproc path but not on the local one; a serialization failure that survives the retries is a retryable `unavailable` (503, `Retry-After`) or must not surface at all if the retry is meant to absorb it. Fix at the root (the classification in `internal/core` or the store engines, not the handler), with the three tests green under respcheck and a test that pins the classification. One commit per root cause.
+
