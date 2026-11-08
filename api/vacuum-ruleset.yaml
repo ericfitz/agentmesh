@@ -1,15 +1,13 @@
 # vacuum ruleset for api/openapi.yaml (issue #32; vacuum 0.36.2, pinned in the Makefile).
 # `make spec-lint` runs it at --fail-severity info: any finding fails. A rule is off only with
-# a reason here. The OWASP rules are not in this base (vacuum runs them only with --hard-mode);
+# a reason here (five are off). The OWASP rules are not in this base (vacuum runs them only with --hard-mode);
 # see the note at the end.
 extends: [[spectral:oas, all]]
 rules:
-  info-contact: off            # issue #35 decides the publisher contact (Eric's decision, 2026-11-06)
-  info-license: off            # issue #35 decides the license (Eric's decision, 2026-11-06)
+  info-contact: off            # Eric's decision, 2026-11-06 (issue #35): no contact in info
+  info-license: off            # Eric's decision, 2026-11-06 (issue #35): no license in info
   camel-case-properties: off   # the wire's JSON members are snake_case (every schema, every internal/bus tag); a rename is a protocol change
-  oas3-missing-example: off    # examples are what CATS (#30) builds requests from; #30 decides whether and how to add them
-  oas3-api-servers: off        # the document describes no deployment; every consumer takes a base URL and server.Spec() clears servers
-  description-duplication: off # the shared bound texts of #34 repeat by design (same unit, same limit)
+  description-duplication: off # the #34 bound texts and the property descriptions of #35 repeat by design (same unit, same limit; created_at is Unix milliseconds in every schema)
   openapi-tags-alphabetical: off # the tags follow spec section 3's order (discovery, health, sessions, channels, messages, memories, tasks, admin, auth)
 # Not in this base (hard mode only), assessed on e65a651 and left out: owasp-define-error-responses-429
 # (contradicts #33: a 429 only where a limiter exists), owasp-string-restricted (contradicts #34: a

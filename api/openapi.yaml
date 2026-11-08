@@ -10,6 +10,9 @@ info:
     channel name such as 100% or a%2Fb round-trips as the literal name and an
     empty segment matches no route. Optional members are absent from the JSON,
     never null. Every error is application/problem+json.
+servers:
+  - url: http://localhost:8420
+    description: "A placeholder: deployments vary (Eric, 2026-11-06). A client takes the base URL from its profile; the server's own listener is -listen."
 security:
   - bearerAuth: []
 tags:
@@ -2368,7 +2371,8 @@ paths:
         messages, memories, tasks, ACLs and subscriptions, every session, the agent
         statuses, the notices and the idempotency receipts, and keeps the identities with
         their keys, the enrollment tokens, the users and administrators lists, the scopes,
-        the bridges and the signing keys. With scope everything it also removes every
+        the bridges (a bridge whose channel the wipe deleted stays as a row until the Slack
+        bridge runner cleans it) and the signing keys. With scope everything it also removes every
         identity except the caller and the reserved slack-bridge identity, every enrollment
         token and the users list, and restarts the administrators list as the caller alone.
         Either way the server then recreates the general channel and subscribes every
@@ -2377,7 +2381,7 @@ paths:
         included, and the watches are woken. Idempotency-Key: a repeat with the same key and
         scope returns the first answer without wiping again; the same key with another scope
         is 409 conflict. Without a key a second reset leaves the same empty state. Source:
-        ADR 0003 (the admin reset scope), Decision 12, Decision 48.
+        ADR 0003 (the admin reset scope), ADR 0002 Decision 12, Decision 48.
       parameters:
         - name: scope
           description: "What to wipe: data keeps the identities, their keys and the signing keys; everything removes the other identities, their keys and every enrollment token too. Default data."
@@ -2420,7 +2424,7 @@ paths:
         Administrator only. Any other caller gets 403 forbidden. Side effects: deletes the
         key rows or clears the binding; nothing is appended. Idempotency-Key: a repeat with
         the same key and body returns the first answer and changes nothing; the same key
-        with a different body is 409 conflict. Source: ADR 0002, Decision 58, Decision 73.
+        for another identity is 409 conflict. Source: ADR 0002, Decision 58, Decision 73.
       parameters:
         - name: identity
           in: path
@@ -2544,7 +2548,9 @@ paths:
         identity has no provider subject until the human first signs in, and is subscribed
         to general. An address already bound to a human answers that identity with created
         false; a name held by an agent, or by a human bound to another address, is 409
-        conflict. Administrator only. Any other caller gets 403 forbidden. Side effects:
+        conflict. A malformed address is 400 validation for every caller, a non-administrator
+        included (the address is checked first); any other non-administrator gets 403
+        forbidden. Administrator only. Side effects:
         writes the identity and its binding when it creates one. Idempotency-Key: a repeat
         with the same key and body returns the first answer and changes nothing; the same
         key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
@@ -2937,8 +2943,23 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: >-
-        An access token (RFC 9068, typ at+jwt) issued by the authorization
-        server described at /.well-known/oauth-authorization-server (RFC 8414).
+        An access token in the RFC 9068 profile (a JWT whose typ header is at+jwt), minted by this
+        server and sent as Authorization: Bearer followed by the token. The server is its own issuer:
+        iss and aud are the issuer URL that /.well-known/oauth-authorization-server (RFC 8414)
+        advertises, sub is the identity, and the token carries client_id, jti, iat, exp and the
+        agentmesh_kind claim. It is obtained at POST /v1/auth/token, either by the client
+        credentials grant with a client assertion (RFC 7523 private_key_jwt: an agent signs a JWT
+        with the key it registered, iss and sub the identity, aud the issuer URL, a jti the server
+        accepts once) or, for a human, by the RFC 8693 exchange of a token from a configured
+        identity provider. The lifetime is token_lifetime_seconds (default 3600) for an agent and
+        the issuer's human_token_lifetime_seconds (default 900) for a human, and never more than
+        86400 seconds (one day); the response's expires_in says how long a given token lives. The
+        server verifies a bearer as RFC 8725 asks: the algorithm must be EdDSA or ES256 (no other,
+        and never none), the typ header must be at+jwt or application/at+jwt, the signature is
+        checked with the key the kid header names from the key set at GET /v1/auth/jwks, iss and
+        aud must equal the issuer URL, and exp and sub are required (a 60 second clock leeway
+        applies). A missing, malformed, expired or otherwise invalid token is answered 401
+        unauthenticated.
   parameters:
     SessionParam:
       name: session
@@ -5410,7 +5431,7 @@ components:
         created_at: 1794096000000
         done_at: 1794182400000
         last_activity: 1794099600000
-        channels: [acme-ops]
+        channels: [acme-ops, acme-docs]
         identities: [acme-builder]
       description: A named group of channels and agent identities retired as one unit; channels and identities are filled on a get only.
       type: object
