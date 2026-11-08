@@ -3449,7 +3449,7 @@ components:
             bearer_format: JWT
         authorization_server: http://localhost:8420/.well-known/oauth-authorization-server
         openid_configuration: http://localhost:8420/.well-known/openid-configuration
-        issuers: []
+        issuers: [https://idp.example.com]
       description: "The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods and the issuer metadata locations."
       type: object
       required: [api_versions, server_version, protocol_version, capabilities, auth_methods, issuers]
@@ -4388,8 +4388,6 @@ components:
         rank: V
         blocked_by: [40]
         leased_until: 1794182400000
-        reclaimed_from: acme-builder
-        reclaimed_at: 1794092400000
         metadata:
           ticket: REL-142
         blocked: true
@@ -4398,9 +4396,8 @@ components:
         updated_by: acme-coder-1
       description: >-
         A task as returned to callers, with its channel (the task list), status, owner,
-        parent, rank, blockers and lease. The example shows every member at once; in a
-        stored task reclaimed_from and reclaimed_at appear only on a pending task with
-        no owner.
+        parent, rank, blockers and lease. The example is a claimed task; reclaimed_from
+        and reclaimed_at appear only on a pending task with no owner (a claim clears them).
       type: object
       required: [id, channel, revision, subject, status, rank, blocked, updated_at, updated_by]
       properties:
@@ -4482,12 +4479,11 @@ components:
         depth: 1
         open_blockers: [40]
         leased_until: 1794182400000
-        reclaimed_from: acme-builder
-        reclaimed_at: 1794092400000
         has_details: true
       description: >-
-        One row of a task list result. The example shows every member at once;
-        reclaimed_from and reclaimed_at appear only on a pending task with no owner.
+        One row of a task list result. The example is a claimed task;
+        reclaimed_from and reclaimed_at appear only on a pending task with no owner
+        (a claim clears them).
       type: object
       required: [id, subject, status, depth]
       properties:

@@ -1518,7 +1518,7 @@ block_spec_validation_fires() {
 # described and cites its source (TestSpecDescriptions), every schema and response carries a valid
 # example with no real host or token (TestSpecExamples, spec-lint's oas3-missing-example), and every
 # request example is replayed against the e2e server and its answer checked against the documented
-# response (TestRequestExamples). Docker-free; mutations 1 to 4 and 6 to 8 regenerate internal/gen, 5
+# response (TestRequestExamples). Docker-free; mutations 1 to 4, 6, 7, 8, 11 and 12 regenerate internal/gen, 5
 # needs the pinned vacuum on the PATH (the same as make verify), 8 to 10 run the e2e package (about 40 s).
 # Mutation 8 removes `parent: 41` from createTask's own 201 example (the operations carry inline
 # examples, so the Task schema example is not what the replay compares): `parent` is optional in
@@ -1573,6 +1573,17 @@ block_spec_examples_fire() {
 		'emptyOK: []string{"/capabilities"}' 'emptyOK: []string{"/capabilities", "/bogus"}' \
 		./internal/e2e/ '^TestRequestExamples$' TestRequestExamples/createChannel \
 		'emptyOK /bogus never fired'
+	# 11. the Idempotency-Key clause of a keyed operation is gone
+	mutate_spec_block idempotency-clause-removed 'operationId: setAgentStatus' \
+		$'        Idempotency-Key: a repeat with the same key and body returns the first\n        answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.' \
+		'        Source: ADR 0014, Decisions 2, 4, 8, 14.' \
+		./internal/gen/ '^TestSpecDescriptions$' TestSpecDescriptions/operations/setAgentStatus/idempotency \
+		'takes the Idempotency-Key header; description must say how it is used'
+	# 12. a parameter example becomes a placeholder
+	mutate_spec_block placeholder-in-example '    ChannelParam:' \
+		'      example: release-train' '      example: <channel>' \
+		./internal/gen/ '^TestSpecExamples$' TestSpecExamples/no-placeholders \
+		'contains the placeholder "<channel>"'
 }
 
 block_skip_in_wiring

@@ -1579,7 +1579,7 @@ type TagPatterns struct {
 	Patterns []string `json:"patterns"`
 }
 
-// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease. The example shows every member at once; in a stored task reclaimed_from and reclaimed_at appear only on a pending task with no owner.
+// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease. The example is a claimed task; reclaimed_from and reclaimed_at appear only on a pending task with no owner (a claim clears them).
 type Task struct {
 	// Blocked True while at least one task in blocked_by is live and not completed.
 	Blocked bool `json:"blocked"`
@@ -1699,7 +1699,7 @@ type TaskPatch struct {
 	Subject *string `json:"subject,omitempty"`
 }
 
-// TaskSummary One row of a task list result. The example shows every member at once; reclaimed_from and reclaimed_at appear only on a pending task with no owner.
+// TaskSummary One row of a task list result. The example is a claimed task; reclaimed_from and reclaimed_at appear only on a pending task with no owner (a claim clears them).
 type TaskSummary struct {
 	// Depth How many ancestors the task has: 0 at the top of the list. It is counted over the whole list, so it is the same whatever the filter hides.
 	Depth int `json:"depth"`
@@ -1743,7 +1743,7 @@ type TaskUpdateResult struct {
 	// Replaced The sequence number of the task revision this update replaced; 0 when the update changed nothing and wrote no revision.
 	Replaced int64 `json:"replaced"`
 
-	// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease. The example shows every member at once; in a stored task reclaimed_from and reclaimed_at appear only on a pending task with no owner.
+	// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease. The example is a claimed task; reclaimed_from and reclaimed_at appear only on a pending task with no owner (a claim clears them).
 	Task Task `json:"task"`
 }
 

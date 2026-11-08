@@ -80,7 +80,6 @@ type exRow struct {
 	op, example string
 	slack       bool
 	status      int
-	noBearer    bool
 	// emptyOK lists JSON pointers into the answer whose array may be empty
 	// although the example's is not; each needs a reason in the row's comment.
 	emptyOK []string
@@ -257,9 +256,8 @@ func exampleRows() []exRow {
 		{op: "wellKnown", status: 200},
 		{op: "authorizationServerMetadata", status: 200},
 		{op: "openidConfiguration", status: 200},
-		{op: "discover", status: 200},
+		{op: "discover", status: 200, emptyOK: []string{"/issuers"}}, // the e2e servers configure no external issuer
 		{op: "jwks", status: 200},
-		{op: "health", status: 200, noBearer: true}, // the probe tier
 		{op: "register", status: 201,
 			setup: func(c *replay) {
 				c.key, c.kid, c.jwk = freshKeyJWK(c.t)
@@ -277,6 +275,9 @@ func exampleRows() []exRow {
 				c.tg.bearer = memberStr(c.t, body, "access_token")
 				c.makeAdmin(c.tg, replayName)
 			}},
+		// After token: the replay identity is an administrator by now, so the
+		// answer is the full document and every tier is shape-checked.
+		{op: "health", status: 200, emptyOK: []string{"/maintenance/jobs", "/notices"}}, // no job has run and no notice is raised on a fresh server
 		{op: "createScope", status: 200},
 		{op: "createAgentIdentity", status: 200},
 		{op: "listScopes", status: 200},
@@ -662,6 +663,48 @@ func setPointer(root any, segs []string, v any) (any, bool) {
 	return root, false
 }
 
+// encodeQuery builds the query string values of a request: a scalar is one
+// value, an array repeats the name, or, where comma[name] (form, explode
+// false), is one comma-joined value.
+func encodeQuery(t testing.TB, qorder []string, query map[string]any, comma map[string]bool) url.Values {
+	t.Helper()
+	q := url.Values{}
+	for _, name := range qorder {
+		switch x := query[name].(type) {
+		case []any:
+			if comma[name] {
+				parts := make([]string, len(x))
+				for i, e := range x {
+					parts[i] = scalarString(t, e)
+				}
+				q.Set(name, strings.Join(parts, ","))
+				break
+			}
+			for _, e := range x {
+				q.Add(name, scalarString(t, e))
+			}
+		default:
+			q.Set(name, scalarString(t, x))
+		}
+	}
+	return q
+}
+
+// encodeForm builds the form values of a form request body, which must be an
+// object of scalars.
+func encodeForm(t testing.TB, id string, body any) url.Values {
+	t.Helper()
+	m, ok := body.(map[string]any)
+	if !ok {
+		t.Fatalf("form body of %s is not an object", id)
+	}
+	f := url.Values{}
+	for k, v := range m {
+		f.Set(k, scalarString(t, v))
+	}
+	return f
+}
+
 // buildRequest assembles the request of row number n from the documented
 // examples and applies the live pointers.
 func (c *replay) buildRequest(s specOp, row exRow, n int) *http.Request {
@@ -750,25 +793,7 @@ func (c *replay) buildRequest(s specOp, row exRow, n int) *http.Request {
 	if strings.Contains(target, "{") {
 		t.Fatalf("path %s of %s has a parameter without an example", s.path, s.id)
 	}
-	q := url.Values{}
-	for _, name := range qorder {
-		switch x := query[name].(type) {
-		case []any:
-			if comma[name] {
-				parts := make([]string, len(x))
-				for i, e := range x {
-					parts[i] = scalarString(t, e)
-				}
-				q.Set(name, strings.Join(parts, ","))
-				break
-			}
-			for _, e := range x {
-				q.Add(name, scalarString(t, e))
-			}
-		default:
-			q.Set(name, scalarString(t, x))
-		}
-	}
+	q := encodeQuery(t, qorder, query, comma)
 	full := c.tg.url + target
 	if len(q) > 0 {
 		full += "?" + q.Encode()
@@ -784,14 +809,7 @@ func (c *replay) buildRequest(s specOp, row exRow, n int) *http.Request {
 			}
 			rd, contentType = bytes.NewReader(b), mediaType
 		case "application/x-www-form-urlencoded":
-			m, ok := body.(map[string]any)
-			if !ok {
-				t.Fatalf("form body of %s is not an object", s.id)
-			}
-			f := url.Values{}
-			for k, v := range m {
-				f.Set(k, scalarString(t, v))
-			}
+			f := encodeForm(t, s.id, body)
 			rd, contentType = strings.NewReader(f.Encode()), mediaType
 		default:
 			t.Fatalf("request media type %s of %s is not replayed", mediaType, s.id)
@@ -808,7 +826,7 @@ func (c *replay) buildRequest(s specOp, row exRow, n int) *http.Request {
 		req.Header.Set(k, v)
 	}
 	open := s.op.Security != nil && len(*s.op.Security) == 0
-	if !open && !row.noBearer {
+	if !open {
 		if c.tg.bearer == "" {
 			t.Fatalf("%s needs a bearer and the replay has none", s.id)
 		}
