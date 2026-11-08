@@ -18,8 +18,21 @@ func edit(t *testing.T, s, old, new string) string {
 	return strings.Replace(s, old, new, 1)
 }
 
+const orphanAnchor = "  examples:\n    Sample:"
+
+// withOrphan adds a component no path references.
+func withOrphan(t *testing.T, s, typ string) string {
+	return edit(t, s, orphanAnchor, "  schemas2:\n    Orphan:\n      type: "+typ+"\n"+orphanAnchor)
+}
+
+const idProp = "        id:\n          type: string\n        description:"
+
 func TestChangedPaths(t *testing.T) {
 	spec := readSpec(t)
+	both := []string{"/v1/things", "/v1/things/{id}"}
+	// nested: Thing references Inner, which no path references directly.
+	nestedBase := edit(t, edit(t, spec, "        description:\n          type: string\n  examples:", "        description:\n          type: string\n        inner:\n          $ref: '#/components/schemas/Inner'\n    Inner:\n      type: object\n      properties:\n        v:\n          type: string\n  examples:"), "x-foo: bar", "x-foo: bar")
+	cycleBase := edit(t, spec, idProp, "        self:\n          $ref: '#/components/schemas/Thing'\n"+idProp)
 	docEdit := spec
 	for _, e := range [][2]string{
 		{"description: Lists the things.", "description: Edited."},
@@ -48,7 +61,13 @@ func TestChangedPaths(t *testing.T) {
 		{"openapi_change_is_every_path", spec, edit(t, spec, "openapi: 3.1.0", "openapi: 3.1.1"), []string{"/v1/things", "/v1/things/{id}"}, false, false},
 		{"info_change_is_documentation", spec, edit(t, spec, "title: min", "title: other"), nil, true, false},
 		{"tags_change_is_documentation", spec, edit(t, spec, "- name: things\n", "- name: stuff\n"), nil, true, false},
-		{"unreferenced_component_is_no_path", spec, edit(t, spec, "type: integer", "type: integer\n        maximum: 5"), nil, false, false},
+		{"unreferenced_component_is_no_path", withOrphan(t, spec, "string"), withOrphan(t, spec, "integer"), nil, false, false},
+		{"schema_change_widens", spec, edit(t, spec, idProp, "        id:\n          type: integer\n        description:"), both, false, false},
+		{"nested_ref_widens", nestedBase, edit(t, nestedBase, "        v:\n          type: string", "        v:\n          type: integer"), both, false, false},
+		{"ref_cycle_terminates", cycleBase, edit(t, cycleBase, idProp, "        id:\n          type: integer\n        description:"), both, false, false},
+		{"parameter_change_widens", spec, edit(t, spec, "type: integer", "type: string"), []string{"/v1/things"}, false, false},
+		{"response_change_widens", spec, edit(t, spec, "    NotFound:\n      description: Not found.", "    NotFound:\n      description: Not found.\n      headers:\n        X-A:\n          schema:\n            type: string"), both, false, false},
+		{"component_added_to_referenced_name", edit(t, spec, "    NotFound:\n      description: Not found.\n", ""), spec, both, false, false},
 		{"property_named_description_change", spec, edit(t, spec, "                description:\n                  type: string", "                description:\n                  type: integer"), []string{"/v1/things"}, false, false},
 	}
 	for _, c := range cases {
@@ -59,6 +78,33 @@ func TestChangedPaths(t *testing.T) {
 			}
 			if !reflect.DeepEqual(paths, c.paths) || docOnly != c.docOnly {
 				t.Errorf("got %v docOnly=%v, want %v docOnly=%v", paths, docOnly, c.paths, c.docOnly)
+			}
+		})
+	}
+	for _, c := range []struct{ name, ref string }{
+		{"external_ref_is_error", "other.yaml#/components/schemas/Thing"},
+		{"absolute_url_ref_is_error", "https://example.com/s.yaml"},
+		{"unknown_section_ref_is_error", "#/components/widgets/Thing"},
+		{"non_component_ref_is_error", "#/paths/~1v1~1things"},
+		{"malformed_ref_is_error", "#/components/schemas/Thing/properties/id"},
+		{"empty_name_ref_is_error", "#/components/schemas/"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			bad := edit(t, spec, "      tags: [things]\n      externalDocs:", "      tags: [things]\n      x-bad:\n        $ref: '"+c.ref+"'\n      externalDocs:")
+			if _, _, err := ChangedPaths(parse(t, spec), parse(t, bad)); err == nil {
+				t.Error("ref accepted")
+			}
+			var out, errb bytes.Buffer
+			dir := t.TempDir()
+			o, n := filepath.Join(dir, "o.yaml"), filepath.Join(dir, "n.yaml")
+			if err := os.WriteFile(o, []byte(spec), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(n, []byte(bad), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if code := run([]string{"changed-paths", o, n}, &out, &errb); code != 2 {
+				t.Errorf("exit %d, want 2", code)
 			}
 		})
 	}
@@ -117,7 +163,7 @@ func TestMainChangedPaths(t *testing.T) {
 	}{
 		{"equal", spec, spec, 0, "", ""},
 		{"documentation_only", spec, edit(t, spec, "description: Lists the things.", "description: x"), 0, "", ""},
-		{"differ_but_no_path", spec, edit(t, spec, "type: integer", "type: string"), 0, "", "catscheck: no path is affected\n"},
+		{"differ_but_no_path", withOrphan(t, spec, "string"), withOrphan(t, spec, "integer"), 0, "", "catscheck: no path is affected\n"},
 		{"path_affected", spec, edit(t, spec, "required: [name]", "required: [name, x]"), 10, "/v1/things\n", ""},
 		{"not_a_mapping", spec, "- a\n", 2, "", "catscheck: "},
 		{"parse_error", spec, "a: [\n", 2, "", "catscheck: "},

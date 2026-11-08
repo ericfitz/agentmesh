@@ -4,15 +4,27 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+// widen turns on the $ref widening: a path is also changed when a component
+// in the $ref closure of its path item differs between the documents.
+var widen = true // block 40 flips this to false
+
+// componentSections are the sections of components a $ref may name.
+var componentSections = map[string]bool{
+	"schemas": true, "responses": true, "parameters": true, "examples": true,
+	"requestBodies": true, "headers": true, "securitySchemes": true,
+	"links": true, "callbacks": true, "pathItems": true,
+}
+
 // ChangedPaths lists the API paths (template spelling, sorted) affected by the
 // change from old to new. docOnly is true when the normalized documents are
-// equal or differ only in info and tags (a documentation-only change, or none). Both inputs must be mappings
-// (a nil document is the empty mapping). Task 2 adds the $ref widening of
-// component changes; here a component change affects no path.
+// equal or differ only in info and tags. Both inputs must be mappings (a nil
+// document is the empty mapping). A path whose item is unchanged is still
+// changed when a component in its $ref closure differs (widen).
 func ChangedPaths(old, new *yaml.Node) (paths []string, docOnly bool, err error) {
 	o, n := Normalize(old), Normalize(new)
 	for i, d := range []*yaml.Node{o, n} {
@@ -47,8 +59,18 @@ func ChangedPaths(old, new *yaml.Node) (paths []string, docOnly bool, err error)
 		}
 	}
 	for _, p := range unionNames(op, np) {
+		// Every $ref is validated, even under a path that changed directly.
+		hit, err := refsChanged(o, n, member(op, p), member(np, p))
+		if err != nil {
+			return nil, false, fmt.Errorf("path %s: %w", p, err)
+		}
 		if !bytes.Equal(canonical(member(op, p)), canonical(member(np, p))) {
 			set[p] = true
+		}
+		if widen {
+			if hit {
+				set[p] = true
+			}
 		}
 	}
 	for p := range set {
@@ -102,4 +124,88 @@ func unionNames(a, b *yaml.Node) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// refsChanged reports whether a component in the $ref closure of the old or
+// the new path item differs between the documents (a component present in one
+// document only counts as different). A $ref that is not
+// #/components/<section>/<name> with a known section is an error.
+func refsChanged(oldDoc, newDoc, oldItem, newItem *yaml.Node) (bool, error) {
+	seen := map[string]bool{}
+	for _, side := range []struct{ doc, item *yaml.Node }{{oldDoc, oldItem}, {newDoc, newItem}} {
+		if err := closure(side.doc, side.item, seen); err != nil {
+			return false, err
+		}
+	}
+	for key := range seen {
+		sec, name, _ := strings.Cut(key, "/")
+		a := member(section(section(oldDoc, "components"), sec), name)
+		b := member(section(section(newDoc, "components"), sec), name)
+		if !bytes.Equal(canonical(a), canonical(b)) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// closure adds "<section>/<name>" of every component reachable from node in
+// doc to seen; it is cycle-safe because a component is walked once.
+func closure(doc, node *yaml.Node, seen map[string]bool) error {
+	refs, err := collectRefs(node, nil)
+	if err != nil {
+		return err
+	}
+	for _, key := range refs {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		sec, name, _ := strings.Cut(key, "/")
+		comp := member(section(section(doc, "components"), sec), name)
+		if err := closure(doc, comp, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// collectRefs returns the component keys of every $ref scalar under n.
+func collectRefs(n *yaml.Node, out []string) ([]string, error) {
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if k.Value == "$ref" && v.Kind == yaml.ScalarNode {
+				key, err := parseRef(v.Value)
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, key)
+				continue
+			}
+			var err error
+			if out, err = collectRefs(v, out); err != nil {
+				return nil, err
+			}
+		}
+		return out, nil
+	}
+	for _, ch := range n.Content {
+		var err error
+		if out, err = collectRefs(ch, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// parseRef accepts only #/components/<section>/<name> and returns
+// "<section>/<name>" (JSON pointer escapes decoded).
+func parseRef(ref string) (string, error) {
+	rest, ok := strings.CutPrefix(ref, "#/components/")
+	parts := strings.Split(rest, "/")
+	if !ok || len(parts) != 2 || !componentSections[parts[0]] || parts[1] == "" {
+		return "", fmt.Errorf("unsupported $ref %q (want #/components/<section>/<name>)", ref)
+	}
+	name := strings.NewReplacer("~1", "/", "~0", "~").Replace(parts[1])
+	return parts[0] + "/" + name, nil
 }
