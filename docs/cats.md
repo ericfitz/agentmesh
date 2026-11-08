@@ -34,13 +34,13 @@ tests=13799 success=8790 warnings=1450 errors=3559 status=COMPLETED
 report=/path/to/repository/.local/cats/results/run-20261108T180340Z/report
 ```
 
-A run takes a few minutes (about three of CATS time for each plugin pass in the last campaign). The standalone run fuzzes both identities in one pass: the agent bearer everywhere and the administrator bearer on `/v1/admin/*`. Judge the report with the classifier:
+A run takes a few minutes (each plugin pass took about 2 min 20 s of CATS time in the last campaign). The standalone run fuzzes both identities in one pass: the agent bearer everywhere and the administrator bearer on `/v1/admin/*`. Judge the report with the classifier:
 
 ```
 go run ./tools/catscheck classify --rules api/cats-false-positives.yaml <report>
 ```
 
-It prints one line per finding and a last line such as `catscheck: 13799 tests, 3559 error, 1450 warn, 4998 suppressed by 33 rule(s), 0 finding(s)`; exit 0 means no finding, 1 means findings, 2 means a usage or file error.
+It prints one line per finding and a last line of the form `catscheck: <N> tests, <E> error, <W> warn, <S> suppressed by <R> rule(s), <F> finding(s)` (the Step 8 run of the last campaign read `13799 tests, 3559 error, 1450 warn, 4998 suppressed by 33 rule(s), 11 finding(s)`); exit 0 means no finding, 1 means findings, 2 means a usage or file error.
 
 Exit codes of the harness: 0 CATS completed (its own exit 0 or 1; findings are the classifier's business); 1 a check failed (a dead fixture, a minted secret found in the log or report); 2 usage, a missing tool or a refused directory; 3 the server did not start, a live server is already recorded (`up`), or the seed failed; 4 CATS exited with another code or wrote no `cats-summary-report.json`.
 
@@ -49,6 +49,7 @@ Options of `run`:
 - `--paths LIST` fuzzes only the comma-separated spec paths (for example `--paths '/v1/channels,/v1/tasks/{id}'`). The skipped paths are subtracted with a `skipped: <path> (use --no-skip)` line; with nothing left it prints `nothing to fuzz` and exits 0.
 - `--no-skip` includes the skipped paths. Use it only with `--paths` and one destructive path, as in The exceptions; it also skips the post-run fixture check, because such a run destroys its own fixtures.
 - `--dir DIR` is the harness directory (default `${TMPDIR:-/tmp}/agentmesh-cats-<uid>`; also `CATS_HARNESS_DIR`). Two commands on one directory do not overlap: the second exits 3 while the first holds the lock. Use `--dir` for a second campaign.
+- `CATS_SMOKE=1` (environment) runs `cats smoke` before the campaign (off by default; its result goes to `smoke.txt` beside the report); `CATS_IDENTITY` is the default of `seed --identity` (`admin` or `agent`, default `agent`; the plugin sets it so the seeded sessions belong to the run's identity).
 - `--out DIR` is where the report goes (default `.local/cats/results/run-<UTC stamp>`); `--port N` and `--repo DIR` (the tree to build and fuzz) complete the list.
 
 The other subcommands: `up`, `seed`, `token <admin|agent>`, `headers`, `down` and `status` (they are what the plugin flow calls), `admin-paths` and `skip-paths` (print the two hard-coded lists). `status` prints `dir=`, `server=` and `pid=` lines. A second `run` tears down what the first left; a start over a failed run's leftovers cleans them; `down` twice is a no-op.
@@ -118,7 +119,7 @@ The database stores bodies for error and warn records only, so also scan the raw
 
 `when` is an AND of conditions; `any_of` is an OR; both may appear and are ANDed. Fields: `result`, `response_code`, `fuzzer`, `path`, `contract_path`, `method`, `url`, `scenario`, `result_reason`, `result_details`, `any_text`, `response_body`, `response_content_type`, `request_body`, `json_body.<dotted.path>`, `request_header.<name>`. Operators: `equals` (a bare scalar), `in`, `not_equals`, `contains`, `contains_any`, `contains_all`, `starts_with`, `starts_with_any`, `ends_with`, `matches`, `exists`. The classifier rejects an unknown key, field or operator (exit 2). Regular expressions are RE2 in the classifier and Python `re` in the plugin; keep to the common subset.
 
-Rules for adding one: every rule names its response codes explicitly (`response_code` with `equals` or `in`); none may match 500 to 599 (a 5xx is never a false positive); no rule may name the fuzzer `FakeCatsFuzzer`; and `TestCommittedRules` (`go test ./tools/catscheck/ -run TestCommittedRules`) enforces all three. Add a rule through `cats:fp` (it dry-runs `classify --dry-run` against the database first), then check that `go run ./tools/catscheck classify` agrees with the plugin's `true_positives_view` count for the same run.
+Rules for adding one: every rule names its response codes explicitly (`response_code` with `equals` or `in`); none may match 500 to 599 (a 5xx is never a false positive); no rule may name the fuzzer `FakeCatsFuzzer`; and `TestCommittedRules` (`go test ./tools/catscheck/ -run TestCommittedRules`) enforces all three. Add a rule through `cats:fp` (the plugin's own `classify --dry-run` against the database, not an option of `tools/catscheck`, runs first), then check that `go run ./tools/catscheck classify` agrees with the plugin's `true_positives_view` count for the same run.
 
 ## The pre-commit hook
 
@@ -130,7 +131,7 @@ Enable it once per clone: `git config core.hooksPath .githooks`. `.githooks/pre-
 4. Otherwise it checks that `internal/gen` is fresh for the staged spec (`make generate` in the export; a difference fails with `run make generate and stage internal/gen`), widens the changed paths through `$ref` (a changed shared schema, parameter or response reaches every path that references it; a change to `servers`, `security` or `openapi` reaches every path), and runs the harness: the non-skipped paths in one run, each skipped destructive path in its own run with `--no-skip`; the bridges paths are dropped with a notice.
 5. It classifies each report. With no finding it prints `cats-precommit: no finding; <summary>` and the commit goes through. With findings it prints them, keeps the reports in `.local/cats/precommit/<stamp>/`, and fails the commit; fix the cause or record false positives with `cats:fp`.
 
-Cost: a spec change that is not documentation pays a build, `make generate` and about 1 to 10 minutes of fuzzing (a change that widens to every path runs up to four campaigns, about 12 minutes). The hook fails closed when `cats`, `jq`, `go` or `curl` is missing, naming `brew install endava/tap/cats`. `git commit --no-verify` bypasses the hook entirely.
+Cost: a spec change that is not documentation pays a build, `make generate` and an estimated 1 to 10 minutes of fuzzing (a change that widens to every path runs up to four campaigns, an estimated 12 minutes; these are plan estimates, not measurements). The hook fails closed when `cats`, `jq`, `go` or `curl` is missing, naming `brew install endava/tap/cats`. `git commit --no-verify` bypasses the hook entirely.
 
 ## The exceptions
 

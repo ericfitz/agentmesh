@@ -12,14 +12,16 @@ The server validates every request against the embedded `api/openapi.yaml` and e
 2. No CI job runs CATS; it runs locally only.
 3. A tracked pre-commit hook in `.githooks/`, enabled with `git config core.hooksPath .githooks` and documented, compares the staged `api/openapi.yaml` with HEAD after stripping `description`, `summary`, `example`, `examples` and `externalDocs` (a normalizer with its own tests). On a non-documentation change it runs CATS on the changed paths only (`--paths`), widened to every path that references a changed schema, and blocks the commit on any finding that is not a recorded false positive. A documentation-only diff passes at once. `--no-verify` remains the bypass.
 
-## No-500 enforcement (Eric, 2026-11-08, human-made)
+## No-500 rule and its enforcement
 
-The no-500 rule is Eric's decision recorded in the ADR 0001 addendum "No-500 rule": a 500 seen in any test is a must-fix bug, never an accepted answer, a false-positive rule or a documented case. Eric chose to enforce it inside issue #30 (his answer "A: enforce in #30"). The enforcement:
+Eric's decisions of 2026-11-08 (human-made): the no-500 rule, recorded in the ADR 0001 addendum "No-500 rule" (a 500 seen in any test is a must-fix bug, never an accepted answer, a false-positive rule or a documented case), and enforcing it inside issue #30 (he chose option A, enforce in #30).
+
+The enforcement below is plan work, not Eric's decisions (he may overrule it): the guard design, the exception table and the fixes.
 
 - `internal/respcheck` fails any 500 answer, naming the method, path, operation and detail (`respcheck: no-500 rule (Eric 2026-11-08, ADR 0001): ...`). It reaches the in-process server tests, the inproc Bus suite and the e2e validating proxy. An explicit exception table (`Exceptions`, empty) needs a reason per entry, and a stale entry fails (`TestRespcheckExceptionsNotStale`).
 - `tools/catscheck classify` refuses any rule that matches a 5xx answer, and `TestCommittedRules` refuses to commit one.
 - The campaign's acceptance query Q1 (`docs/cats.md`) fails any 5xx other than the 503 and the transport 501.
-- The guard exposed four 500s in the existing suites; each was fixed at its root (the token endpoint answers 503 `temporarily_unavailable` on a store outage; the sqlstore classifies a closed or unreachable handle as retryable; a test fixture had injected a Postgres error into SQLite).
+- The guard exposed four failing tests in the existing suites, with two root causes, each fixed at its root: the token endpoint and the store classification (`TestTokenServerError`: the token endpoint answers 503 `temporarily_unavailable` on a store outage and the sqlstore classifies a closed or unreachable handle as retryable), and the fixture's injected error in three Bus tests (the token endpoint answers 503 `temporarily_unavailable` on a store outage; the sqlstore classifies a closed or unreachable handle as retryable; the fixture had injected a Postgres error into SQLite).
 - `scripts/check-gates-selftest.sh` block 40 mutates the guard and expects the failure text above.
 
 ## Plan rulings (made by the plan; Eric may overrule; not his decisions)
@@ -80,7 +82,7 @@ The no-500 rule is Eric's decision recorded in the ADR 0001 addendum "No-500 rul
 
 ## Consequences
 
-- Every spec change that is not documentation costs a build, `make generate` and 1 to 10 minutes of fuzzing at commit time (more when the change widens to every path); `--no-verify` is the bypass, and the hook fails closed on a machine without `cats`.
+- Every spec change that is not documentation costs a build, `make generate` and an estimated 1 to 10 minutes of fuzzing at commit time (a plan estimate, not a measurement; more when the change widens to every path); `--no-verify` is the bypass, and the hook fails closed on a machine without `cats`.
 - The rules file records every suppressed cluster with a reason and an explicit code; adding a rule is a reviewed edit.
 - A change in CATS's behavior shows up in the selftests only through `--real`; the fake covers the harness and the hook, and block 40 of `scripts/check-gates-selftest.sh` mutates the gates.
 - The campaign does not run in CI, so a regression is found at the next spec commit or the next manual run.

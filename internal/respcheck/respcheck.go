@@ -30,7 +30,7 @@ var ErrNoRoute = errors.New("respcheck: no operation matches the request")
 // no-500 rule (Eric 2026-11-08, ADR 0001) makes a 500 seen in any test a
 // must-fix bug, so the table is empty today and an entry needs a Reason. Path
 // is the document's path template (for example "/v1/things/{id}"); an entry
-// that names no operation of the checked document is stale and TestExceptions
+// that names no operation of the checked document is stale and TestRespcheckExceptionsNotStale
 // fails it.
 type Exception struct {
 	Method string
