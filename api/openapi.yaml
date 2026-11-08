@@ -4949,7 +4949,7 @@ components:
         state:
           type: string
           description: "off when no embedder is configured, failing while the embedding notice is set, else ok."
-          enum: [off, ok, failing]
+          enum: ["off", ok, failing]
         backlog:
           type: integer
           description: >-
