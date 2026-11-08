@@ -1423,12 +1423,37 @@ mutate_lint_block() {
 	local label="$1" file="$2" from="$3" to="$4" want="$5" log="$tmp/$1.log" rc=0
 	begin
 	if mutate_file "$label" "$file" "$from" "$to"; then
-		make -C "$wt" spec-lint >"$log" 2>&1 || rc=$?
-		[ "$rc" -ne 0 ] || problem "$label" "spec-lint exited 0 on the mutated $file"
-		grep -qF -- "$want" "$log" || problem "$label" "log lacks '$want': $(tail -n 3 "$log" | tr '\n' ' ')"
+		lint_run "$label" "$want" "$log"
 	fi
 	finish "$label"
 	revert
+}
+
+# mutate_lint_multi LABEL FILE FROM TO WANT: mutate_lint_block for a FROM of several lines (grep -c
+# counts a line per alternative, so the count is by length arithmetic, as in mutate_spec_block).
+mutate_lint_multi() {
+	local label="$1" file="$2" from="$3" to="$4" want="$5" log="$tmp/$1.log" f="$wt/$2" content rest n
+	begin
+	content="$(cat "$f"; printf x)"
+	content="${content%x}"
+	rest="${content//"$from"/}"
+	n=$(((${#content} - ${#rest}) / ${#from}))
+	if [ "$n" -ne 1 ]; then
+		problem "$label" "anchor occurs $n times (want 1) in $file: $from"
+	else
+		printf '%s' "${content/"$from"/"$to"}" >"$tmp/x" && cp "$tmp/x" "$f"
+		lint_run "$label" "$want" "$log"
+	fi
+	finish "$label"
+	revert
+}
+
+# lint_run LABEL WANT LOG: run make spec-lint in the worktree; require exit non-zero and WANT in LOG.
+lint_run() {
+	local label="$1" want="$2" log="$3" rc=0
+	make -C "$wt" spec-lint >"$log" 2>&1 || rc=$?
+	[ "$rc" -ne 0 ] || problem "$label" "spec-lint exited 0 on the mutated file"
+	grep -qF -- "$want" "$log" || problem "$label" "log lacks '$want': $(tail -n 3 "$log" | tr '\n' ' ')"
 }
 
 # mutate_rm_block LABEL FILE PKG RUN WANT [EXTRA]: delete FILE in the worktree, run the named unit
@@ -1494,8 +1519,9 @@ block_spec_validation_fires() {
 # request example is replayed against the e2e server and its answer checked against the documented
 # response (TestRequestExamples). Docker-free; mutations 1 to 7 regenerate internal/gen, 5 needs the
 # pinned vacuum on the PATH (the same as make verify), 8 and 9 run the e2e package (about 40 s).
-# Mutation 8 removes `parent: 41` from the Task example: `parent` is optional in Task.required, so
-# kin still accepts the example, and the live createTask answer echoes the parent (row 38 sets it).
+# Mutation 8 removes `parent: 41` from createTask's own 201 example (the operations carry inline
+# examples, so the Task schema example is not what the replay compares): `parent` is optional in
+# Task.required, so kin still accepts the example, and the live answer echoes the parent (row 38 sets it).
 block_spec_examples_fire() {
 	# 1. the operation's description is gone
 	mutate_spec_block operation-description-removed 'operationId: listChannels' \
@@ -1518,7 +1544,7 @@ block_spec_examples_fire() {
 		./internal/gen/ '^TestSpecExamples$' TestSpecExamples/schemas/Session \
 		'undocumented: schemas/Session'
 	# 5. the same mutation is a vacuum finding
-	mutate_lint_block spec-lint-example-fires api/openapi.yaml \
+	mutate_lint_multi spec-lint-example-fires api/openapi.yaml \
 		$'    Session:\n      example:' $'    Session:\n      x-example-removed:' \
 		oas3-missing-example
 	# 6. an example the schema refuses (kin validates examples in the document test)
@@ -1529,10 +1555,10 @@ block_spec_examples_fire() {
 	mutate_spec_block real-host-in-example '    AuthorizationServerMetadata:' \
 		'        issuer: http://localhost:8420' '        issuer: https://mesh.corp.internal' \
 		./internal/gen/ '^TestSpecExamples$' TestSpecExamples/no-real-values \
-		'HOSTEXTRA'
+		'host "mesh.corp.internal" is neither localhost nor a reserved example domain'
 	# 8. the live answer carries a member the example lacks
-	mutate_spec_block replay-shape-fires '    Task:' \
-		'        parent: 41' '' \
+	mutate_spec_block replay-shape-fires 'operationId: createTask' \
+		'                parent: 41' '' \
 		./internal/e2e/ '^TestRequestExamples$' TestRequestExamples/createTask \
 		'member parent of the live body is not in the example'
 	# 9. an operation loses its replay row
