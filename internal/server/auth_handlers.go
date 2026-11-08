@@ -20,7 +20,7 @@ import (
 )
 
 func issuerUnavailable() error {
-	return core.E(bus.CodeUnavailable, "token issuer not configured")
+	return bus.Errorf(bus.CodeUnavailable, false, "token issuer not configured") // not retryable: a configuration state, not an outage
 }
 
 // noStoreToken adds the RFC 6749 section 5.1 cache headers to a 200 token

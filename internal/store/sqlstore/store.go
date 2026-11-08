@@ -3,8 +3,12 @@ package sqlstore
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,7 +77,13 @@ func (s *Store) run(ctx context.Context, k kind, fn func(context.Context, store.
 		if err == nil {
 			return nil
 		}
-		if ctx.Err() != nil || !s.d.IsRetryable(err) {
+		if ctx.Err() != nil {
+			return err
+		}
+		if !s.d.IsRetryable(err) {
+			if isOutage(err) {
+				return fmt.Errorf("%w: %v", store.ErrRetryable, err)
+			}
 			return err
 		}
 		if attempt < attempts {
@@ -85,6 +95,16 @@ func (s *Store) run(ctx context.Context, k kind, fn func(context.Context, store.
 		}
 	}
 	return fmt.Errorf("%w: %v", store.ErrRetryable, err)
+}
+
+// isOutage reports a failure of the connection or the handle itself (the
+// database is closed or unreachable), as opposed to a failure of a statement.
+// It is a store outage, not a bug: store.ErrRetryable (503 unavailable), never
+// the 500 of an unclassified error (issue #30 Task 8.8, the no-500 rule).
+func isOutage(err error) bool {
+	var ne net.Error
+	return errors.Is(err, sql.ErrConnDone) || errors.Is(err, driver.ErrBadConn) ||
+		errors.As(err, &ne) || strings.Contains(err.Error(), "sql: database is closed")
 }
 
 // once runs one attempt. Every stage's error is returned unclassified: the

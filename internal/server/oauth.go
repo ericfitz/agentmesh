@@ -96,6 +96,9 @@ func oauthFromBus(err error, exchange bool) oauthError {
 	}
 	switch bus.CodeOf(err) {
 	case bus.CodeUnavailable:
+		if be != nil && be.Retryable { // a store outage: never the store's own text
+			msg = "the store is unavailable, retry"
+		}
 		return oauthError{http.StatusServiceUnavailable, "temporarily_unavailable", msg}
 	case bus.CodeUnauthenticated:
 		if exchange {

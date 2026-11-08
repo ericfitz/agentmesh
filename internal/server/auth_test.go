@@ -723,8 +723,9 @@ func TestTokenOAuthErrors(t *testing.T) {
 	wantOAuthError(t, resp, 503, "temporarily_unavailable", "token issuer not configured", a)
 }
 
-// A store failure behind the token endpoint is a 500 server_error whose
-// description is fixed: it never carries the underlying text (oauthFromBus).
+// A store outage behind the token endpoint is a 503 temporarily_unavailable
+// (RFC 6749); the description never carries the underlying text. A 500 would
+// break the no-500 rule (Eric 2026-11-08; issue #30 Task 8.8).
 func TestTokenServerError(t *testing.T) {
 	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
 	key := genKey(t, keys.EdDSA)
@@ -736,10 +737,10 @@ func TestTokenServerError(t *testing.T) {
 	form := url.Values{"grant_type": {"client_credentials"}, "client_assertion_type": {assertion.Type}, "client_assertion": {a}}
 	resp := e.do("POST", "/v1/auth/token", "application/x-www-form-urlencoded", "", form.Encode())
 	b := readBody(t, resp)
-	if resp.StatusCode != 500 || resp.Header.Get("Content-Type") != "application/json" || resp.Header.Get("Cache-Control") != "no-store" {
+	if resp.StatusCode != 503 || resp.Header.Get("Content-Type") != "application/json" || resp.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("%d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), b)
 	}
-	if want := `{"error":"server_error","error_description":"internal error"}`; strings.TrimSpace(b) != want {
+	if want := `{"error":"temporarily_unavailable","error_description":"the store is unavailable, retry"}`; strings.TrimSpace(b) != want {
 		t.Fatalf("body %q, want %q", b, want)
 	}
 }

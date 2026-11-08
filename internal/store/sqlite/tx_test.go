@@ -261,3 +261,20 @@ func TestLeaseAndNotices(t *testing.T) {
 		t.Fatal("notice present after clear")
 	}
 }
+
+// A closed handle is a store outage: every kind of transaction answers
+// store.ErrRetryable (503 unavailable above), never an unclassified error
+// (the 500 of the no-500 rule, issue #30 Task 8.8).
+func TestClosedStoreIsRetryable(t *testing.T) {
+	ctx := context.Background()
+	s := mustOpen(t, newPath(t), Options{})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fn := func(context.Context, store.Tx) error { return nil }
+	for name, run := range map[string]func(context.Context, func(context.Context, store.Tx) error) error{"Tx": s.Tx, "Append": s.Append, "Read": s.Read} {
+		if err := run(ctx, fn); !errors.Is(err, store.ErrRetryable) {
+			t.Errorf("%s on a closed store = %v, want store.ErrRetryable", name, err)
+		}
+	}
+}
