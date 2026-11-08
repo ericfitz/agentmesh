@@ -579,10 +579,10 @@ func (e SearchParamsMode) Valid() bool {
 
 // ACLEntry Grants a list of permissions on a channel to one identity.
 type ACLEntry struct {
-	// Identity At most 128 bytes (the server counts bytes).
+	// Identity A registered identity, or one of the groups everyone (any identity), admins (administrators) or humans (identities of kind human). At most 128 bytes (the server counts bytes).
 	Identity string `json:"identity"`
 
-	// Permissions At least 1 and at most 3 items.
+	// Permissions What the identity may do: read (subscribe, receive, history, search), write (send) and admin (read and replace the ACL, rename and delete the channel). The entries of one identity add up. At least 1 and at most 3 items.
 	Permissions []ACLEntryPermissions `json:"permissions"`
 }
 
@@ -735,26 +735,40 @@ type BridgeNotInvited struct {
 // Channel What a caller sees of a channel it may list: name, kind and capabilities.
 type Channel struct {
 	// Capabilities Traits of the channel; a value present means the trait applies. Known: bridged (a live Slack bridge). Clients ignore values they do not know.
-	Capabilities []string    `json:"capabilities"`
-	Kind         ChannelKind `json:"kind"`
-	Name         string      `json:"name"`
+	Capabilities []string `json:"capabilities"`
+
+	// Kind ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it.
+	Kind ChannelKind `json:"kind"`
+
+	// Name The channel name: 1 to 128 bytes, no slash.
+	Name string `json:"name"`
 }
 
-// ChannelKind defines model for Channel.Kind.
+// ChannelKind ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it.
 type ChannelKind string
 
 // ChannelInfo The creator's view of a channel on creation and the administrator's view on status: name, kind, capabilities, creator, scope and creation time.
 type ChannelInfo struct {
 	// Capabilities Traits of the channel; a value present means the trait applies. Known: bridged (a live Slack bridge). Clients ignore values they do not know.
-	Capabilities []string        `json:"capabilities"`
-	CreatedAt    int64           `json:"created_at"`
-	Creator      string          `json:"creator"`
-	Kind         ChannelInfoKind `json:"kind"`
-	Name         string          `json:"name"`
-	Scope        *string         `json:"scope,omitempty"`
+	Capabilities []string `json:"capabilities"`
+
+	// CreatedAt When the channel was created, in Unix milliseconds.
+	CreatedAt int64 `json:"created_at"`
+
+	// Creator The identity that created the channel; empty for general, which the server creates itself.
+	Creator string `json:"creator"`
+
+	// Kind ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it.
+	Kind ChannelInfoKind `json:"kind"`
+
+	// Name The channel name: 1 to 128 bytes, no slash.
+	Name string `json:"name"`
+
+	// Scope The scope the channel belongs to; absent when it has none. A scoped channel is named <scope>-<rest>.
+	Scope *string `json:"scope,omitempty"`
 }
 
-// ChannelInfoKind defines model for ChannelInfo.Kind.
+// ChannelInfoKind ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it.
 type ChannelInfoKind string
 
 // ClaimTaskRequest Claims a task for the caller, optionally with a lease that runs until a time.
@@ -782,18 +796,20 @@ type CreateBridgeRequest struct {
 
 // CreateChannelRequest Creates a channel: its name, kind, an optional access control list and an optional scope.
 type CreateChannelRequest struct {
-	// Acl At most 256 items.
-	Acl  *[]ACLEntry               `json:"acl,omitempty"`
+	// Acl The channel's ACL; absent means the server's default_acl, and an empty array stores no entries, so only administrators reach the channel. At most 256 items.
+	Acl *[]ACLEntry `json:"acl,omitempty"`
+
+	// Kind ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it. Absent means ordinary.
 	Kind *CreateChannelRequestKind `json:"kind,omitempty"`
 
-	// Name At most 128 bytes (the server counts bytes).
+	// Name The new channel's name: no slash, and <scope>-<rest> in a scope. A name already taken is 409 conflict. At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 
-	// Scope At most 128 bytes (the server counts bytes).
+	// Scope Administrators only: the scope the channel belongs to, which must exist and not be done, and whose prefix the name must start with. Absent means the creator's own scope, or none for an unscoped creator. At most 128 bytes (the server counts bytes).
 	Scope *string `json:"scope,omitempty"`
 }
 
-// CreateChannelRequestKind defines model for CreateChannelRequest.Kind.
+// CreateChannelRequestKind ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it. Absent means ordinary.
 type CreateChannelRequestKind string
 
 // CreateIdentityByEmailRequest Creates a human identity from an email address.
@@ -1271,7 +1287,7 @@ type RejectedCursorReason string
 
 // RenameChannelRequest Renames a channel to a new name.
 type RenameChannelRequest struct {
-	// Name At most 128 bytes (the server counts bytes).
+	// Name The new name, under the rules of a new channel's name. At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 }
 
@@ -1302,42 +1318,54 @@ type ScopeList struct {
 type SearchHit struct {
 	// Message A delivered, read or searched message: sender, session, channel, sequence number, subject, content, tags and, on a memory channel, the memory id and revision.
 	Message Message `json:"message"`
-	Score   float64 `json:"score"`
+
+	// Score The rank score: 0 for a text match (text hits come newest first and carry no score), the similarity of a semantic match, or the reciprocal-rank-fusion score in both mode.
+	Score float64 `json:"score"`
 }
 
 // SearchResult One page of search hits, the cursor of the next page and whether semantic search was unavailable.
 type SearchResult struct {
-	Hits                []SearchHit `json:"hits"`
-	Next                *string     `json:"next,omitempty"`
-	SemanticUnavailable *bool       `json:"semantic_unavailable,omitempty"`
+	// Hits The page of hits in rank order: newest first for a text search, best score first otherwise.
+	Hits []SearchHit `json:"hits"`
+
+	// Next The cursor of the next page: pass it as cursor to continue. Absent on the last page.
+	Next *string `json:"next,omitempty"`
+
+	// SemanticUnavailable True when semantic or both was asked for and could not be used (no embedding provider is configured, or it failed), so the hits are the text matches; absent otherwise.
+	SemanticUnavailable *bool `json:"semantic_unavailable,omitempty"`
 }
 
 // SendRequest Sends a message to a channel: subject, content, an optional reply-to sequence number, metadata, tags and the sending session.
 type SendRequest struct {
-	// Content At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
+	// Content The text of the message; required and not empty. At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
 	Content string `json:"content"`
 
-	// Metadata At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
+	// Metadata Free-form string pairs delivered with the message. At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
 	Metadata *map[string]string `json:"metadata,omitempty"`
-	ReplyTo  *int64             `json:"reply_to,omitempty"`
 
-	// Session At most 1024 bytes.
+	// ReplyTo The sequence number of the message this one replies to. It must exist (404 not_found) and be on the same channel (400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to the thread root. Absent: not a reply.
+	ReplyTo *int64 `json:"reply_to,omitempty"`
+
+	// Session The id of the sender's own live session, which attaches the session and its display name to the message: another identity's session is 404 not_found, a closed or lapsed one 410. Absent: no session is attached. At most 1024 bytes.
 	Session *string `json:"session,omitempty"`
 
-	// Subject At most 200 code points.
+	// Subject A one-line subject; surrounding space is trimmed and a line break is 400 validation. At most 200 code points.
 	Subject *string `json:"subject,omitempty"`
 
-	// Tags At most 10 items.
+	// Tags Labels for filtering and for tag subscriptions; the server lowercases, deduplicates and sorts them. At most 10 items.
 	Tags *[]string `json:"tags,omitempty"`
 
-	// Type At most 256 code points.
+	// Type A label the sender chooses to classify the message, such as status; free-form and not interpreted by the server. At most 256 code points.
 	Type *string `json:"type,omitempty"`
 }
 
 // SendResult The sequence number of the new message and, on a memory channel, its memory id.
 type SendResult struct {
+	// MemoryId On a memory channel, the id of the memory the message created (equal to seq); absent on an ordinary channel.
 	MemoryId *int64 `json:"memory_id,omitempty"`
-	Seq      int64  `json:"seq"`
+
+	// Seq The new message's sequence number, from the one counter of the whole server.
+	Seq int64 `json:"seq"`
 }
 
 // Session An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors and the pending counts.
@@ -1451,15 +1479,16 @@ type Status struct {
 
 // SubscribeRequest Subscribes the caller to a channel, from now or from the oldest retained message.
 type SubscribeRequest struct {
+	// From Where the subscription starts: now (the default) delivers only messages after the newest sequence number at this moment, oldest delivers from the oldest retained message. An existing subscription keeps its position.
 	From *SubscribeRequestFrom `json:"from,omitempty"`
 }
 
-// SubscribeRequestFrom defines model for SubscribeRequest.From.
+// SubscribeRequestFrom Where the subscription starts: now (the default) delivers only messages after the newest sequence number at this moment, oldest delivers from the oldest retained message. An existing subscription keeps its position.
 type SubscribeRequestFrom string
 
 // TagPatterns A tag subscription, which is one AND set of tag patterns.
 type TagPatterns struct {
-	// Patterns At most 10 items.
+	// Patterns The patterns of the set: a message matches it when each pattern matches one of its tags. A pattern is a tag, or a tag prefix followed by an asterisk; the server lowercases, sorts and deduplicates them. At most 10 items.
 	Patterns []string `json:"patterns"`
 }
 
@@ -1766,19 +1795,19 @@ type SetACLParams struct {
 
 // HistoryParams defines parameters for History.
 type HistoryParams struct {
-	// Before Return messages with a sequence number below this one; alone, the newest messages below it
+	// Before Return messages with a sequence number below this one; alone, the newest messages below it (returned oldest first), together with after the exclusive upper end of the window
 	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
 
-	// After Return messages with a sequence number above this one, oldest first
+	// After Return messages with a sequence number above this one, oldest first; together with before the exclusive lower end of the window
 	After *int64 `form:"after,omitempty" json:"after,omitempty"`
 
-	// Count At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
+	// Count The most messages to return; absent or 0 means receive_default_count (100 by default). At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
 	Count *int `form:"count,omitempty" json:"count,omitempty"`
 
 	// Thread Only the message with this sequence number and the messages whose reply_to is it.
 	Thread *int64 `form:"thread,omitempty" json:"thread,omitempty"`
 
-	// Tags At most 10 items.
+	// Tags Only messages whose tags satisfy every pattern, each pattern matching one of the message's tags; a pattern is a tag, or a tag prefix followed by an asterisk. Comma separated. At most 10 items.
 	Tags *[]string `form:"tags,omitempty" json:"tags,omitempty"`
 }
 
@@ -1829,16 +1858,16 @@ type EditMemoryParams struct {
 
 // SearchParams defines parameters for Search.
 type SearchParams struct {
-	// Q At most 1024 code points.
+	// Q The query, required in practice (an absent or blank q is 400 validation): words that must all match, word* for a prefix and a double-quoted phrase. At most 1024 code points.
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
 
-	// Mode text, semantic or both; default: both where the server has an embedding provider, else text
+	// Mode text matches the subject and content, semantic ranks the embedded memories by similarity, both merges the two; default: both where the server has an embedding provider, else text
 	Mode *SearchParamsMode `form:"mode,omitempty" json:"mode,omitempty"`
 
-	// Channel At most 128 bytes (the server counts bytes).
+	// Channel Search this channel only; it must exist and the caller must be able to read it. Absent: every channel the caller may read. At most 128 bytes (the server counts bytes).
 	Channel *string `form:"channel,omitempty" json:"channel,omitempty"`
 
-	// Sender At most 128 bytes (the server counts bytes).
+	// Sender Only messages sent by this identity. At most 128 bytes (the server counts bytes).
 	Sender *string `form:"sender,omitempty" json:"sender,omitempty"`
 
 	// Since Only messages created at or after this time, in milliseconds since the Unix epoch
@@ -1850,13 +1879,13 @@ type SearchParams struct {
 	// Thread Only the message with this sequence number and the replies to it
 	Thread *int64 `form:"thread,omitempty" json:"thread,omitempty"`
 
-	// Tags At most 10 items.
+	// Tags Only messages whose tags satisfy every pattern, each pattern matching one of the message's tags; a pattern is a tag, or a tag prefix followed by an asterisk. Comma separated. At most 10 items.
 	Tags *[]string `form:"tags,omitempty" json:"tags,omitempty"`
 
-	// Count At most 1000.
+	// Count The most hits in a page; absent or 0 means 100. At most 1000.
 	Count *int `form:"count,omitempty" json:"count,omitempty"`
 
-	// Cursor At most 19 code points (digits).
+	// Cursor Where the page starts: the next member of the previous page's result, a decimal offset into the ranked hits; absent starts at the first hit, and an offset past the last hit returns no hits. At most 19 code points (digits).
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
@@ -1895,7 +1924,7 @@ type WatchParams struct {
 
 // UnsubscribeTagsParams defines parameters for UnsubscribeTags.
 type UnsubscribeTagsParams struct {
-	// Pattern At most 10 items.
+	// Pattern A pattern of the set to remove; repeat the parameter once for each pattern. A pattern is a tag, or a tag prefix followed by an asterisk, and the patterns together name the set exactly as subscribeTags stored it. At most 10 items.
 	Pattern []string `form:"pattern" json:"pattern"`
 
 	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
@@ -2222,7 +2251,7 @@ type ClientInterface interface {
 
 	// ListAgentStatuses List every visible identity's stored status
 	//
-	// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
+	// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator (ADR 0011). Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 	//
 	// Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 	ListAgentStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2272,10 +2301,14 @@ type ClientInterface interface {
 
 	// ListChannels List the channels the caller may see
 	//
+	// Lists the channels the caller may list, by name in byte order, each with its kind and its capabilities (bridged: a live Slack bridge). A channel is listed when the caller holds a stored ACL entry on it, for its own name, everyone, admins (an administrator) or humans (a human), whatever permissions the entry grants; a server administrator lists every channel, and a scoped agent lists only channels of its scope. The channel ACL's list action. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0011.
+	//
 	// Corresponds with GET /v1/channels (the `ListChannels` operationId).
 	ListChannels(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateChannelWithBody Create a channel
+	//
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2284,6 +2317,8 @@ type ClientInterface interface {
 
 	// CreateChannel Create a channel
 	//
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
@@ -2291,10 +2326,14 @@ type ClientInterface interface {
 
 	// DeleteChannel Delete a channel
 	//
+	// Deletes a channel; its ACL, subscriptions, cursors and messages go with it, and subscribers do not block it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be deleted (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict until the bridge is removed. Side effects: removes the rows above. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+	//
 	// Corresponds with DELETE /v1/channels/{channel} (the `DeleteChannel` operationId).
 	DeleteChannel(ctx context.Context, channel ChannelParam, params *DeleteChannelParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RenameChannelWithBody Rename a channel
+	//
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2303,6 +2342,8 @@ type ClientInterface interface {
 
 	// RenameChannel Rename a channel
 	//
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
@@ -2310,10 +2351,14 @@ type ClientInterface interface {
 
 	// GetACL Read a channel's access control list
 	//
+	// Returns the channel's ACL entries in the order they were stored. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere), because the list names who may read the channel: without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.6, ADR 0008, ADR 0011.
+	//
 	// Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
 	GetACL(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetACLWithBody Replace a channel's access control list
+	//
+	// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2322,6 +2367,8 @@ type ClientInterface interface {
 
 	// SetACL Replace a channel's access control list
 	//
+	// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
@@ -2329,10 +2376,14 @@ type ClientInterface interface {
 
 	// History Read a window of a channel's messages
 	//
+	// Reads messages of one channel, oldest first, in a window of sequence numbers. With before alone it returns the newest messages below it; with after alone, the first messages above it; with both, those strictly between; with neither, the oldest messages of the channel. At most count messages (default receive_default_count, 100; above receive_max_count the server returns at most that many), cut to result_default_kib; when the window holds more, the messages nearest before or after survive. thread keeps the message with that sequence number and the messages that reply to it; tags keeps the messages whose tags satisfy every pattern. Messages that retention removed or that were deleted are not returned. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing and moves no cursor. No idempotency key: a read has nothing to repeat. Source: spec 3.2 and 4.6, ADR 0008.
+	//
 	// Corresponds with GET /v1/channels/{channel}/messages (the `History` operationId).
 	History(ctx context.Context, channel ChannelParam, params *HistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SendMessageWithBody Send a message to a channel
+	//
+	// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2341,6 +2392,8 @@ type ClientInterface interface {
 
 	// SendMessage Send a message to a channel
 	//
+	// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
@@ -2348,10 +2401,14 @@ type ClientInterface interface {
 
 	// Unsubscribe Remove the caller's subscription to a channel
 	//
+	// Removes the caller's subscription to a channel; not being subscribed is a no-op that still answers 204. No ACL permission is needed, so a reader whose read was revoked can always leave; only the scope gate applies, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: deletes the subscription. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008, ADR 0011.
+	//
 	// Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
 	Unsubscribe(ctx context.Context, channel ChannelParam, params *UnsubscribeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SubscribeWithBody Subscribe the caller to a channel
+	//
+	// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2359,6 +2416,8 @@ type ClientInterface interface {
 	SubscribeWithBody(ctx context.Context, channel ChannelParam, params *SubscribeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Subscribe Subscribe the caller to a channel
+	//
+	// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2400,14 +2459,14 @@ type ClientInterface interface {
 
 	// ListIdentities List identities that have a live session
 	//
-	// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+	// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (ADR 0011). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1, ADR 0011, ADR 0014.
 	//
 	// Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 	ListIdentities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AgentStatusHistory List one identity's stored statuses, oldest first
 	//
-	// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
+	// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay stored until the identity's next set but are not returned. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 	//
 	// Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 	AgentStatusHistory(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2443,6 +2502,8 @@ type ClientInterface interface {
 
 	// Search Search the messages of the channels the caller may read
 	//
+	// Searches the messages of the channels the caller may read, or of the one channel named (which must exist and be readable: 404 not_found, 403 forbidden). q is required: words are ANDed, word* matches a prefix and a double-quoted run is a phrase; a query with no word is 400 validation. Text matching looks at the subject and the content. mode is text, semantic (the embedded memories, ranked by similarity) or both (text and semantic merged by reciprocal rank fusion); absent it is both where the server has an embedding provider, else text. When semantic or both cannot use the provider, the hits are the text matches and semantic_unavailable is true. since and until bound created_at (Unix milliseconds, inclusive), sender and thread narrow the matches, and tags keeps messages whose tags satisfy every pattern. A page holds count hits (default 100, at most 1000), cut to result_default_kib; next names the following page and is passed back as cursor. Any registered identity, over the channels its ACL's read permission covers. Side effects: records an access time on the memories among the hits (a memory's expiry counts from it); no message is written. No idempotency key: a search has nothing to repeat. Source: spec 5.4, ADR 0008.
+	//
 	// Corresponds with GET /v1/search (the `Search` operationId).
 	Search(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2473,7 +2534,7 @@ type ClientInterface interface {
 
 	// Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 	//
-	// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
+	// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. Each source (a subscribed channel, and the tag subscriptions as a whole) counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 	//
 	// Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 	Peek(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2498,7 +2559,7 @@ type ClientInterface interface {
 
 	// SetAgentStatusWithBody Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2507,7 +2568,7 @@ type ClientInterface interface {
 
 	// SetAgentStatus Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2523,15 +2584,21 @@ type ClientInterface interface {
 
 	// UnsubscribeTags Remove a tag subscription: one AND set of tag patterns
 	//
+	// Removes one tag subscription, named by its set of patterns: repeat the pattern parameter once for each pattern. The patterns are normalized as subscribeTags does (lowercase, order and duplicates ignored), so the set is found however it is spelled; removing a set that does not exist is a no-op that still answers 204. Any registered identity. Side effects: deletes the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+	//
 	// Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
 	UnsubscribeTags(ctx context.Context, params *UnsubscribeTagsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTagSubscriptions List the caller's tag subscriptions
 	//
+	// Lists the caller's tag subscriptions. Each is one set of patterns that all have to match (an AND set); a message is delivered when it satisfies any set. The patterns of a set are lowercase, sorted and without duplicates, and the sets come in the order of their keys. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.4 and 4.5, ADR 0008.
+	//
 	// Corresponds with GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId).
 	ListTagSubscriptions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SubscribeTagsWithBody Add a tag subscription: one AND set of tag patterns
+	//
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2539,6 +2606,8 @@ type ClientInterface interface {
 	SubscribeTagsWithBody(ctx context.Context, params *SubscribeTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SubscribeTags Add a tag subscription: one AND set of tag patterns
+	//
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2986,7 +3055,7 @@ func (c *Client) AdminUsage(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 // ListAgentStatuses List every visible identity's stored status
 //
-// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
+// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator (ADR 0011). Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 //
 // Corresponds with GET /v1/agent-statuses (the `ListAgentStatuses` operationId).
 func (c *Client) ListAgentStatuses(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3096,6 +3165,8 @@ func (c *Client) TokenWithFormdataBody(ctx context.Context, body TokenFormdataRe
 
 // ListChannels List the channels the caller may see
 //
+// Lists the channels the caller may list, by name in byte order, each with its kind and its capabilities (bridged: a live Slack bridge). A channel is listed when the caller holds a stored ACL entry on it, for its own name, everyone, admins (an administrator) or humans (a human), whatever permissions the entry grants; a server administrator lists every channel, and a scoped agent lists only channels of its scope. The channel ACL's list action. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0011.
+//
 // Corresponds with GET /v1/channels (the `ListChannels` operationId).
 func (c *Client) ListChannels(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListChannelsRequest(c.Server)
@@ -3110,6 +3181,8 @@ func (c *Client) ListChannels(ctx context.Context, reqEditors ...RequestEditorFn
 }
 
 // CreateChannelWithBody Create a channel
+//
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3128,6 +3201,8 @@ func (c *Client) CreateChannelWithBody(ctx context.Context, params *CreateChanne
 
 // CreateChannel Create a channel
 //
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/channels (the `CreateChannel` operationId).
@@ -3145,6 +3220,8 @@ func (c *Client) CreateChannel(ctx context.Context, params *CreateChannelParams,
 
 // DeleteChannel Delete a channel
 //
+// Deletes a channel; its ACL, subscriptions, cursors and messages go with it, and subscribers do not block it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be deleted (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict until the bridge is removed. Side effects: removes the rows above. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+//
 // Corresponds with DELETE /v1/channels/{channel} (the `DeleteChannel` operationId).
 func (c *Client) DeleteChannel(ctx context.Context, channel ChannelParam, params *DeleteChannelParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteChannelRequest(c.Server, channel, params)
@@ -3159,6 +3236,8 @@ func (c *Client) DeleteChannel(ctx context.Context, channel ChannelParam, params
 }
 
 // RenameChannelWithBody Rename a channel
+//
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3177,6 +3256,8 @@ func (c *Client) RenameChannelWithBody(ctx context.Context, channel ChannelParam
 
 // RenameChannel Rename a channel
 //
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
@@ -3194,6 +3275,8 @@ func (c *Client) RenameChannel(ctx context.Context, channel ChannelParam, params
 
 // GetACL Read a channel's access control list
 //
+// Returns the channel's ACL entries in the order they were stored. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere), because the list names who may read the channel: without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.6, ADR 0008, ADR 0011.
+//
 // Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
 func (c *Client) GetACL(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetACLRequest(c.Server, channel)
@@ -3208,6 +3291,8 @@ func (c *Client) GetACL(ctx context.Context, channel ChannelParam, reqEditors ..
 }
 
 // SetACLWithBody Replace a channel's access control list
+//
+// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3226,6 +3311,8 @@ func (c *Client) SetACLWithBody(ctx context.Context, channel ChannelParam, param
 
 // SetACL Replace a channel's access control list
 //
+// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
@@ -3243,6 +3330,8 @@ func (c *Client) SetACL(ctx context.Context, channel ChannelParam, params *SetAC
 
 // History Read a window of a channel's messages
 //
+// Reads messages of one channel, oldest first, in a window of sequence numbers. With before alone it returns the newest messages below it; with after alone, the first messages above it; with both, those strictly between; with neither, the oldest messages of the channel. At most count messages (default receive_default_count, 100; above receive_max_count the server returns at most that many), cut to result_default_kib; when the window holds more, the messages nearest before or after survive. thread keeps the message with that sequence number and the messages that reply to it; tags keeps the messages whose tags satisfy every pattern. Messages that retention removed or that were deleted are not returned. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing and moves no cursor. No idempotency key: a read has nothing to repeat. Source: spec 3.2 and 4.6, ADR 0008.
+//
 // Corresponds with GET /v1/channels/{channel}/messages (the `History` operationId).
 func (c *Client) History(ctx context.Context, channel ChannelParam, params *HistoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewHistoryRequest(c.Server, channel, params)
@@ -3257,6 +3346,8 @@ func (c *Client) History(ctx context.Context, channel ChannelParam, params *Hist
 }
 
 // SendMessageWithBody Send a message to a channel
+//
+// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3275,6 +3366,8 @@ func (c *Client) SendMessageWithBody(ctx context.Context, channel ChannelParam, 
 
 // SendMessage Send a message to a channel
 //
+// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
@@ -3292,6 +3385,8 @@ func (c *Client) SendMessage(ctx context.Context, channel ChannelParam, params *
 
 // Unsubscribe Remove the caller's subscription to a channel
 //
+// Removes the caller's subscription to a channel; not being subscribed is a no-op that still answers 204. No ACL permission is needed, so a reader whose read was revoked can always leave; only the scope gate applies, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: deletes the subscription. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008, ADR 0011.
+//
 // Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
 func (c *Client) Unsubscribe(ctx context.Context, channel ChannelParam, params *UnsubscribeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUnsubscribeRequest(c.Server, channel, params)
@@ -3306,6 +3401,8 @@ func (c *Client) Unsubscribe(ctx context.Context, channel ChannelParam, params *
 }
 
 // SubscribeWithBody Subscribe the caller to a channel
+//
+// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3323,6 +3420,8 @@ func (c *Client) SubscribeWithBody(ctx context.Context, channel ChannelParam, pa
 }
 
 // Subscribe Subscribe the caller to a channel
+//
+// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3424,7 +3523,7 @@ func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*ht
 
 // ListIdentities List identities that have a live session
 //
-// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (ADR 0011). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1, ADR 0011, ADR 0014.
 //
 // Corresponds with GET /v1/identities (the `ListIdentities` operationId).
 func (c *Client) ListIdentities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3441,7 +3540,7 @@ func (c *Client) ListIdentities(ctx context.Context, reqEditors ...RequestEditor
 
 // AgentStatusHistory List one identity's stored statuses, oldest first
 //
-// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
+// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay stored until the identity's next set but are not returned. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 //
 // Corresponds with GET /v1/identities/{identity}/statuses (the `AgentStatusHistory` operationId).
 func (c *Client) AgentStatusHistory(ctx context.Context, identity string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3537,6 +3636,8 @@ func (c *Client) EditMemory(ctx context.Context, id IdParam, params *EditMemoryP
 
 // Search Search the messages of the channels the caller may read
 //
+// Searches the messages of the channels the caller may read, or of the one channel named (which must exist and be readable: 404 not_found, 403 forbidden). q is required: words are ANDed, word* matches a prefix and a double-quoted run is a phrase; a query with no word is 400 validation. Text matching looks at the subject and the content. mode is text, semantic (the embedded memories, ranked by similarity) or both (text and semantic merged by reciprocal rank fusion); absent it is both where the server has an embedding provider, else text. When semantic or both cannot use the provider, the hits are the text matches and semantic_unavailable is true. since and until bound created_at (Unix milliseconds, inclusive), sender and thread narrow the matches, and tags keeps messages whose tags satisfy every pattern. A page holds count hits (default 100, at most 1000), cut to result_default_kib; next names the following page and is passed back as cursor. Any registered identity, over the channels its ACL's read permission covers. Side effects: records an access time on the memories among the hits (a memory's expiry counts from it); no message is written. No idempotency key: a search has nothing to repeat. Source: spec 5.4, ADR 0008.
+//
 // Corresponds with GET /v1/search (the `Search` operationId).
 func (c *Client) Search(ctx context.Context, params *SearchParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSearchRequest(c.Server, params)
@@ -3607,7 +3708,7 @@ func (c *Client) CloseSession(ctx context.Context, session SessionParam, params 
 
 // Peek Count the messages pending above the watch floor, without delivering or acknowledging them
 //
-// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
+// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. Each source (a subscribed channel, and the tag subscriptions as a whole) counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 //
 // Corresponds with GET /v1/sessions/{session}/peek (the `Peek` operationId).
 func (c *Client) Peek(ctx context.Context, session SessionParam, params *PeekParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3662,7 +3763,7 @@ func (c *Client) Receive(ctx context.Context, session SessionParam, body Receive
 
 // SetAgentStatusWithBody Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3681,7 +3782,7 @@ func (c *Client) SetAgentStatusWithBody(ctx context.Context, session SessionPara
 
 // SetAgentStatus Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3717,6 +3818,8 @@ func (c *Client) Watch(ctx context.Context, session SessionParam, params *WatchP
 
 // UnsubscribeTags Remove a tag subscription: one AND set of tag patterns
 //
+// Removes one tag subscription, named by its set of patterns: repeat the pattern parameter once for each pattern. The patterns are normalized as subscribeTags does (lowercase, order and duplicates ignored), so the set is found however it is spelled; removing a set that does not exist is a no-op that still answers 204. Any registered identity. Side effects: deletes the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+//
 // Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
 func (c *Client) UnsubscribeTags(ctx context.Context, params *UnsubscribeTagsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUnsubscribeTagsRequest(c.Server, params)
@@ -3732,6 +3835,8 @@ func (c *Client) UnsubscribeTags(ctx context.Context, params *UnsubscribeTagsPar
 
 // ListTagSubscriptions List the caller's tag subscriptions
 //
+// Lists the caller's tag subscriptions. Each is one set of patterns that all have to match (an AND set); a message is delivered when it satisfies any set. The patterns of a set are lowercase, sorted and without duplicates, and the sets come in the order of their keys. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.4 and 4.5, ADR 0008.
+//
 // Corresponds with GET /v1/tag-subscriptions (the `ListTagSubscriptions` operationId).
 func (c *Client) ListTagSubscriptions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTagSubscriptionsRequest(c.Server)
@@ -3746,6 +3851,8 @@ func (c *Client) ListTagSubscriptions(ctx context.Context, reqEditors ...Request
 }
 
 // SubscribeTagsWithBody Add a tag subscription: one AND set of tag patterns
+//
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3763,6 +3870,8 @@ func (c *Client) SubscribeTagsWithBody(ctx context.Context, params *SubscribeTag
 }
 
 // SubscribeTags Add a tag subscription: one AND set of tag patterns
+//
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -6866,7 +6975,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListAgentStatusesWithResponse List every visible identity's stored status
 	//
-	// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
+	// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator (ADR 0011). Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6920,12 +7029,16 @@ type ClientWithResponsesInterface interface {
 
 	// ListChannelsWithResponse List the channels the caller may see
 	//
+	// Lists the channels the caller may list, by name in byte order, each with its kind and its capabilities (bridged: a live Slack bridge). A channel is listed when the caller holds a stored ACL entry on it, for its own name, everyone, admins (an administrator) or humans (a human), whatever permissions the entry grants; a server administrator lists every channel, and a scoped agent lists only channels of its scope. The channel ACL's list action. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0011.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/channels (the `ListChannels` operationId).
 	ListChannelsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListChannelsResponse, error)
 
 	// CreateChannelWithBodyWithResponse Create a channel
+	//
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6934,12 +7047,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateChannelWithResponse Create a channel
 	//
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/channels (the `CreateChannel` operationId).
 	CreateChannelWithResponse(ctx context.Context, params *CreateChannelParams, body CreateChannelJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateChannelResponse, error)
 
 	// DeleteChannelWithResponse Delete a channel
+	//
+	// Deletes a channel; its ACL, subscriptions, cursors and messages go with it, and subscribers do not block it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be deleted (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict until the bridge is removed. Side effects: removes the rows above. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6948,12 +7065,16 @@ type ClientWithResponsesInterface interface {
 
 	// RenameChannelWithBodyWithResponse Rename a channel
 	//
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
 	RenameChannelWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *RenameChannelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenameChannelResponse, error)
 
 	// RenameChannelWithResponse Rename a channel
+	//
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6962,12 +7083,16 @@ type ClientWithResponsesInterface interface {
 
 	// GetACLWithResponse Read a channel's access control list
 	//
+	// Returns the channel's ACL entries in the order they were stored. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere), because the list names who may read the channel: without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.6, ADR 0008, ADR 0011.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
 	GetACLWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*GetACLResponse, error)
 
 	// SetACLWithBodyWithResponse Replace a channel's access control list
+	//
+	// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6976,12 +7101,16 @@ type ClientWithResponsesInterface interface {
 
 	// SetACLWithResponse Replace a channel's access control list
 	//
+	// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
 	SetACLWithResponse(ctx context.Context, channel ChannelParam, params *SetACLParams, body SetACLJSONRequestBody, reqEditors ...RequestEditorFn) (*SetACLResponse, error)
 
 	// HistoryWithResponse Read a window of a channel's messages
+	//
+	// Reads messages of one channel, oldest first, in a window of sequence numbers. With before alone it returns the newest messages below it; with after alone, the first messages above it; with both, those strictly between; with neither, the oldest messages of the channel. At most count messages (default receive_default_count, 100; above receive_max_count the server returns at most that many), cut to result_default_kib; when the window holds more, the messages nearest before or after survive. thread keeps the message with that sequence number and the messages that reply to it; tags keeps the messages whose tags satisfy every pattern. Messages that retention removed or that were deleted are not returned. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing and moves no cursor. No idempotency key: a read has nothing to repeat. Source: spec 3.2 and 4.6, ADR 0008.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6990,12 +7119,16 @@ type ClientWithResponsesInterface interface {
 
 	// SendMessageWithBodyWithResponse Send a message to a channel
 	//
+	// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
 	SendMessageWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SendMessageParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SendMessageResponse, error)
 
 	// SendMessageWithResponse Send a message to a channel
+	//
+	// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7004,6 +7137,8 @@ type ClientWithResponsesInterface interface {
 
 	// UnsubscribeWithResponse Remove the caller's subscription to a channel
 	//
+	// Removes the caller's subscription to a channel; not being subscribed is a no-op that still answers 204. No ACL permission is needed, so a reader whose read was revoked can always leave; only the scope gate applies, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: deletes the subscription. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008, ADR 0011.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
@@ -7011,12 +7146,16 @@ type ClientWithResponsesInterface interface {
 
 	// SubscribeWithBodyWithResponse Subscribe the caller to a channel
 	//
+	// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
 	SubscribeWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *SubscribeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubscribeResponse, error)
 
 	// SubscribeWithResponse Subscribe the caller to a channel
+	//
+	// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7064,7 +7203,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListIdentitiesWithResponse List identities that have a live session
 	//
-	// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+	// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (ADR 0011). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1, ADR 0011, ADR 0014.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7073,7 +7212,7 @@ type ClientWithResponsesInterface interface {
 
 	// AgentStatusHistoryWithResponse List one identity's stored statuses, oldest first
 	//
-	// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
+	// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay stored until the identity's next set but are not returned. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7117,6 +7256,8 @@ type ClientWithResponsesInterface interface {
 
 	// SearchWithResponse Search the messages of the channels the caller may read
 	//
+	// Searches the messages of the channels the caller may read, or of the one channel named (which must exist and be readable: 404 not_found, 403 forbidden). q is required: words are ANDed, word* matches a prefix and a double-quoted run is a phrase; a query with no word is 400 validation. Text matching looks at the subject and the content. mode is text, semantic (the embedded memories, ranked by similarity) or both (text and semantic merged by reciprocal rank fusion); absent it is both where the server has an embedding provider, else text. When semantic or both cannot use the provider, the hits are the text matches and semantic_unavailable is true. since and until bound created_at (Unix milliseconds, inclusive), sender and thread narrow the matches, and tags keeps messages whose tags satisfy every pattern. A page holds count hits (default 100, at most 1000), cut to result_default_kib; next names the following page and is passed back as cursor. Any registered identity, over the channels its ACL's read permission covers. Side effects: records an access time on the memories among the hits (a memory's expiry counts from it); no message is written. No idempotency key: a search has nothing to repeat. Source: spec 5.4, ADR 0008.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/search (the `Search` operationId).
@@ -7151,7 +7292,7 @@ type ClientWithResponsesInterface interface {
 
 	// PeekWithResponse Count the messages pending above the watch floor, without delivering or acknowledging them
 	//
-	// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
+	// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. Each source (a subscribed channel, and the tag subscriptions as a whole) counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7178,7 +7319,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetAgentStatusWithBodyWithResponse Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7187,7 +7328,7 @@ type ClientWithResponsesInterface interface {
 
 	// SetAgentStatusWithResponse Set the calling agent's status line from one of its live sessions
 	//
-	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+	// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7205,12 +7346,16 @@ type ClientWithResponsesInterface interface {
 
 	// UnsubscribeTagsWithResponse Remove a tag subscription: one AND set of tag patterns
 	//
+	// Removes one tag subscription, named by its set of patterns: repeat the pattern parameter once for each pattern. The patterns are normalized as subscribeTags does (lowercase, order and duplicates ignored), so the set is found however it is spelled; removing a set that does not exist is a no-op that still answers 204. Any registered identity. Side effects: deletes the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
 	UnsubscribeTagsWithResponse(ctx context.Context, params *UnsubscribeTagsParams, reqEditors ...RequestEditorFn) (*UnsubscribeTagsResponse, error)
 
 	// ListTagSubscriptionsWithResponse List the caller's tag subscriptions
+	//
+	// Lists the caller's tag subscriptions. Each is one set of patterns that all have to match (an AND set); a message is delivered when it satisfies any set. The patterns of a set are lowercase, sorted and without duplicates, and the sets come in the order of their keys. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7219,12 +7364,16 @@ type ClientWithResponsesInterface interface {
 
 	// SubscribeTagsWithBodyWithResponse Add a tag subscription: one AND set of tag patterns
 	//
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
 	SubscribeTagsWithBodyWithResponse(ctx context.Context, params *SubscribeTagsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SubscribeTagsResponse, error)
 
 	// SubscribeTagsWithResponse Add a tag subscription: one AND set of tag patterns
+	//
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -12542,7 +12691,7 @@ func (c *ClientWithResponses) AdminUsageWithResponse(ctx context.Context, reqEdi
 
 // ListAgentStatusesWithResponse List every visible identity's stored status
 //
-// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
+// Lists the latest status of every identity the caller may see that has one, by identity (byte order). An identity with no live session reads tag offline with live false, and last_tag keeps the stored tag; an offline entry whose status was set more than status_offline_hours ago (default 24; 0 keeps only live identities) is left out. A scoped agent sees its scope plus every human and administrator (ADR 0011). Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12632,6 +12781,8 @@ func (c *ClientWithResponses) TokenWithFormdataBodyWithResponse(ctx context.Cont
 
 // ListChannelsWithResponse List the channels the caller may see
 //
+// Lists the channels the caller may list, by name in byte order, each with its kind and its capabilities (bridged: a live Slack bridge). A channel is listed when the caller holds a stored ACL entry on it, for its own name, everyone, admins (an administrator) or humans (a human), whatever permissions the entry grants; a server administrator lists every channel, and a scoped agent lists only channels of its scope. The channel ACL's list action. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0011.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/channels (the `ListChannels` operationId).
@@ -12644,6 +12795,8 @@ func (c *ClientWithResponses) ListChannelsWithResponse(ctx context.Context, reqE
 }
 
 // CreateChannelWithBodyWithResponse Create a channel
+//
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12658,6 +12811,8 @@ func (c *ClientWithResponses) CreateChannelWithBodyWithResponse(ctx context.Cont
 
 // CreateChannelWithResponse Create a channel
 //
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/channels (the `CreateChannel` operationId).
@@ -12670,6 +12825,8 @@ func (c *ClientWithResponses) CreateChannelWithResponse(ctx context.Context, par
 }
 
 // DeleteChannelWithResponse Delete a channel
+//
+// Deletes a channel; its ACL, subscriptions, cursors and messages go with it, and subscribers do not block it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be deleted (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict until the bridge is removed. Side effects: removes the rows above. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12684,6 +12841,8 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, cha
 
 // RenameChannelWithBodyWithResponse Rename a channel
 //
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/channels/{channel} (the `RenameChannel` operationId).
@@ -12696,6 +12855,8 @@ func (c *ClientWithResponses) RenameChannelWithBodyWithResponse(ctx context.Cont
 }
 
 // RenameChannelWithResponse Rename a channel
+//
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12710,6 +12871,8 @@ func (c *ClientWithResponses) RenameChannelWithResponse(ctx context.Context, cha
 
 // GetACLWithResponse Read a channel's access control list
 //
+// Returns the channel's ACL entries in the order they were stored. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere), because the list names who may read the channel: without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.6, ADR 0008, ADR 0011.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/channels/{channel}/acl (the `GetACL` operationId).
@@ -12722,6 +12885,8 @@ func (c *ClientWithResponses) GetACLWithResponse(ctx context.Context, channel Ch
 }
 
 // SetACLWithBodyWithResponse Replace a channel's access control list
+//
+// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12736,6 +12901,8 @@ func (c *ClientWithResponses) SetACLWithBodyWithResponse(ctx context.Context, ch
 
 // SetACLWithResponse Replace a channel's access control list
 //
+// Replaces the channel's whole ACL with the entries given; an empty array removes every entry (administrators keep admin through their flag). Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere). An agent that is not an administrator cannot take a permission away from a protected entry (everyone, admins, humans, a human or an administrator): 403 forbidden. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of read, write and admin. On a channel whose Slack bridge is live or being created only a server administrator may change the ACL (403 forbidden otherwise), and the bridge's rules apply: no everyone or humans entry, no read or write for admins, and the slack-bridge read entry stays. A channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: replaces the ACL rows and hints the channel's watchers, so an armed watch re-checks what its session may read. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/channels/{channel}/acl (the `SetACL` operationId).
@@ -12748,6 +12915,8 @@ func (c *ClientWithResponses) SetACLWithResponse(ctx context.Context, channel Ch
 }
 
 // HistoryWithResponse Read a window of a channel's messages
+//
+// Reads messages of one channel, oldest first, in a window of sequence numbers. With before alone it returns the newest messages below it; with after alone, the first messages above it; with both, those strictly between; with neither, the oldest messages of the channel. At most count messages (default receive_default_count, 100; above receive_max_count the server returns at most that many), cut to result_default_kib; when the window holds more, the messages nearest before or after survive. thread keeps the message with that sequence number and the messages that reply to it; tags keeps the messages whose tags satisfy every pattern. Messages that retention removed or that were deleted are not returned. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Writes nothing and moves no cursor. No idempotency key: a read has nothing to repeat. Source: spec 3.2 and 4.6, ADR 0008.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12762,6 +12931,8 @@ func (c *ClientWithResponses) HistoryWithResponse(ctx context.Context, channel C
 
 // SendMessageWithBodyWithResponse Send a message to a channel
 //
+// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/channels/{channel}/messages (the `SendMessage` operationId).
@@ -12774,6 +12945,8 @@ func (c *ClientWithResponses) SendMessageWithBodyWithResponse(ctx context.Contex
 }
 
 // SendMessageWithResponse Send a message to a channel
+//
+// Appends one message to a channel and returns its sequence number. Needs write on the channel (the channel ACL's write permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. content is required; the whole message may not exceed max_message_kib (default 64). The subject is trimmed and must be one line; tags are lowercased, deduplicated and sorted. A reply_to must name an existing message of the same channel (404 not_found, 400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to its thread root. A task list refuses messages (400 validation). session, when given, must be the caller's own live session: another identity's is 404 not_found, a closed or lapsed one 410. On a memory channel the message becomes revision 1 of a new memory and memory_id is returned. The sender's rate limit (send_messages_per_second and send_kib_per_second, per identity) answers 429 rate_limited with Retry-After. When a write inspector is configured the content is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the message, wakes the watches of its subscribers and, on a memory channel, queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and appends nothing; the same key with a different body is 409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12788,6 +12961,8 @@ func (c *ClientWithResponses) SendMessageWithResponse(ctx context.Context, chann
 
 // UnsubscribeWithResponse Remove the caller's subscription to a channel
 //
+// Removes the caller's subscription to a channel; not being subscribed is a no-op that still answers 204. No ACL permission is needed, so a reader whose read was revoked can always leave; only the scope gate applies, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. Side effects: deletes the subscription. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008, ADR 0011.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/channels/{channel}/subscription (the `Unsubscribe` operationId).
@@ -12801,6 +12976,8 @@ func (c *ClientWithResponses) UnsubscribeWithResponse(ctx context.Context, chann
 
 // SubscribeWithBodyWithResponse Subscribe the caller to a channel
 //
+// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PUT /v1/channels/{channel}/subscription (the `Subscribe` operationId).
@@ -12813,6 +12990,8 @@ func (c *ClientWithResponses) SubscribeWithBodyWithResponse(ctx context.Context,
 }
 
 // SubscribeWithResponse Subscribe the caller to a channel
+//
+// Subscribes the caller's identity, and so every session of it, to a channel. from is now (the default: only messages after the newest sequence number at this moment) or oldest (from the oldest retained message); a subscription that already exists keeps its position, so a repeat changes nothing. Needs read on the channel (the channel ACL's read permission): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. An agent that subscribes to a memory channel gets 400 validation: agents find memories with search. Side effects: stores the subscription at its starting position; the channel's messages then arrive in receive and wake watch. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4, ADR 0008.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12896,7 +13075,7 @@ func (c *ClientWithResponses) HealthWithResponse(ctx context.Context, reqEditors
 
 // ListIdentitiesWithResponse List identities that have a live session
 //
-// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (spec 4.5). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+// Lists the identities the caller may see that have at least one live session, by name, each with its kind, administrator flag, live sessions and its current status when it has one. A scoped agent sees the identities of its scope plus every human and administrator (ADR 0011). An identity with no live session is not listed; listAgentStatuses lists those that went offline. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.1, ADR 0011, ADR 0014.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12911,7 +13090,7 @@ func (c *ClientWithResponses) ListIdentitiesWithResponse(ctx context.Context, re
 
 // AgentStatusHistoryWithResponse List one identity's stored statuses, oldest first
 //
-// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay until the identity's next set. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
+// Lists one identity's stored status revisions, oldest first, at most status_history_count (default 20, the current status included); revisions pruned by later sets are gone, and after the setting is lowered the extra rows stay stored until the identity's next set but are not returned. An identity that is not registered, or is outside a scoped caller's view, is 404 not_found. Any registered identity. The caller must be able to see the named identity (the Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0014, Decisions 7 and 8.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12991,6 +13170,8 @@ func (c *ClientWithResponses) EditMemoryWithResponse(ctx context.Context, id IdP
 
 // SearchWithResponse Search the messages of the channels the caller may read
 //
+// Searches the messages of the channels the caller may read, or of the one channel named (which must exist and be readable: 404 not_found, 403 forbidden). q is required: words are ANDed, word* matches a prefix and a double-quoted run is a phrase; a query with no word is 400 validation. Text matching looks at the subject and the content. mode is text, semantic (the embedded memories, ranked by similarity) or both (text and semantic merged by reciprocal rank fusion); absent it is both where the server has an embedding provider, else text. When semantic or both cannot use the provider, the hits are the text matches and semantic_unavailable is true. since and until bound created_at (Unix milliseconds, inclusive), sender and thread narrow the matches, and tags keeps messages whose tags satisfy every pattern. A page holds count hits (default 100, at most 1000), cut to result_default_kib; next names the following page and is passed back as cursor. Any registered identity, over the channels its ACL's read permission covers. Side effects: records an access time on the memories among the hits (a memory's expiry counts from it); no message is written. No idempotency key: a search has nothing to repeat. Source: spec 5.4, ADR 0008.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/search (the `Search` operationId).
@@ -13049,7 +13230,7 @@ func (c *ClientWithResponses) CloseSessionWithResponse(ctx context.Context, sess
 
 // PeekWithResponse Count the messages pending above the watch floor, without delivering or acknowledging them
 //
-// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. A message reachable both through its channel and through a tag subscription counts once, on its channel, and each source counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
+// Counts the messages pending for the session above the floor watch uses (the session's position and the end of any pending batch), without delivering, acknowledging or waking anything: the total in count, and per channel for the channels that have any. Each source (a subscribed channel, and the tag subscriptions as a whole) counts at most receive_max_count. Any registered identity. Only the caller's own sessions: another identity's session is 404 not_found, a closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes nothing (no lease renewal, no cursor, no watch row, no receipt). No idempotency key: a read has nothing to repeat. Source: spec 3.5, ADR 0003.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13094,7 +13275,7 @@ func (c *ClientWithResponses) ReceiveWithResponse(ctx context.Context, session S
 
 // SetAgentStatusWithBodyWithResponse Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13109,7 +13290,7 @@ func (c *ClientWithResponses) SetAgentStatusWithBodyWithResponse(ctx context.Con
 
 // SetAgentStatusWithResponse Set the calling agent's status line from one of its live sessions
 //
-// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human or for another identity's status). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
+// Sets the calling agent's status line from one of its live sessions. An identity has one status; every call appends the next revision to its history (a repeat of an identical status is a new revision too) and prunes the history to status_history_count (default 20, the current status included). tag is one of idle, planning, implementing, reviewing, waiting, blocked or needs-human; offline is set by the server for an identity with no live session and is refused here. text is required and one line; problem is optional and says what blocks the agent. The session must be live (410 session_closed or session_lapsed otherwise). The call shares the sender's rate limit with messages: 429 rate_limited with Retry-After. Any registered identity. Only an agent sets a status, and only its own (403 forbidden for a human). Side effects: appends one revision and may delete the oldest; the session's lease is renewed. Idempotency-Key: a repeat with the same key and body returns the first answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13139,6 +13320,8 @@ func (c *ClientWithResponses) WatchWithResponse(ctx context.Context, session Ses
 
 // UnsubscribeTagsWithResponse Remove a tag subscription: one AND set of tag patterns
 //
+// Removes one tag subscription, named by its set of patterns: repeat the pattern parameter once for each pattern. The patterns are normalized as subscribeTags does (lowercase, order and duplicates ignored), so the set is found however it is spelled; removing a set that does not exist is a no-op that still answers 204. Any registered identity. Side effects: deletes the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/tag-subscriptions (the `UnsubscribeTags` operationId).
@@ -13151,6 +13334,8 @@ func (c *ClientWithResponses) UnsubscribeTagsWithResponse(ctx context.Context, p
 }
 
 // ListTagSubscriptionsWithResponse List the caller's tag subscriptions
+//
+// Lists the caller's tag subscriptions. Each is one set of patterns that all have to match (an AND set); a message is delivered when it satisfies any set. The patterns of a set are lowercase, sorted and without duplicates, and the sets come in the order of their keys. Any registered identity. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13165,6 +13350,8 @@ func (c *ClientWithResponses) ListTagSubscriptionsWithResponse(ctx context.Conte
 
 // SubscribeTagsWithBodyWithResponse Add a tag subscription: one AND set of tag patterns
 //
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/tag-subscriptions (the `SubscribeTags` operationId).
@@ -13177,6 +13364,8 @@ func (c *ClientWithResponses) SubscribeTagsWithBodyWithResponse(ctx context.Cont
 }
 
 // SubscribeTagsWithResponse Add a tag subscription: one AND set of tag patterns
+//
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

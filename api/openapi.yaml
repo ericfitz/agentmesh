@@ -428,9 +428,8 @@ paths:
         Counts the messages pending for the session above the floor watch uses (the
         session's position and the end of any pending batch), without delivering,
         acknowledging or waking anything: the total in count, and per channel for
-        the channels that have any. A message reachable both through its channel
-        and through a tag subscription counts once, on its channel, and each source
-        counts at most receive_max_count. Any registered identity. Only the
+        the channels that have any. Each source (a subscribed channel, and the tag
+        subscriptions as a whole) counts at most receive_max_count. Any registered identity. Only the
         caller's own sessions: another identity's session is 404 not_found, a
         closed one 410 session_closed and a lapsed one 410 session_lapsed. Writes
         nothing (no lease renewal, no cursor, no watch row, no receipt). No
@@ -475,10 +474,10 @@ paths:
         Lists the identities the caller may see that have at least one live
         session, by name, each with its kind, administrator flag, live sessions and
         its current status when it has one. A scoped agent sees the identities of
-        its scope plus every human and administrator (spec 4.5). An identity with no
+        its scope plus every human and administrator (ADR 0011). An identity with no
         live session is not listed; listAgentStatuses lists those that went
         offline. Any registered identity. Writes nothing. No idempotency key: a read
-        has nothing to repeat. Source: spec 4.1 and 4.5, ADR 0014.
+        has nothing to repeat. Source: spec 4.1, ADR 0011, ADR 0014.
       responses:
         "200":
           description: Registered identities and their open sessions.
@@ -533,7 +532,7 @@ paths:
         session_closed or session_lapsed otherwise). The call shares the sender's
         rate limit with messages: 429 rate_limited with Retry-After. Any registered
         identity. Only an agent sets a status, and only its own (403 forbidden
-        for a human or for another identity's status). Side effects: appends one
+        for a human). Side effects: appends one
         revision and may delete the oldest; the session's lease is renewed.
         Idempotency-Key: a repeat with the same key and body returns the first
         answer and adds no revision. Source: ADR 0014, Decisions 2, 4, 8, 14.
@@ -585,7 +584,7 @@ paths:
         with live false, and last_tag keeps the stored tag; an offline entry whose
         status was set more than status_offline_hours ago (default 24; 0 keeps only
         live identities) is left out. A scoped agent sees its scope plus every human
-        and administrator. Any registered identity. Writes nothing. No idempotency
+        and administrator (ADR 0011). Any registered identity. Writes nothing. No idempotency
         key: a read has nothing to repeat. Source: ADR 0014, Decisions 3, 7 and 18.
       responses:
         "200":
@@ -629,7 +628,7 @@ paths:
         Lists one identity's stored status revisions, oldest first, at most
         status_history_count (default 20, the current status included); revisions
         pruned by later sets are gone, and after the setting is lowered the extra
-        rows stay until the identity's next set. An identity that is not registered,
+        rows stay stored until the identity's next set but are not returned. An identity that is not registered,
         or is outside a scoped caller's view, is 404 not_found. Any registered
         identity. The caller must be able to see the named identity (the
         Identity/See action of the access check). Writes nothing. No idempotency key: a read has nothing to repeat.
@@ -686,6 +685,15 @@ paths:
       operationId: listChannels
       summary: "List the channels the caller may see"
       tags: [channels]
+      description: >-
+        Lists the channels the caller may list, by name in byte order, each with its
+        kind and its capabilities (bridged: a live Slack bridge). A channel is
+        listed when the caller holds a stored ACL entry on it, for its own name,
+        everyone, admins (an administrator) or humans (a human), whatever
+        permissions the entry grants; a server administrator lists every channel,
+        and a scoped agent lists only channels of its scope. The channel ACL's list
+        action. Writes nothing. No idempotency key: a read has nothing to repeat.
+        Source: ADR 0011.
       responses:
         "200":
           description: Channels the caller holds an ACL entry on; a server administrator sees every channel.
@@ -695,6 +703,16 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Channel"
+              example:
+                - name: general
+                  kind: ordinary
+                  capabilities: []
+                - name: release-notes
+                  kind: memory
+                  capabilities: []
+                - name: release-train
+                  kind: ordinary
+                  capabilities: []
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -709,6 +727,24 @@ paths:
       operationId: createChannel
       summary: "Create a channel"
       tags: [channels]
+      description: >-
+        Creates a channel of kind ordinary (the default), memory or tasks, with the
+        caller as its creator. The ACL is the one in the request; absent, it is the
+        configured default_acl (shipped: everyone read and write, the creator read,
+        write and admin, admins admin); an empty array stores no entries. There is
+        no implicit creator entry, so an ACL that leaves out the caller leaves it
+        without access. Every named identity must be a registered identity the
+        caller can see, or one of the groups everyone, admins and humans; an entry
+        with no permission or an unknown one is 400 validation. Any registered
+        identity may create while channel_creation is open (the default); only an
+        administrator when it is admins (403 forbidden). scope: only an
+        administrator may name one, and it must exist and not be done (unknown or
+        retired 404 not_found, done 409 conflict); otherwise the channel takes the
+        caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside
+        scope S may take a name starting S- (400 validation). A name already taken
+        is 409 conflict. Side effects: inserts the channel and its ACL rows.
+        Idempotency-Key: a repeat with the same key and body returns the first
+        answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
@@ -746,6 +782,16 @@ paths:
       operationId: deleteChannel
       summary: "Delete a channel"
       tags: [channels]
+      description: >-
+        Deletes a channel; its ACL, subscriptions, cursors and messages go with it,
+        and subscribers do not block it. Needs admin on the channel (the channel
+        ACL's admin permission, which administrators hold everywhere): without it
+        403 forbidden, and a channel that does not exist or lies outside a scoped
+        caller's scope is 404 not_found. The general channel cannot be deleted (400
+        validation), and a channel whose Slack bridge is live or being created is
+        409 conflict until the bridge is removed. Side effects: removes the rows
+        above. Idempotency-Key: a repeat with the same key and body returns the
+        first answer. Source: ADR 0008, ADR 0009, ADR 0011.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -770,6 +816,19 @@ paths:
       operationId: renameChannel
       summary: "Rename a channel"
       tags: [channels]
+      description: >-
+        Renames a channel; its id stays, so subscriptions, cursors and messages stay
+        with it. Needs admin on the channel (the channel ACL's admin permission,
+        which administrators hold everywhere): without it 403 forbidden, and a
+        channel that does not exist or lies outside a scoped caller's scope is 404
+        not_found. The general channel cannot be renamed (400 validation), and a
+        channel whose Slack bridge is live or being created is 409 conflict. The new
+        name follows the creation rules: 1 to 128 bytes without a slash,
+        <scope>-<rest> for a scoped channel and never a name starting with another
+        scope's prefix (400 validation); a name another channel holds is 409
+        conflict. Side effects: changes the name. Idempotency-Key: a repeat with the
+        same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR
+        0011.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -804,6 +863,13 @@ paths:
       operationId: getACL
       summary: "Read a channel's access control list"
       tags: [channels]
+      description: >-
+        Returns the channel's ACL entries in the order they were stored. Needs admin
+        on the channel (the channel ACL's admin permission, which administrators
+        hold everywhere), because the list names who may read the channel: without
+        it 403 forbidden, and a channel that does not exist or lies outside a scoped
+        caller's scope is 404 not_found. Writes nothing. No idempotency key: a read
+        has nothing to repeat. Source: spec 4.6, ADR 0008, ADR 0011.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
       responses:
@@ -815,6 +881,11 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ACLEntry"
+              example:
+                - identity: acme-coder-1
+                  permissions: [read, write, admin]
+                - identity: everyone
+                  permissions: [read]
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -831,6 +902,24 @@ paths:
       operationId: setACL
       summary: "Replace a channel's access control list"
       tags: [channels]
+      description: >-
+        Replaces the channel's whole ACL with the entries given; an empty array
+        removes every entry (administrators keep admin through their flag). Needs
+        admin on the channel (the channel ACL's admin permission, which
+        administrators hold everywhere). An agent that is not an administrator
+        cannot take a permission away from a protected entry (everyone, admins,
+        humans, a human or an administrator): 403 forbidden. Every named identity
+        must be a registered identity the caller can see, or one of the groups
+        everyone, admins and humans, else 400 validation; each entry holds 1 to 3 of
+        read, write and admin. On a channel whose Slack bridge is live or being
+        created only a server administrator may change the ACL (403 forbidden
+        otherwise), and the bridge's rules apply: no everyone or humans entry, no
+        read or write for admins, and the slack-bridge read entry stays. A channel
+        that does not exist or lies outside a scoped caller's scope is 404
+        not_found. Side effects: replaces the ACL rows and hints the channel's
+        watchers, so an armed watch re-checks what its session may read.
+        Idempotency-Key: a repeat with the same key and body returns the first
+        answer. Source: spec 4.6, ADR 0008, ADR 0009, ADR 0011.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -845,6 +934,11 @@ paths:
                 $ref: "#/components/schemas/ACLEntry"
               maxItems: 256
               description: At most 256 items.
+            example:
+              - identity: acme-coder-1
+                permissions: [read, write, admin]
+              - identity: everyone
+                permissions: [read]
       responses:
         "204":
           description: ACL replaced.
@@ -869,6 +963,18 @@ paths:
       operationId: subscribe
       summary: "Subscribe the caller to a channel"
       tags: [channels]
+      description: >-
+        Subscribes the caller's identity, and so every session of it, to a channel.
+        from is now (the default: only messages after the newest sequence number at
+        this moment) or oldest (from the oldest retained message); a subscription
+        that already exists keeps its position, so a repeat changes nothing. Needs
+        read on the channel (the channel ACL's read permission): without it 403
+        forbidden, and a channel that does not exist or lies outside a scoped
+        caller's scope is 404 not_found. An agent that subscribes to a memory
+        channel gets 400 validation: agents find memories with search. Side effects:
+        stores the subscription at its starting position; the channel's messages
+        then arrive in receive and wake watch. Idempotency-Key: a repeat with the
+        same key and body returns the first answer. Source: spec 4.4, ADR 0008.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -902,6 +1008,14 @@ paths:
       operationId: unsubscribe
       summary: "Remove the caller's subscription to a channel"
       tags: [channels]
+      description: >-
+        Removes the caller's subscription to a channel; not being subscribed is a
+        no-op that still answers 204. No ACL permission is needed, so a reader whose
+        read was revoked can always leave; only the scope gate applies, and a
+        channel that does not exist or lies outside a scoped caller's scope is 404
+        not_found. Side effects: deletes the subscription. Idempotency-Key: a repeat
+        with the same key and body returns the first answer. Source: spec 4.4, ADR
+        0008, ADR 0011.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -927,6 +1041,13 @@ paths:
       operationId: listTagSubscriptions
       summary: "List the caller's tag subscriptions"
       tags: [channels]
+      description: >-
+        Lists the caller's tag subscriptions. Each is one set of patterns that all
+        have to match (an AND set); a message is delivered when it satisfies any
+        set. The patterns of a set are lowercase, sorted and without duplicates, and
+        the sets come in the order of their keys. Any registered identity. Writes
+        nothing. No idempotency key: a read has nothing to repeat. Source: spec 4.4
+        and 4.5, ADR 0008.
       responses:
         "200":
           description: The caller's tag subscriptions, each a set of patterns.
@@ -938,6 +1059,10 @@ paths:
                   type: array
                   items:
                     type: string
+                  example: [build-42, deploy-prod]
+              example:
+                - [build-42, deploy-prod]
+                - [deploy-*]
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -952,6 +1077,17 @@ paths:
       operationId: subscribeTags
       summary: "Add a tag subscription: one AND set of tag patterns"
       tags: [channels]
+      description: >-
+        Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix
+        followed by an asterisk. A message matches the set when each pattern matches
+        one of its tags, and is then delivered to the caller's sessions when it is on
+        a channel the caller may read (an unfiltered receive marks it with
+        matched_tags; a channel the caller is subscribed to delivers it anyway). The
+        patterns are lowercased, sorted and deduplicated, and the subscription counts
+        messages after the newest sequence number at this moment. Adding a set that
+        exists is a no-op. Any registered identity. Side effects: stores the set.
+        Idempotency-Key: a repeat with the same key and body returns the first
+        answer. Source: spec 4.4 and 4.5, ADR 0008.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
@@ -982,8 +1118,17 @@ paths:
       operationId: unsubscribeTags
       summary: "Remove a tag subscription: one AND set of tag patterns"
       tags: [channels]
+      description: >-
+        Removes one tag subscription, named by its set of patterns: repeat the
+        pattern parameter once for each pattern. The patterns are normalized as
+        subscribeTags does (lowercase, order and duplicates ignored), so the set is
+        found however it is spelled; removing a set that does not exist is a no-op
+        that still answers 204. Any registered identity. Side effects: deletes the
+        set. Idempotency-Key: a repeat with the same key and body returns the first
+        answer. Source: spec 4.4 and 4.5, ADR 0008.
       parameters:
         - name: pattern
+          example: [deploy-*]
           in: query
           required: true
           style: form
@@ -998,7 +1143,8 @@ paths:
               description: >-
                 At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
             maxItems: 10
-          description: At most 10 items.
+          description: >-
+            A pattern of the set to remove; repeat the parameter once for each pattern. A pattern is a tag, or a tag prefix followed by an asterisk, and the patterns together name the set exactly as subscribeTags stored it. At most 10 items.
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       responses:
         "204":
@@ -1020,6 +1166,28 @@ paths:
       operationId: sendMessage
       summary: "Send a message to a channel"
       tags: [messages]
+      description: >-
+        Appends one message to a channel and returns its sequence number. Needs
+        write on the channel (the channel ACL's write permission): without it 403
+        forbidden, and a channel that does not exist or lies outside a scoped
+        caller's scope is 404 not_found. content is required; the whole message may
+        not exceed max_message_kib (default 64). The subject is trimmed and must be
+        one line; tags are lowercased, deduplicated and sorted. A reply_to must name
+        an existing message of the same channel (404 not_found, 400 validation); on
+        a channel with a live Slack bridge a reply to a reply is stored as a reply
+        to its thread root. A task list refuses messages (400 validation). session,
+        when given, must be the caller's own live session: another identity's is 404
+        not_found, a closed or lapsed one 410. On a memory channel the message
+        becomes revision 1 of a new memory and memory_id is returned. The sender's
+        rate limit (send_messages_per_second and send_kib_per_second, per identity)
+        answers 429 rate_limited with Retry-After. When a write inspector is
+        configured the content is judged first: a refusal is 422
+        inspection_rejected, and an inspector that cannot answer is 503 unavailable
+        under inspection_on_failure closed. Side effects: appends the message, wakes
+        the watches of its subscribers and, on a memory channel, queues the memory
+        for embedding. Idempotency-Key: a repeat with the same key and body returns
+        the first answer and appends nothing; the same key with a different body is
+        409 conflict. Source: spec 3.4 and 4.6, ADR 0008, ADR 0009, ADR 0013.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -1063,10 +1231,26 @@ paths:
       operationId: history
       summary: "Read a window of a channel's messages"
       tags: [messages]
+      description: >-
+        Reads messages of one channel, oldest first, in a window of sequence
+        numbers. With before alone it returns the newest messages below it; with
+        after alone, the first messages above it; with both, those strictly between;
+        with neither, the oldest messages of the channel. At most count messages
+        (default receive_default_count, 100; above receive_max_count the server
+        returns at most that many), cut to result_default_kib; when the window holds
+        more, the messages nearest before or after survive. thread keeps the message
+        with that sequence number and the messages that reply to it; tags keeps the
+        messages whose tags satisfy every pattern. Messages that retention removed
+        or that were deleted are not returned. Needs read on the channel (the
+        channel ACL's read permission): without it 403 forbidden, and a channel that
+        does not exist or lies outside a scoped caller's scope is 404 not_found.
+        Writes nothing and moves no cursor. No idempotency key: a read has nothing
+        to repeat. Source: spec 3.2 and 4.6, ADR 0008.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - name: before
-          description: "Return messages with a sequence number below this one; alone, the newest messages below it"
+          description: "Return messages with a sequence number below this one; alone, the newest messages below it (returned oldest first), together with after the exclusive upper end of the window"
+          example: 50
           in: query
           required: false
           schema:
@@ -1075,7 +1259,8 @@ paths:
             minimum: 0
             maximum: 9223372036854775807
         - name: after
-          description: "Return messages with a sequence number above this one, oldest first"
+          description: "Return messages with a sequence number above this one, oldest first; together with before the exclusive lower end of the window"
+          example: 40
           in: query
           required: false
           schema:
@@ -1084,6 +1269,7 @@ paths:
             minimum: 0
             maximum: 9223372036854775807
         - name: count
+          example: 20
           in: query
           required: false
           schema:
@@ -1093,8 +1279,9 @@ paths:
             maximum: 10000
             x-go-type: int
           description: >-
-            At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
+            The most messages to return; absent or 0 means receive_default_count (100 by default). At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
         - name: thread
+          example: 41
           in: query
           required: false
           description: Only the message with this sequence number and the messages whose reply_to is it.
@@ -1104,6 +1291,7 @@ paths:
             minimum: 1
             maximum: 9223372036854775807
         - name: tags
+          example: [deploy-prod]
           in: query
           required: false
           style: form
@@ -1117,7 +1305,8 @@ paths:
               description: >-
                 At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
             maxItems: 10
-          description: At most 10 items.
+          description: >-
+            Only messages whose tags satisfy every pattern, each pattern matching one of the message's tags; a pattern is a tag, or a tag prefix followed by an asterisk. Comma separated. At most 10 items.
       responses:
         "200":
           description: Messages of the channel.
@@ -1127,6 +1316,32 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Message"
+              example:
+                - seq: 41
+                  channel: release-train
+                  sender: acme-coder-1
+                  sender_kind: agent
+                  session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+                  display: acme-coder-1/builder
+                  created_at: 1794092400000
+                  type: status
+                  subject: Build 42 started
+                  content: Build 42 started on main.
+                  tags: [deploy-prod, build-42]
+                - seq: 42
+                  channel: release-train
+                  sender: acme-coder-1
+                  sender_kind: agent
+                  session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+                  display: acme-coder-1/builder
+                  created_at: 1794096000000
+                  type: status
+                  subject: Build 42 is green
+                  content: Build 42 is green on main; deploying to staging.
+                  reply_to: 41
+                  metadata:
+                    build: "42"
+                  tags: [deploy-prod, build-42]
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1144,37 +1359,63 @@ paths:
       operationId: search
       summary: "Search the messages of the channels the caller may read"
       tags: [messages]
+      description: >-
+        Searches the messages of the channels the caller may read, or of the one
+        channel named (which must exist and be readable: 404 not_found, 403
+        forbidden). q is required: words are ANDed, word* matches a prefix and a
+        double-quoted run is a phrase; a query with no word is 400 validation. Text
+        matching looks at the subject and the content. mode is text, semantic (the
+        embedded memories, ranked by similarity) or both (text and semantic merged
+        by reciprocal rank fusion); absent it is both where the server has an
+        embedding provider, else text. When semantic or both cannot use the
+        provider, the hits are the text matches and semantic_unavailable is true.
+        since and until bound created_at (Unix milliseconds, inclusive), sender and
+        thread narrow the matches, and tags keeps messages whose tags satisfy every
+        pattern. A page holds count hits (default 100, at most 1000), cut to
+        result_default_kib; next names the following page and is passed back as
+        cursor. Any registered identity, over the channels its ACL's read permission
+        covers. Side effects: records an access time on the memories among the hits
+        (a memory's expiry counts from it); no message is written. No idempotency
+        key: a search has nothing to repeat. Source: spec 5.4, ADR 0008.
       parameters:
         - name: q
+          example: build 42
           in: query
           required: false
           schema:
             type: string
             maxLength: 1024
-          description: At most 1024 code points.
+          description: >-
+            The query, required in practice (an absent or blank q is 400 validation): words that must all match, word* for a prefix and a double-quoted phrase. At most 1024 code points.
         - name: mode
-          description: "text, semantic or both; default: both where the server has an embedding provider, else text"
+          description: "text matches the subject and content, semantic ranks the embedded memories by similarity, both merges the two; default: both where the server has an embedding provider, else text"
+          example: text
           in: query
           required: false
           schema:
             type: string
             enum: [text, semantic, both]
         - name: channel
+          example: release-train
           in: query
           required: false
           schema:
             type: string
             maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: >-
+            Search this channel only; it must exist and the caller must be able to read it. Absent: every channel the caller may read. At most 128 bytes (the server counts bytes).
         - name: sender
+          example: acme-coder-1
           in: query
           required: false
           schema:
             type: string
             maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: >-
+            Only messages sent by this identity. At most 128 bytes (the server counts bytes).
         - name: since
           description: "Only messages created at or after this time, in milliseconds since the Unix epoch"
+          example: 1794096000000
           in: query
           required: false
           schema:
@@ -1184,6 +1425,7 @@ paths:
             maximum: 9223372036854775807
         - name: until
           description: "Only messages created at or before this time, in milliseconds since the Unix epoch"
+          example: 1825632000000
           in: query
           required: false
           schema:
@@ -1193,6 +1435,7 @@ paths:
             maximum: 9223372036854775807
         - name: thread
           description: "Only the message with this sequence number and the replies to it"
+          example: 41
           in: query
           required: false
           schema:
@@ -1201,6 +1444,7 @@ paths:
             minimum: 1
             maximum: 9223372036854775807
         - name: tags
+          example: [deploy-prod]
           in: query
           required: false
           style: form
@@ -1214,8 +1458,10 @@ paths:
               description: >-
                 At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
             maxItems: 10
-          description: At most 10 items.
+          description: >-
+            Only messages whose tags satisfy every pattern, each pattern matching one of the message's tags; a pattern is a tag, or a tag prefix followed by an asterisk. Comma separated. At most 10 items.
         - name: count
+          example: 20
           in: query
           required: false
           schema:
@@ -1224,15 +1470,18 @@ paths:
             minimum: 0
             maximum: 1000
             x-go-type: int
-          description: At most 1000.
+          description: >-
+            The most hits in a page; absent or 0 means 100. At most 1000.
         - name: cursor
+          example: "0000000000000000041"
           in: query
           required: false
           schema:
             type: string
             maxLength: 19
             pattern: ^[0-9]+$
-          description: At most 19 code points (digits).
+          description: >-
+            Where the page starts: the next member of the previous page's result, a decimal offset into the ranked hits; absent starts at the first hit, and an offset past the last hit returns no hits. At most 19 code points (digits).
       responses:
         "200":
           description: Search hits.
@@ -3063,8 +3312,8 @@ components:
         ack_ignored: false
         gaps:
           - channel: release-train
-            from: 30
-            to: 41
+            from: 20
+            to: 35
         notice: "agentmesh storage is over budget: sqlite_budget_mib=2048 MiB holds 2100 MiB (disk 2300 MiB, 1.12x); orphaned and expired rows, idle task lists and memories, and ordinary messages older than 1 hour are being deleted to make room"
         instruction: 'Pass ack="fedcba9876543210fedcba98:o1" on your next receive to acknowledge this batch.'
       description: "One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice and an instruction."
@@ -3260,30 +3509,45 @@ components:
         status:
           $ref: "#/components/schemas/AgentStatus"
     Channel:
+      example:
+        name: acme-ops
+        kind: ordinary
+        capabilities: [bridged]
       description: "What a caller sees of a channel it may list: name, kind and capabilities."
       type: object
       required: [name, kind, capabilities]
       properties:
         name:
           type: string
+          description: "The channel name: 1 to 128 bytes, no slash."
         kind:
           type: string
           enum: [ordinary, memory, tasks]
+          description: "ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it."
         capabilities:
           type: array
           items:
             type: string
           description: "Traits of the channel; a value present means the trait applies. Known: bridged (a live Slack bridge). Clients ignore values they do not know."
     ChannelInfo:
+      example:
+        name: acme-ops
+        kind: ordinary
+        capabilities: [bridged]
+        creator: acme-coder-1
+        scope: acme
+        created_at: 1794096000000
       description: "The creator's view of a channel on creation and the administrator's view on status: name, kind, capabilities, creator, scope and creation time."
       type: object
       required: [name, kind, creator, created_at, capabilities]
       properties:
         name:
           type: string
+          description: "The channel name: 1 to 128 bytes, no slash."
         kind:
           type: string
           enum: [ordinary, memory, tasks]
+          description: "ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it."
         capabilities:
           type: array
           items:
@@ -3291,12 +3555,18 @@ components:
           description: "Traits of the channel; a value present means the trait applies. Known: bridged (a live Slack bridge). Clients ignore values they do not know."
         creator:
           type: string
+          description: "The identity that created the channel; empty for general, which the server creates itself."
         scope:
           type: string
+          description: "The scope the channel belongs to; absent when it has none. A scoped channel is named <scope>-<rest>."
         created_at:
           type: integer
           format: int64
+          description: "When the channel was created, in Unix milliseconds."
     ACLEntry:
+      example:
+        identity: acme-coder-1
+        permissions: [read, write, admin]
       description: Grants a list of permissions on a channel to one identity.
       type: object
       additionalProperties: false
@@ -3305,7 +3575,7 @@ components:
         identity:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "A registered identity, or one of the groups everyone (any identity), admins (administrators) or humans (identities of kind human). At most 128 bytes (the server counts bytes)."
         permissions:
           type: array
           items:
@@ -3313,8 +3583,16 @@ components:
             enum: [read, write, admin]
           maxItems: 3
           minItems: 1
-          description: At least 1 and at most 3 items.
+          description: "What the identity may do: read (subscribe, receive, history, search), write (send) and admin (read and replace the ACL, rename and delete the channel). The entries of one identity add up. At least 1 and at most 3 items."
     CreateChannelRequest:
+      example:
+        name: release-train
+        kind: ordinary
+        acl:
+          - identity: acme-coder-1
+            permissions: [read, write, admin]
+          - identity: everyone
+            permissions: [read]
       description: "Creates a channel: its name, kind, an optional access control list and an optional scope."
       type: object
       additionalProperties: false
@@ -3323,21 +3601,24 @@ components:
         name:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The new channel's name: no slash, and <scope>-<rest> in a scope. A name already taken is 409 conflict. At most 128 bytes (the server counts bytes)."
         kind:
           type: string
           enum: [ordinary, memory, tasks]
+          description: "ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it. Absent means ordinary."
         acl:
           type: array
           items:
             $ref: "#/components/schemas/ACLEntry"
           maxItems: 256
-          description: At most 256 items.
+          description: "The channel's ACL; absent means the server's default_acl, and an empty array stores no entries, so only administrators reach the channel. At most 256 items."
         scope:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "Administrators only: the scope the channel belongs to, which must exist and not be done, and whose prefix the name must start with. Absent means the creator's own scope, or none for an unscoped creator. At most 128 bytes (the server counts bytes)."
     RenameChannelRequest:
+      example:
+        name: release-train-archive
       description: Renames a channel to a new name.
       type: object
       additionalProperties: false
@@ -3346,8 +3627,10 @@ components:
         name:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The new name, under the rules of a new channel's name. At most 128 bytes (the server counts bytes)."
     SubscribeRequest:
+      example:
+        from: oldest
       description: Subscribes the caller to a channel, from now or from the oldest retained message.
       type: object
       additionalProperties: false
@@ -3355,7 +3638,10 @@ components:
         from:
           type: string
           enum: [now, oldest]
+          description: "Where the subscription starts: now (the default) delivers only messages after the newest sequence number at this moment, oldest delivers from the oldest retained message. An existing subscription keeps its position."
     TagPatterns:
+      example:
+        patterns: [deploy-*]
       description: A tag subscription, which is one AND set of tag patterns.
       type: object
       additionalProperties: false
@@ -3370,8 +3656,17 @@ components:
             description: >-
               At most 33 code points: a tag, or a prefix of at most 32 characters followed by an asterisk.
           maxItems: 10
-          description: At most 10 items.
+          description: "The patterns of the set: a message matches it when each pattern matches one of its tags. A pattern is a tag, or a tag prefix followed by an asterisk; the server lowercases, sorts and deduplicates them. At most 10 items."
     SendRequest:
+      example:
+        subject: Build 42 is green
+        content: Build 42 is green on main; deploying to staging.
+        type: status
+        reply_to: 41
+        metadata:
+          build: "42"
+        tags: [deploy-prod, build-42]
+        session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
       description: "Sends a message to a channel: subject, content, an optional reply-to sequence number, metadata, tags and the sending session."
       type: object
       additionalProperties: false
@@ -3380,21 +3675,22 @@ components:
         subject:
           type: string
           maxLength: 200
-          description: At most 200 code points.
+          description: "A one-line subject; surrounding space is trimmed and a line break is 400 validation. At most 200 code points."
         content:
           type: string
           maxLength: 1048576
           description: >-
-            At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
+            The text of the message; required and not empty. At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
         type:
           type: string
           maxLength: 256
-          description: At most 256 code points.
+          description: "A label the sender chooses to classify the message, such as status; free-form and not interpreted by the server. At most 256 code points."
         reply_to:
           type: integer
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "The sequence number of the message this one replies to. It must exist (404 not_found) and be on the same channel (400 validation); on a channel with a live Slack bridge a reply to a reply is stored as a reply to the thread root. Absent: not a reply."
         metadata:
           type: object
           additionalProperties:
@@ -3403,7 +3699,7 @@ components:
             description: At most 1024 code points.
           maxProperties: 32
           description: >-
-            At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
+            Free-form string pairs delivered with the message. At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
         tags:
           type: array
           items:
@@ -3413,12 +3709,15 @@ components:
             description: >-
               At most 32 code points of letters, digits and hyphen with one optional colon; the server lowercases tags.
           maxItems: 10
-          description: At most 10 items.
+          description: "Labels for filtering and for tag subscriptions; the server lowercases, deduplicates and sorts them. At most 10 items."
         session:
           type: string
           maxLength: 1024
-          description: At most 1024 bytes.
+          description: "The id of the sender's own live session, which attaches the session and its display name to the message: another identity's session is 404 not_found, a closed or lapsed one 410. Absent: no session is attached. At most 1024 bytes."
     SendResult:
+      example:
+        seq: 42
+        memory_id: 42
       description: The sequence number of the new message and, on a memory channel, its memory id.
       type: object
       required: [seq]
@@ -3426,10 +3725,29 @@ components:
         seq:
           type: integer
           format: int64
+          description: "The new message's sequence number, from the one counter of the whole server."
         memory_id:
           type: integer
           format: int64
+          description: "On a memory channel, the id of the memory the message created (equal to seq); absent on an ordinary channel."
     SearchHit:
+      example:
+        message:
+          seq: 42
+          channel: release-train
+          sender: acme-coder-1
+          sender_kind: agent
+          session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+          display: acme-coder-1/builder
+          created_at: 1794096000000
+          type: status
+          subject: Build 42 is green
+          content: Build 42 is green on main; deploying to staging.
+          reply_to: 41
+          metadata:
+            build: "42"
+          tags: [deploy-prod, build-42]
+        score: 0
       description: A message with its search score.
       type: object
       required: [message, score]
@@ -3439,7 +3757,28 @@ components:
         score:
           type: number
           format: double
+          description: "The rank score: 0 for a text match (text hits come newest first and carry no score), the similarity of a semantic match, or the reciprocal-rank-fusion score in both mode."
     SearchResult:
+      example:
+        hits:
+          - message:
+              seq: 42
+              channel: release-train
+              sender: acme-coder-1
+              sender_kind: agent
+              session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+              display: acme-coder-1/builder
+              created_at: 1794096000000
+              type: status
+              subject: Build 42 is green
+              content: Build 42 is green on main; deploying to staging.
+              reply_to: 41
+              metadata:
+                build: "42"
+              tags: [deploy-prod, build-42]
+            score: 0
+        next: "1"
+        semantic_unavailable: true
       description: One page of search hits, the cursor of the next page and whether semantic search was unavailable.
       type: object
       required: [hits]
@@ -3448,10 +3787,13 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchHit"
+          description: "The page of hits in rank order: newest first for a text search, best score first otherwise."
         next:
           type: string
+          description: "The cursor of the next page: pass it as cursor to continue. Absent on the last page."
         semantic_unavailable:
           type: boolean
+          description: "True when semantic or both was asked for and could not be used (no embedding provider is configured, or it failed), so the hits are the text matches; absent otherwise."
     EditMemoryRequest:
       type: object
       description: >-
