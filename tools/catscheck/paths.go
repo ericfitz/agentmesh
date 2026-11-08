@@ -58,6 +58,19 @@ func ChangedPaths(old, new *yaml.Node) (paths []string, docOnly bool, err error)
 			break
 		}
 	}
+	// Security schemes are reached by name from security, not by $ref, so a
+	// change to one affects every request.
+	if !bytes.Equal(canonical(member(section(o, "components"), "securitySchemes")),
+		canonical(member(section(n, "components"), "securitySchemes"))) {
+		otherDiff = true
+		all := pathNames(np)
+		if len(all) == 0 {
+			all = pathNames(op)
+		}
+		for _, p := range all {
+			set[p] = true
+		}
+	}
 	for _, p := range unionNames(op, np) {
 		// Every $ref is validated, even under a path that changed directly.
 		hit, err := refsChanged(o, n, member(op, p), member(np, p))

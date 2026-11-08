@@ -25,6 +25,11 @@ func withOrphan(t *testing.T, s, typ string) string {
 	return edit(t, s, orphanAnchor, "  schemas2:\n    Orphan:\n      type: "+typ+"\n"+orphanAnchor)
 }
 
+// withScheme adds components.securitySchemes.bearerAuth of the given type.
+func withScheme(t *testing.T, s, typ string) string {
+	return edit(t, s, "  parameters:\n    Limit:", "  securitySchemes:\n    bearerAuth:\n      type: "+typ+"\n  parameters:\n    Limit:")
+}
+
 const idProp = "        id:\n          type: string\n        description:"
 
 func TestChangedPaths(t *testing.T) {
@@ -67,6 +72,8 @@ func TestChangedPaths(t *testing.T) {
 		{"ref_cycle_terminates", cycleBase, edit(t, cycleBase, idProp, "        id:\n          type: integer\n        description:"), both, false, false},
 		{"parameter_change_widens", spec, edit(t, spec, "type: integer", "type: string"), []string{"/v1/things"}, false, false},
 		{"response_change_widens", spec, edit(t, spec, "    NotFound:\n      description: Not found.", "    NotFound:\n      description: Not found.\n      headers:\n        X-A:\n          schema:\n            type: string"), both, false, false},
+		{"security_scheme_change_is_every_path", withScheme(t, spec, "http"), withScheme(t, spec, "apiKey"), both, false, false},
+		{"component_removed_from_referenced_name", spec, edit(t, spec, "    NotFound:\n      description: Not found.\n", ""), both, false, false},
 		{"component_added_to_referenced_name", edit(t, spec, "    NotFound:\n      description: Not found.\n", ""), spec, both, false, false},
 		{"property_named_description_change", spec, edit(t, spec, "                description:\n                  type: string", "                description:\n                  type: integer"), []string{"/v1/things"}, false, false},
 	}
