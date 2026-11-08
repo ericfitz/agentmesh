@@ -188,6 +188,23 @@ func CheckKty(v any) error {
 	return nil
 }
 
+// MaxJWKMemberBytes bounds the crv, x, y and kid members of a JWK a client
+// submits (a thumbprint and a P-256 or Ed25519 coordinate are 43 bytes; issue
+// #30, a plan ruling).
+const MaxJWKMemberBytes = 64
+
+// CheckJWKMembers' companion: CheckJWKStrings refuses a crv, x, y or kid
+// string longer than MaxJWKMemberBytes; a member that is not a string is left
+// to the JWK parser.
+func CheckJWKStrings(m map[string]any) error {
+	for _, name := range []string{"crv", "x", "y", "kid"} {
+		if v, ok := m[name].(string); ok && len(v) > MaxJWKMemberBytes {
+			return fmt.Errorf("keys: JWK %s is %d bytes, at most %d", name, len(v), MaxJWKMemberBytes)
+		}
+	}
+	return nil
+}
+
 // FromJWK extracts a public key from a JWK. A JWK with no key, private material, an unsupported
 // key type, a kid that is not the key's thumbprint and an alg naming the other
 // algorithm are errors.

@@ -101,7 +101,9 @@ probe schemas/TaskPatch.subject task_patch_subject_runes
 except schemas/CreateBridgeRequest.channel CreateBridge answers unavailable on a harness with no bridge wired, so the bound check is unreachable on the local transport
 except schemas/CreateBridgeRequest.slack_name CreateBridge answers unavailable on a harness with no bridge wired, so the bound check is unreachable on the local transport
 except schemas/JWK registration is not a Bus method; only the handler registers a key (TestRegisterRefusesWideJWK covers it)
-except schemas/JWK.kty registration is not a Bus method; only the handler registers a key (TestRegisterRefusesLongKty covers it)
+except schemas/JWK.kid registration is not a Bus method; only the handler registers a key (TestRegisterRefusesLongJWKMembers covers it)
+except schemas/JWK.x registration is not a Bus method; only the handler registers a key (TestRegisterRefusesLongJWKMembers covers it)
+except schemas/JWK.y registration is not a Bus method; only the handler registers a key (TestRegisterRefusesLongJWKMembers covers it)
 except schemas/RegisterRequest.enrollment_token registration is not a Bus method (TestRegisterEnrollmentTokenBound covers the core service)
 except schemas/RegisterRequest.identity registration is not a Bus method; the handler is the only path
 except schemas/TokenRequest.actor_token the token endpoint is not a Bus method (TestTokenFormBounds and TestCheckTokenFormBounds cover it)

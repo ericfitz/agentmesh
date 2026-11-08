@@ -178,7 +178,9 @@ var bounds = map[string]bound{
 	"schemas/EditMemoryRequest.type":           labelBound("editMemory type"),
 
 	"schemas/JWK":     {MaxProps: n(keys.MaxJWKMembers), Unit: keysUnit, Source: "keys.MaxJWKMembers"},
-	"schemas/JWK.kty": {MaxLength: n(keys.MaxKtyBytes), Unit: bytesUnit, Source: "keys.CheckKty"},
+	"schemas/JWK.kid": {MaxLength: n(keys.MaxJWKMemberBytes), Unit: bytesUnit, Source: "keys.CheckJWKStrings"},
+	"schemas/JWK.x":   {MaxLength: n(keys.MaxJWKMemberBytes), Unit: bytesUnit, Source: "keys.CheckJWKStrings"},
+	"schemas/JWK.y":   {MaxLength: n(keys.MaxJWKMemberBytes), Unit: bytesUnit, Source: "keys.CheckJWKStrings"},
 
 	"schemas/OfferedCursor.channel": nameBound("offered cursor channel"),
 	"schemas/OfferedCursor.seq":     seqBound("offered cursor seq"),
@@ -396,7 +398,7 @@ func TestSpecBounds(t *testing.T) {
 		}
 	})
 
-	// Ruling 5: the request side keeps the six enums it had; the core-owned
+	// Ruling 5: the request side keeps the six enums it had (the JWK key type and curve joined in issue #30, the members keys.AlgorithmOf accepts); the core-owned
 	// vocabularies (task statuses, token grant types) stay strings so the
 	// core's own messages are what a client sees. The status tag gained its
 	// enum in issue #30 (CATS: the spec presented a refused value as a free
@@ -410,6 +412,8 @@ func TestSpecBounds(t *testing.T) {
 			"schemas/ACLEntry.permissions[]",
 			"schemas/CreateChannelRequest.kind",
 			"schemas/DoneScopeRequest.retire",
+			"schemas/JWK.crv",
+			"schemas/JWK.kty",
 			"schemas/SetAgentStatusRequest.tag",
 			"schemas/SubscribeRequest.from",
 		}
