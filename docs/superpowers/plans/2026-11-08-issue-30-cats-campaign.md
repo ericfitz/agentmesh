@@ -638,3 +638,23 @@ git commit -m "test(gates): selftest block 40, the catscheck and pre-commit gate
 - `git config core.hooksPath .githooks`, then a documentation edit of `api/openapi.yaml` commits at once with `documentation-only`; a `required:` edit regenerates, fuzzes the widened paths and either commits with `no finding` or lists what blocked it.
 - `/cats:report` on the final database answers the four acceptance queries empty, and `api/cats-false-positives.yaml` explains every suppressed cluster in its `why`.
 - The Open items answered or defaulted, labeled as such, in ADR 0018.
+
+Round 2 (2026-11-08, `.superpowers/sdd/2026-11-08-issue-30-cats-campaign/task-7-round2.md`): 40 rules recorded (9c4c45a, 04b56a7, 642682a, 9cf4581); Q1, Q1b, Q2 empty; Q3 holds SG6 and SG7 only. Controller rulings:
+- Ruling 37: SG6 is a spec gap: `JWK` gets `required: [kty]` (RFC 7517 section 4.1; the server already refuses a key without it).
+- Ruling 38: SG7 (`TaskPatch` with `delete` plus another member answers 400) is a recorded false-positive rule citing the `TaskPatch` description; a `oneOf` would turn the generated Go type into a union for one prose rule — cost if wrong: Eric prefers the schema form (Open item 9).
+- Ruling 39: the harness's report leak scan looks for the campaign's own bearers and credentials (the exact minted values, matched with `grep -F -f` from a 0600 file inside the harness directory, never printed), not for token-shaped patterns: the spec's example tokens and the documented `enrollment_token` in `createAgentIdentity` answers are expected content.
+
+Open item 9 (Eric): SG7 as a `oneOf` in `TaskPatch` instead of rule. Default: the rule.
+
+### Task 8.4: harness follow-ups from round 2 (`scripts/cats-harness.sh`, its selftest)
+
+**Disposition:** harness defect. **Evidence:** round-2 report section 6 and Step 8.
+- Ruling 39's leak scan (the selftest's leak cases plant the real minted bearer's value, and a planted spec-example JWT must not fire).
+- `seed` re-applies `acl_both` to `cats-acl` on every run (an earlier pass may have emptied it), and the refData for `PUT /v1/channels/{channel}/acl` sends both entries (`acl[*]`), so the agent's PUT can succeed.
+- The refData for `POST /v1/channels/{channel}/tasks` removes `parent` (`cats_remove_field`) so its HappyPath can succeed.
+- Gates: both selftests twice, shellcheck, `make release-lint`, `make lint`. Commit `fix(cats): harness follows round 2 (issue #30)`.
+
+### Task 8.5: SG6 (`api/openapi.yaml` `JWK.required: [kty]`, `make generate`)
+
+One commit `fix(spec): JWK requires kty (issue #30, CATS OnlyRequiredFields)` with a reproducing test (a register request whose JWK lacks `kty` is refused by the validator), the issue #29/#34/#35 checks green, protocol 1.0.0.
+
