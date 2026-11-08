@@ -5140,9 +5140,16 @@ components:
         alg: EdDSA
         use: sig
       type: object
+      x-go-type: map[string]interface{}
+      required: [kty]
+      properties:
+        kty:
+          type: string
+          maxLength: 16
+          description: "The key type (RFC 7517 section 4.1), for example OKP or EC. At most 16 bytes."
       additionalProperties: true
       maxProperties: 16
-      description: "A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own."
+      description: "A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own."
     JWKS:
       example:
         keys:

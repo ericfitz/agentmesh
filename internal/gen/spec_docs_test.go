@@ -503,7 +503,7 @@ func TestSpecDescriptions(t *testing.T) {
 
 // propertyCount is what countProperties reports over the component schemas
 // (every property reached through inline schemas, `$ref` members included).
-const propertyCount = 322
+const propertyCount = 323
 
 // ---- JSON-level checks over every example and description ----
 

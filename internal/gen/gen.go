@@ -1129,8 +1129,8 @@ type Identity struct {
 // IdentityKind Whether the identity is an agent or a human.
 type IdentityKind string
 
-// JWK A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own.
-type JWK map[string]interface{}
+// JWK A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own.
+type JWK = map[string]interface{}
 
 // JWKS A JSON Web Key Set: the active signing key and any retiring key that still verifies the bearers it signed.
 type JWKS struct {
@@ -1332,7 +1332,7 @@ type RegisterRequest struct {
 	// Identity The identity name to claim: it must have no credential yet. At most 128 bytes (the server counts bytes).
 	Identity string `json:"identity"`
 
-	// PublicKeyJwk A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own.
+	// PublicKeyJwk A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own.
 	PublicKeyJwk JWK `json:"public_key_jwk"`
 }
 

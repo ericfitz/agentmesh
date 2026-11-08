@@ -171,6 +171,23 @@ func CheckJWKMembers(n int) error {
 	return nil
 }
 
+// MaxKtyBytes bounds the kty member of a JWK a client submits (RFC 7517
+// section 4.1 names OKP, EC, RSA and oct; issue #30, a plan ruling).
+const MaxKtyBytes = 16
+
+// CheckKty refuses a JWK whose kty is missing, not a string or longer than
+// MaxKtyBytes.
+func CheckKty(v any) error {
+	kty, ok := v.(string)
+	if !ok || kty == "" {
+		return errors.New("keys: JWK has no kty")
+	}
+	if len(kty) > MaxKtyBytes {
+		return fmt.Errorf("keys: JWK kty is %d bytes, at most %d", len(kty), MaxKtyBytes)
+	}
+	return nil
+}
+
 // FromJWK extracts a public key from a JWK. A JWK with no key, private material, an unsupported
 // key type, a kid that is not the key's thumbprint and an alg naming the other
 // algorithm are errors.

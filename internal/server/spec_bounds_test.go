@@ -177,7 +177,8 @@ var bounds = map[string]bound{
 	"schemas/EditMemoryRequest.tags[]":         tagItemBound("editMemory tags"),
 	"schemas/EditMemoryRequest.type":           labelBound("editMemory type"),
 
-	"schemas/JWK": {MaxProps: n(keys.MaxJWKMembers), Unit: keysUnit, Source: "keys.MaxJWKMembers"},
+	"schemas/JWK":     {MaxProps: n(keys.MaxJWKMembers), Unit: keysUnit, Source: "keys.MaxJWKMembers"},
+	"schemas/JWK.kty": {MaxLength: n(keys.MaxKtyBytes), Unit: bytesUnit, Source: "keys.CheckKty"},
 
 	"schemas/OfferedCursor.channel": nameBound("offered cursor channel"),
 	"schemas/OfferedCursor.seq":     seqBound("offered cursor seq"),

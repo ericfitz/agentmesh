@@ -68,7 +68,7 @@ func walkRequests(doc *openapi3.T) (leaves map[string]leaf, enums []string) {
 		case isType(s, "array"):
 			kind = "array"
 		case isType(s, "object") && (s.AdditionalProperties.Schema != nil ||
-			(s.AdditionalProperties.Has != nil && *s.AdditionalProperties.Has && len(s.Properties) == 0)):
+			(s.AdditionalProperties.Has != nil && *s.AdditionalProperties.Has)):
 			kind = "map"
 		}
 		if kind != "" {
