@@ -273,6 +273,34 @@ func TestMainClassify(t *testing.T) {
 			})
 		}
 	})
+	t.Run("unknown_result_refused", func(t *testing.T) {
+		// A record whose result is neither success, warn nor error is not
+		// dropped: exit 2, naming the value.
+		dir := t.TempDir()
+		b, err := os.ReadFile(filepath.Join(rep, "Test1.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rec map[string]any
+		if err := json.Unmarshal(b, &rec); err != nil {
+			t.Fatal(err)
+		}
+		rec["result"] = "skipped"
+		b, err = json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "Test1.json"), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out, errb bytes.Buffer
+		if code := run([]string{"classify", "--rules", valid, dir}, &out, &errb); code != 2 {
+			t.Fatalf("exit %d, want 2 (stdout %q stderr %q)", code, out.String(), errb.String())
+		}
+		if !strings.Contains(errb.String(), `unknown result "skipped"`) {
+			t.Errorf("stderr %q does not name the value", errb.String())
+		}
+	})
 	t.Run("tsv_and_cap", func(t *testing.T) {
 		var out, errb bytes.Buffer
 		code := run([]string{"classify", "--rules", starter, "--max-lines", "2", covered}, &out, &errb)

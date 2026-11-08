@@ -40,8 +40,13 @@ func classifyCmd(args []string, stdout, stderr io.Writer) int {
 			errs++
 		case "warn":
 			warns++
-		default:
+		case "success":
 			continue
+		default:
+			// An unknown result is never dropped: a CATS version that adds one
+			// must be looked at (Definition of Done B).
+			say(stderr, fmt.Sprintf("catscheck: unknown result %q on %s %s (%s); want success, warn or error\n", rec.Result, clean.Replace(rec.Method), clean.Replace(rec.Path), clean.Replace(rec.Fuzzer)))
+			return 2
 		}
 		fp, id, violation := Classify(rules, rec)
 		switch {
