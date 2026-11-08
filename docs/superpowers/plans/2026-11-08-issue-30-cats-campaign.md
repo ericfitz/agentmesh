@@ -502,7 +502,7 @@ SELECT v.test_id, v.path, v.response_code FROM test_results_view v JOIN tests t 
 WHERE r.response_body LIKE '%eyJ%' OR r.response_body LIKE '%abe_%' OR r.response_body LIKE '%goroutine %' OR r.response_body LIKE '%.go:%' OR r.response_body LIKE '%BEGIN PRIVATE KEY%';
 ```
 
-Q4 covers error and warn bodies only (the database stores no `success` body), so the raw report is also scanned before `retain_raw_report: false` deletes it: `cats:run` with `retain_raw_report: true` for the first campaign, then `for f in .local/cats/results/report-<run>/Test*.json; do jq -r 'select((.response.body // "") | tostring | test("eyJ[A-Za-z0-9_-]{20,}|abe_[A-Za-z0-9_-]{20,}|goroutine [0-9]+|\\.go:[0-9]+")) | .testId' "$f"; done` must print nothing.
+Q4 covers error and warn bodies only (the database stores no `success` body), so the raw report is also scanned before `retain_raw_report: false` deletes it: `cats:run` with `retain_raw_report: true` for the first campaign, then `for f in .local/cats/results/report-<run>/Test*.json; do jq -r 'select((.response.jsonBody // "") | tostring | test("eyJ[A-Za-z0-9_-]{20,}|abe_[A-Za-z0-9_-]{20,}|goroutine [0-9]+|\\.go:[0-9]+")) | .testId' "$f"; done` must print nothing.
 
 - [ ] **Step 4: Triage with `cats:analyze`** (per run). Every cluster `(path, fuzzer, response_code)` gets exactly one disposition with its evidence, in the skill's order: every 5xx first (real bug, no exception but Open item 1), then real bugs, spec gaps, false-positive candidates. Open items 2 and 4 are presented to Eric with their counts at this point, one question at a time, each with the default; execution continues on the default if he has not answered.
 
@@ -533,7 +533,38 @@ Q4 covers error and warn bodies only (the database stores no `success` body), so
 
 ### Tasks 8.N (appended by the controller during Task 7)
 
-*(empty until Task 7 runs; each appended task follows the template above and is dispatched like any other task)*
+TRIAGE=`.superpowers/sdd/2026-11-08-issue-30-cats-campaign/task-7-triage.md` (git-ignored; the first campaign of 2026-11-08: admin 20261108T141137Z, agent 20261108T141502Z, three Step 2b runs; every run valid; catscheck agrees with the plugin on all six).
+
+Controller rulings on the triage (2026-11-08; Eric may overrule):
+- Ruling 32: RB1, RB2 and RB3 are real bugs and are fixed (RB3 is Open item 4's real-bug candidate; the `[forbidden]` and `[notice]` keyword clusters are false-positive rules after reading the bodies).
+- Ruling 33: SG1 to SG5 are spec gaps fixed in the spec; SG5 marks `q` `required: true` (the spec follows the server, no behavior change).
+- Ruling 34: FP16 (missing security response headers) is recorded as a false-positive rule, and a small header middleware is Open item 7 for Eric; adding headers is outside the issue's acceptance criteria.
+- Ruling 35: CATS pseudo-code 954 (read timeout) is treated like 953 and 999: excluded from Q1, allowed in rules (it is above 599, so ruling 6 permits it).
+- Ruling 36: the Step 3 and Step 2 text is corrected as the triage's section 6 found: the raw scan reads `.response.jsonBody`; Q4 escapes `_` (`LIKE '%abe\_%' ESCAPE '\'`) and treats `enrollment_token` in the documented `createAgentIdentity` 200 body as expected; Q2 excludes HEAD answers and net/http's own `text/plain` 400s; the agent pass covers every path of `cats list -p -c api/openapi.yaml` not under `/v1/admin/` (30 paths, the three `/.well-known/*` included).
+
+Open item 7 (Eric): a response-header middleware (`X-Content-Type-Options: nosniff`, `Cache-Control: no-store`) instead of rule FP16. Default: the rule.
+
+### Task 8.1: harness fixes from the first campaign (`scripts/cats-harness.sh`, its selftest)
+
+**Disposition:** harness defect. **Evidence:** TRIAGE section 6, items a, e, f, g.
+- a: the seed writes `verify_url` as a path (`/v1/...`), as the plugin joins it onto `server` (`catslib/runner.py:144`); the harness's own post-run fixture check prefixes the server URL. `.local/cats/seed-wrap.sh` then becomes unnecessary (the controller removes it from `.local/cats/config.yaml`).
+- e: `acl_both` on all six seeded channels, so the administrator pass reaches messages and subscription; the agent pass's loss of `admin` on `cats-acl` after its own `PUT .../acl` is a recorded rule (Task 7 Step 6), not a harness change.
+- f: `seed` re-creates any decoy that is gone (a deleted memory gets a new id, a removed channel is re-created) and writes the live ids into the refData and `fixtures.json`; a second `seed` with every decoy alive keeps the same ids.
+- g: `SERVER_SETS` adds `signing_key_rotation_cooldown_seconds=1`; the seed registers a throwaway identity `cats-victim` (key in the harness directory) and the refData maps `/v1/admin/identities/{identity}/reset-credential` `identity` to it.
+- Selftest cases for a (path form), f (a deleted decoy is re-created, an alive one keeps its id) and g (the setting and the refData entry); the recorded expectations follow.
+- Gates: both selftests twice, shellcheck, `make release-lint`, `make lint`. Commit `fix(cats): harness follows the first campaign (issue #30)`.
+
+### Task 8.2: server error answers (RB2, RB3, RB1; `internal/server/server.go`)
+
+**Disposition:** real bugs. **Evidence:** TRIAGE section 3 items 1 to 3 (repro shapes there). One commit per root cause, in this order, each with a reproducing test that failed before the fix (Definition of Done A and B):
+- RB2: the validation `detail` names the JSON pointer and the reason only; never the schema, never the submitted value. Test: no `detail` of a refused request contains `Schema:`, `Value:` or the submitted value (table over a body field, a query parameter and a path parameter). Search for the other places that format a kin error.
+- RB3: a missing or invalid bearer on a protected operation answers 401 with a fixed detail (`a bearer token is required`); `authErrorFrom` errors keep their text.
+- RB1: a JSON request body must be exactly one JSON value (trailing data, a second value: 400 `validation`); the token endpoint keeps its RFC 6749 body. Test over the triage's two shapes.
+- Touchpoints: `TestStatusTable`, the respcheck-wired tests, the e2e. Gates: `go test ./internal/server/... ./internal/e2e/`, `make lint`, `make verify`.
+
+### Task 8.3: spec gaps SG1 to SG5 (`api/openapi.yaml`, `make generate`)
+
+**Disposition:** spec gaps. **Evidence:** TRIAGE section 3 items 4 to 8. One commit per gap: SG1 quote `"off"` (and add a `TestOperationShape`-style guard that no enum member is a YAML 1.1 boolean word); SG2 `enum` on `SetAgentStatusRequest.tag` (the seven settable tags; `TestSpecBounds` row; the core list is the source); SG3 `minProperties: 1` on `EditMemoryRequest`; SG4 a real Ed25519 `JWK` example whose `kid` is its RFC 7638 thumbprint, the rule stated in the description, and a test that the example registers (the e2e replay already replays `register`; check it); SG5 `q` `required: true` on `search`. Each passes `TestSpecDescriptions`, `TestSpecExamples`, `TestWireRoundTrip`, `TestToolCoverage` and `TestRequestExamples`; the protocol stays 1.0.0. Gates: `make generate-check`, `make spec-lint`, `make lint`, `make verify`.
 
 ---
 
