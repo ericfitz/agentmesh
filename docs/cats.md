@@ -4,7 +4,7 @@ A repeatable fuzzing campaign for the HTTP API (issue #30, ADR 0018). It is a de
 
 ## What is fuzzed and why
 
-`api/openapi.yaml` declares 57 operations, and the server validates every request and every answer against it. [CATS](https://github.com/Endava/cats) (version 15.4.0) reads the same document and sends each operation thousands of malformed, boundary and hostile requests. The campaign holds that for every operation (the two bridges paths excepted, see The exceptions):
+`api/openapi.yaml` declares 57 operations, and the server validates every request against it and the tests validate every answer (`internal/respcheck`, test-only). [CATS](https://github.com/Endava/cats) (version 15.4.0) reads the same document and sends each operation thousands of malformed, boundary and hostile requests. The campaign holds that for every operation (the two bridges paths excepted, see The exceptions):
 
 - no 5xx other than the documented 503 (and the net/http transport 501; a 500 is a must-fix bug, ADR 0001 "No-500 rule");
 - every error is `application/problem+json` with `code` and `retryable` (the token endpoint's RFC 6749 body excepted);
@@ -129,7 +129,7 @@ Enable it once per clone: `git config core.hooksPath .githooks`. `.githooks/pre-
 2. It exports the staged tree (`git checkout-index`) into a temporary directory and runs everything from there, never from the working tree (the staged tree is the only source). `git stash` is never used.
 3. `tools/catscheck changed-paths` compares HEAD's spec with the staged one after stripping `description`, `summary`, `example`, `examples` and `externalDocs` by position (a property named `description` is kept). A documentation-only change prints `cats-precommit: documentation-only change to api/openapi.yaml; skipping CATS` and the commit goes through at once; a difference that reaches no path prints `no path is affected ... skipping CATS`.
 4. Otherwise it checks that `internal/gen` is fresh for the staged spec (`make generate` in the export; a difference fails with `run make generate and stage internal/gen`), widens the changed paths through `$ref` (a changed shared schema, parameter or response reaches every path that references it; a change to `servers`, `security` or `openapi` reaches every path), and runs the harness: the non-skipped paths in one run, each skipped destructive path in its own run with `--no-skip`; the bridges paths are dropped with a notice.
-5. It classifies each report. With no finding it prints `cats-precommit: no finding; <summary>` and the commit goes through. With findings it prints them, keeps the reports in `.local/cats/precommit/<stamp>/`, and fails the commit; fix the cause or record false positives with `cats:fp`.
+5. It classifies each report. With no finding it prints `cats-precommit: no finding; <summary>` and the commit goes through. With findings it prints them, keeps the reports in `.local/cats/precommit/<stamp>/` (the newest 5 stamps stay), and fails the commit; fix the cause or record false positives with `cats:fp`.
 
 Cost: a spec change that is not documentation pays a build, `make generate` and an estimated 1 to 10 minutes of fuzzing (a change that widens to every path runs up to four campaigns, an estimated 12 minutes; these are plan estimates, not measurements). The hook fails closed when `cats`, `jq`, `go` or `curl` is missing, naming `brew install endava/tap/cats`. `git commit --no-verify` bypasses the hook entirely.
 
