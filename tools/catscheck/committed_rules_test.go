@@ -50,6 +50,37 @@ func TestCommittedRules(t *testing.T) {
 			}
 		}
 	}
+	// A FakeCatsFuzzer record must match no rule at code 400 nor at any code
+	// a rule that constrains the fuzzer names (a code-only rule such as the
+	// starter 429 and 999 ones suppresses every fuzzer at that code by design).
+	codes := map[int]bool{400: true}
+	for _, r := range rules {
+		blocks := r.AnyOf
+		if r.When != nil {
+			blocks = append(blocks, r.When)
+		}
+		for _, b := range blocks {
+			hasFuzzer := false
+			for _, c := range b {
+				hasFuzzer = hasFuzzer || c.field == "fuzzer"
+			}
+			for _, c := range b {
+				if hasFuzzer && c.field == "response_code" {
+					for _, v := range codeValues(t, r.ID, c) {
+						codes[v] = true
+					}
+				}
+			}
+		}
+	}
+	for code := range codes {
+		fake := Record{Result: "error", ResponseCode: code, Fuzzer: "FakeCatsFuzzer", RequestHeaders: map[string]string{}}
+		for _, r := range rules {
+			if Match(r, fake) {
+				t.Errorf("%s: matches a FakeCatsFuzzer record with code %d", r.ID, code)
+			}
+		}
+	}
 	if len(rules) == 0 {
 		t.Error("no rules")
 	}

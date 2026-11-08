@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +76,26 @@ func TestLoadReport(t *testing.T) {
 			t.Errorf("no warning for invalid JSON: %q", warn.String())
 		}
 	})
+	t.Run("missing_ten_fields", func(t *testing.T) {
+		d := t.TempDir()
+		src, _ := os.ReadFile(filepath.Join("testdata", "report", "Test1.json"))
+		for _, k := range []string{"traceId", "expectedResult", "server"} {
+			var m map[string]any
+			if err := json.Unmarshal(src, &m); err != nil {
+				t.Fatal(err)
+			}
+			delete(m, k)
+			b, _ := json.Marshal(m)
+			if err := os.WriteFile(filepath.Join(d, "Test"+k+"1.json"), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var warn bytes.Buffer
+		recs, err := loadReport(d, &warn)
+		if err != nil || len(recs) != 0 || strings.Count(warn.String(), "missing fields") != 3 {
+			t.Fatalf("%v %d %q", err, len(recs), warn.String())
+		}
+	})
 	t.Run("missing_dir", func(t *testing.T) {
 		if _, err := loadReport(filepath.Join(t.TempDir(), "none"), &bytes.Buffer{}); err == nil {
 			t.Error("a missing directory loaded")
@@ -87,6 +108,7 @@ func TestPyJSON(t *testing.T) {
 		`{"b":1,"a":[true,null,"x"],"c":{}}`: `{"b": 1, "a": [true, null, "x"], "c": {}}`,
 		`"é\n\u0001/😀"`:                      `"\u00e9\n\u0001/\ud83d\ude00"`,
 		`[1.0, 1e2, 0.5, 1e16, 1.5e-7, -0]`:  `[1.0, 100.0, 0.5, 1e+16, 1.5e-07, 0]`,
+		"\"a\x7fb\"":                         `"a\u007fb"`,
 		`[12345678901234567890]`:             `[12345678901234567890]`,
 	} {
 		if got := pyJSON([]byte(in)); got != want {
@@ -232,6 +254,7 @@ func TestMainClassify(t *testing.T) {
 			{"no_rules_flag", []string{"classify", rep}, 2, ""},
 			{"no_report_dir", []string{"classify", "--rules", valid}, 2, ""},
 			{"extra_argument", []string{"classify", "--rules", valid, rep, rep}, 2, ""},
+			{"empty_report_dir", []string{"classify", "--rules", valid, t.TempDir()}, 2, ""},
 			{"bad_max_lines", []string{"classify", "--rules", valid, "--max-lines", "x", rep}, 2, ""},
 			{"negative_max_lines", []string{"classify", "--rules", valid, "--max-lines", "-1", rep}, 2, ""},
 		}
@@ -240,6 +263,9 @@ func TestMainClassify(t *testing.T) {
 				var out, errb bytes.Buffer
 				if code := run(c.args, &out, &errb); code != c.code {
 					t.Fatalf("exit %d, want %d (stdout %q stderr %q)", code, c.code, out.String(), errb.String())
+				}
+				if c.name == "empty_report_dir" && !strings.Contains(errb.String(), "no CATS test records in") {
+					t.Errorf("stderr %q", errb.String())
 				}
 				if !strings.Contains(out.String(), c.out) {
 					t.Errorf("stdout %q lacks %q", out.String(), c.out)

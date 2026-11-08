@@ -86,6 +86,8 @@ func TestLoadRulesRejects(t *testing.T) {
 		{"enabled_not_bool", "    enabled: 'false'\n    when: {response_code: 1}\n", "'enabled' must be a boolean"},
 		{"tags_not_list", "    tags: x\n    when: {response_code: 1}\n", "'tags' must be a list"},
 		{"tag_not_string", "    tags: [1]\n    when: {response_code: 1}\n", "must be strings"},
+		{"timestamp_operand", "    when: {path: {contains: 2026-01-01T00:00:00Z}}\n", "unsupported value"},
+		{"timestamp_in_list", "    when: {path: {contains_any: [2026-01-01]}}\n", "unsupported value"},
 		{"unknown_operator_in_any_of", "    any_of: [{path: {nope: 1}}]\n", "unknown operator"},
 	}
 	for _, c := range cases {
@@ -194,6 +196,8 @@ func TestMatch(t *testing.T) {
 			{"{path: {ends_with: v1}}", none, false},
 		}},
 		{"matches", []chk{
+			{"{request_headers: {contains: \"'accept': 'application/json'\"}}", none, true}, // str(dict)
+			{"{request_headers: {contains: nope}}", none, false},
 			{"{path: {matches: 'v1/chan'}}", none, true}, // search, not full match
 			{"{path: {matches: '^chan'}}", none, false},
 			{"{path: {matches: 'CHANNELS$'}}", none, true}, // case-insensitive

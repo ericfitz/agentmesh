@@ -27,6 +27,10 @@ func classifyCmd(args []string, stdout, stderr io.Writer) int {
 		say(stderr, fmt.Sprintf("catscheck: %s: %v\n", fs.Arg(0), err))
 		return 2
 	}
+	if len(recs) == 0 {
+		say(stderr, fmt.Sprintf("catscheck: no CATS test records in %s\n", fs.Arg(0)))
+		return 2
+	}
 	var errs, warns, suppressed, findings, printed, more int
 	used := map[string]bool{}
 	clean := strings.NewReplacer("\t", " ", "\n", " ", "\r", " ")

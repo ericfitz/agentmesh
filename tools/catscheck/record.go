@@ -39,7 +39,7 @@ type Record struct {
 }
 
 // requiredFields are the members a Test*.json must carry to be usable.
-var requiredFields = []string{"testId", "scenario", "result", "fuzzer", "path", "request", "response"}
+var requiredFields = []string{"testId", "traceId", "scenario", "expectedResult", "result", "fuzzer", "path", "server", "request", "response"}
 
 // secretHeaders are redacted to a digest, as the plugin does, so a rule can
 // never depend on a credential's value.
@@ -305,7 +305,7 @@ func pyString(s string, sb *strings.Builder) {
 			sb.WriteString(`\f`)
 		case r < 0x20:
 			fmt.Fprintf(sb, `\u%04x`, r)
-		case r < 0x7f || r == 0x7f:
+		case r < 0x7f:
 			sb.WriteRune(r)
 		case r >= 0x10000:
 			a, b := utf16.EncodeRune(r)

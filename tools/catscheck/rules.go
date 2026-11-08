@@ -13,11 +13,23 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The rule vocabulary is the cats plugin's (catslib/rules.py); the engine
-// differs only where Go's RE2 differs from Python's re (see ruling 4): rules
-// keep to the common regex subset. A pattern RE2 refuses (lookahead,
-// lookbehind, backreference, possessive quantifier, atomic group) is a load
-// error here.
+// The rule vocabulary is the cats plugin's (catslib/rules.py).
+//
+// Deviations from rules.py:
+//   - Regexes are RE2, not Python re (ruling 4): a pattern RE2 refuses
+//     (lookahead, lookbehind, backreference, possessive quantifier, atomic
+//     group) is a load error; `$` matches only at the end of the text (Python
+//     also before a trailing newline); \d, \w, \s are ASCII.
+//   - A text operator on the bare `json_body` field sees a map with sorted
+//     keys, where Python prints insertion order (Go decodes into a map);
+//     use `response_body` for text matching of the whole body.
+//   - Duplicate JSON keys in a response body are kept in `response_body`,
+//     where Python's json.loads collapses them.
+//   - yaml.v3 follows YAML 1.2: `yes`/`no`/`on`/`off` are strings, not
+//     booleans, so `enabled: yes` is a load error here (PyYAML: True) and
+//     `equals: yes` compares a string. Write true and false.
+//   - A YAML value with no Python str() port (a timestamp) is a load error.
+//   - Top-level keys other than version and rules are a load error.
 
 var scalarFields = map[string]bool{
 	"result": true, "response_code": true, "fuzzer": true, "path": true,
@@ -256,6 +268,31 @@ func validField(name string) bool {
 	return false
 }
 
+// checkValue refuses a YAML value no Python str() port exists for (a
+// timestamp, for one): PyYAML would give a date object there.
+func checkValue(v any) error {
+	switch t := v.(type) {
+	case nil, bool, int, int64, uint64, float64, string:
+		return nil
+	case []any:
+		for _, e := range t {
+			if err := checkValue(e); err != nil {
+				return err
+			}
+		}
+		return nil
+	case map[string]any, map[any]any:
+		m, _, _ := strMap(t)
+		for _, e := range m {
+			if err := checkValue(e); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("unsupported value %v of type %T (quote it to make it a string)", v, v)
+}
+
 func parseBlock(v any, where string) ([]cond, error) {
 	m, ok, bad := strMap(v)
 	if !ok || len(m) == 0 {
@@ -270,6 +307,9 @@ func parseBlock(v any, where string) ([]cond, error) {
 			return nil, fmt.Errorf("%s: unknown field %q", where, name)
 		}
 		spec := m[name]
+		if err := checkValue(spec); err != nil {
+			return nil, fmt.Errorf("%s: field %q: %v", where, name, err)
+		}
 		c := cond{field: name}
 		if sm, isMap, badOp := strMap(spec); isMap {
 			if badOp != "" {
@@ -431,6 +471,12 @@ func pyRepr(v any) string {
 			parts[i] = pyRepr(e)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
+	case map[string]string:
+		m := make(map[string]any, len(t))
+		for k, val := range t {
+			m[k] = val
+		}
+		return pyRepr(m)
 	case map[string]any, map[any]any:
 		m, _, _ := strMap(t)
 		var parts []string
@@ -473,8 +519,10 @@ func pyStr(v any) string {
 			}
 		}
 		return s
+	case []any, map[string]any, map[any]any, map[string]string:
+		return pyRepr(v)
 	}
-	return pyRepr(v)
+	return fmt.Sprint(v)
 }
 
 // fieldValue resolves a vocabulary field of a record, or missingT.
