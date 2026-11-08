@@ -1290,7 +1290,7 @@ paths:
           example: 41
           in: query
           required: false
-          description: Only the message with this sequence number and the messages whose reply_to is it.
+          description: Only the message with this sequence number and the messages whose reply_to is it. The other filters still apply, so a root without the requested tags is left out (the example answer holds two replies).
           schema:
             type: integer
             format: int64
@@ -4736,17 +4736,17 @@ components:
             display_name: acme-coder-1/builder
             opened_at: 1794096000000
         channels:
-          - name: general
-            kind: ordinary
-            capabilities: []
-            creator: ""
-            created_at: 1794092400000
           - name: acme-ops
             kind: ordinary
             capabilities: [bridged]
             creator: acme-coder-1
             scope: acme
             created_at: 1794096000000
+          - name: general
+            kind: ordinary
+            capabilities: []
+            creator: ""
+            created_at: 1794092400000
         notices:
           - kind: capacity
             message: "agentmesh storage is over budget: sqlite_budget_mib=2048 MiB holds 2200 MiB (disk 2400 MiB, 1.09x); orphaned and expired rows, idle task lists and memories, and ordinary messages older than 1 hour are being deleted to make room"

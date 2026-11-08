@@ -21,7 +21,11 @@ package e2e_test
 // example fails. The answer must have the row's documented status, pass the
 // validating proxy (runMain's final checks) and have the shape of the
 // effective response example: every member of the live body is in the
-// example with the same JSON kind (the reverse is not required).
+// example with the same JSON kind (the reverse is not required), and an
+// array the example fills is not empty unless the row lists it in emptyOK.
+//
+// The test runs once per process: the fixtures are process-wide, so -count=2
+// fails at register.
 
 import (
 	"bytes"
@@ -77,9 +81,12 @@ type exRow struct {
 	slack       bool
 	status      int
 	noBearer    bool
-	live        map[string]liveFn
-	setup       func(c *replay)
-	after       func(c *replay, body any)
+	// emptyOK lists JSON pointers into the answer whose array may be empty
+	// although the example's is not; each needs a reason in the row's comment.
+	emptyOK []string
+	live    map[string]liveFn
+	setup   func(c *replay)
+	after   func(c *replay, body any)
 }
 
 func lit(v any) liveFn { return func(*replay) any { return v } }
@@ -273,13 +280,17 @@ func exampleRows() []exRow {
 		{op: "createScope", status: 200},
 		{op: "createAgentIdentity", status: 200},
 		{op: "listScopes", status: 200},
-		{op: "getScope", status: 200},
+		{op: "getScope", status: 200,
+			setup: func(c *replay) {
+				c.must(http.MethodPost, "/v1/channels", map[string]any{"name": "acme-plans", "scope": "acme"}, http.StatusCreated)
+			}},
 		{op: "createIdentityByEmail", status: 200},
-		// The example names acme-builder, which never registered a key: the
-		// reset answers 200 with keys_removed 0. The replay identity
+		// The example names acme-builder: the identity row exists (the
+		// createAgentIdentity row made it) and holds no key, so the reset
+		// answers 200 with keys_removed 0. The replay identity
 		// acme-coder-1 is never reset (it would lose its key).
 		{op: "resetCredential", status: 200},
-		{op: "createChannel", status: 201},
+		{op: "createChannel", status: 201, emptyOK: []string{"/capabilities"}}, // capabilities appear only on a bridged channel
 		{op: "listChannels", status: 200},
 		{op: "setACL", status: 204},
 		{op: "getACL", status: 200},
@@ -292,7 +303,8 @@ func exampleRows() []exRow {
 				c.resume = memberStr(c.t, body, "resume_token")
 			}},
 		{op: "openSession", example: "resume", status: 201,
-			live: map[string]liveFn{"/body/resume_token": func(c *replay) any { return c.resume }},
+			emptyOK: []string{"/rejected_cursors"}, // a resume sends no cursors, so none is rejected
+			live:    map[string]liveFn{"/body/resume_token": func(c *replay) any { return c.resume }},
 			after: func(c *replay, body any) {
 				c.sessionID = memberStr(c.t, body, "id")
 				c.resume = memberStr(c.t, body, "resume_token")
@@ -314,6 +326,7 @@ func exampleRows() []exRow {
 		{op: "watch", status: 200,
 			live: with(sessionPath, "/query/after", func(c *replay) any { return c.reply - 1 })},
 		{op: "receive", status: 200,
+			emptyOK: []string{"/gaps"}, // gaps appear only after budget eviction deletes unread messages
 			setup: func(c *replay) {
 				path := "/v1/sessions/" + c.sessionID + "/receive"
 				out := c.must(http.MethodPost, path, map[string]any{"include_own": true}, http.StatusOK)
@@ -334,7 +347,13 @@ func exampleRows() []exRow {
 			"/query/after":  func(c *replay) any { return c.reply - 1 },
 			"/query/before": func(c *replay) any { return c.sent + 1 },
 		}},
-		{op: "search", status: 200, live: map[string]liveFn{"/query/thread": func(c *replay) any { return c.reply }}},
+		{op: "search", status: 200, live: map[string]liveFn{
+			"/query/thread": func(c *replay) any { return c.reply },
+			// The example cursor is an offset that skips every hit here; 0 starts at the first.
+			"/query/cursor": lit("0"),
+			// A fixed until in the example would pass in 2027 and stop matching.
+			"/query/until": func(c *replay) any { return time.Now().Add(24 * time.Hour).UnixMilli() },
+		}},
 		{op: "getMemory", status: 200,
 			setup: func(c *replay) {
 				c.must(http.MethodPost, "/v1/channels", map[string]any{"name": "release-notes", "kind": "memory"}, http.StatusCreated)
@@ -379,7 +398,14 @@ func exampleRows() []exRow {
 		// ChannelParam's example is release-train, renamed by the row before.
 		{op: "deleteChannel", status: 204, live: map[string]liveFn{"/path/channel": lit(archiveName)}},
 		{op: "closeSession", status: 204, live: sessionPath},
-		{op: "adminStatus", status: 200},
+		{op: "adminStatus", status: 200,
+			// The replay session is closed by now; keep another open.
+			setup: func(c *replay) {
+				c.must(http.MethodPost, "/v1/sessions", map[string]any{"hint": "status"}, http.StatusCreated)
+			},
+			// notices are capacity warnings (the replay never fills the store);
+			// capabilities appear only on a bridged channel (the bridge is on fixture 2).
+			emptyOK: []string{"/notices", "/channels/0/capabilities"}},
 		{op: "adminUsage", status: 200},
 		{op: "listSigningKeys", status: 200},
 		// The fixture's cooldown is 1 s from the key's creation; revoke_previous
@@ -387,6 +413,7 @@ func exampleRows() []exRow {
 		{op: "rotateSigningKey", status: 200, setup: func(*replay) { time.Sleep(1100 * time.Millisecond) }},
 		{op: "doneScope", status: 200},
 		{op: "createBridge", slack: true, status: 200,
+			emptyOK: []string{"/not_invited"}, // the replay registers dana in the Slack fake, so every invite succeeds
 			setup: func(c *replay) {
 				c.registerAndLogin(c.tg, replayName)
 				c.makeAdmin(c.tg, replayName)
@@ -439,7 +466,7 @@ func specOps(doc *openapi3.T) map[string]specOp {
 }
 
 // requestMedia is the operation's request media type (nil without a body).
-func requestMedia(op *openapi3.Operation) (string, *openapi3.MediaType) {
+func requestMedia(t testing.TB, op *openapi3.Operation) (string, *openapi3.MediaType) {
 	if op.RequestBody == nil || op.RequestBody.Value == nil {
 		return "", nil
 	}
@@ -451,15 +478,18 @@ func requestMedia(op *openapi3.Operation) (string, *openapi3.MediaType) {
 	if len(names) == 0 {
 		return "", nil
 	}
+	if len(names) > 1 {
+		t.Fatalf("%s has %d request media types; the replay sends one", op.OperationID, len(names))
+	}
 	return names[0], op.RequestBody.Value.Content[names[0]]
 }
 
 // coverageKeys are the row keys the document requires: one per named request
 // example, else one per operation.
-func coverageKeys(doc *openapi3.T) []string {
+func coverageKeys(t testing.TB, doc *openapi3.T) []string {
 	var keys []string
 	for id, s := range specOps(doc) {
-		_, mt := requestMedia(s.op)
+		_, mt := requestMedia(t, s.op)
 		if mt != nil && len(mt.Examples) > 0 {
 			for name := range mt.Examples {
 				keys = append(keys, rowKey(id, name))
@@ -530,8 +560,10 @@ func kindOf(v any) string {
 
 // shapeCheck is ruling 9: every member of live (recursively; the first
 // element of a non-empty array against the first element of the example's)
-// is in example with the same JSON kind. Values are not compared.
-func shapeCheck(t testing.TB, live, example any, path string) {
+// is in example with the same JSON kind. Values are not compared. An empty
+// live array where the example's is not fails unless its JSON pointer is in
+// emptyOK: an empty answer checks nothing, so it must be a decision.
+func shapeCheck(t testing.TB, live, example any, path, ptr string, emptyOK map[string]bool) {
 	t.Helper()
 	if kindOf(live) != kindOf(example) {
 		t.Errorf("member %s is %s in the live body and %s in the example", path, kindOf(live), kindOf(example))
@@ -555,18 +587,21 @@ func shapeCheck(t testing.TB, live, example any, path string) {
 				t.Errorf("member %s of the live body is not in the example", name)
 				continue
 			}
-			shapeCheck(t, l[k], ev, name)
+			shapeCheck(t, l[k], ev, name, ptr+"/"+k, emptyOK)
 		}
 	case []any:
 		e := example.([]any)
 		if len(l) == 0 {
+			if len(e) > 0 && !emptyOK[ptr] {
+				t.Errorf("member %s is an empty array in the live body and the example's is not (%s is not in the row's emptyOK)", path, ptr)
+			}
 			return
 		}
 		if len(e) == 0 {
 			t.Errorf("member %s is a non-empty array in the live body and an empty one in the example", path)
 			return
 		}
-		shapeCheck(t, l[0], e[0], path+"[0]")
+		shapeCheck(t, l[0], e[0], path+"[0]", ptr+"/0", emptyOK)
 	}
 }
 
@@ -658,7 +693,7 @@ func (c *replay) buildRequest(s specOp, row exRow, n int) *http.Request {
 		header["Idempotency-Key"] += "-" + strconv.Itoa(n)
 	}
 	var body any
-	mediaType, mt := requestMedia(s.op)
+	mediaType, mt := requestMedia(t, s.op)
 	if mt != nil {
 		body = effectiveExample(mt, row.example)
 		if body == nil {
@@ -814,7 +849,7 @@ func TestRequestExamples(t *testing.T) {
 		for _, r := range rows {
 			have[rowKey(r.op, r.example)]++
 		}
-		want := coverageKeys(doc)
+		want := coverageKeys(t, doc)
 		wantSet := map[string]bool{}
 		for _, k := range want {
 			wantSet[k] = true
@@ -862,11 +897,18 @@ func TestRequestExamples(t *testing.T) {
 				t.Fatalf("%s %s: status %d, want %d: %v", req.Method, req.URL.Path, status, row.status, body)
 			}
 			if row.status == http.StatusNoContent {
+				if s.op.Responses.Status(row.status) == nil {
+					t.Fatalf("%s documents no 204 response", s.id)
+				}
 				if body != nil {
 					t.Fatalf("a 204 answer has a body: %v", body)
 				}
 			} else {
-				shapeCheck(t, body, responseExample(t, s, row.status), "")
+				ok := map[string]bool{}
+				for _, p := range row.emptyOK {
+					ok[p] = true
+				}
+				shapeCheck(t, body, responseExample(t, s, row.status), "", "", ok)
 				if t.Failed() {
 					t.FailNow()
 				}

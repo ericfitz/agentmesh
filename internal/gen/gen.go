@@ -1962,7 +1962,7 @@ type HistoryParams struct {
 	// Count The most messages to return; absent or 0 means receive_default_count (100 by default). At most 10000, the largest value of receive_max_count; above the configured receive_max_count the server returns at most that many.
 	Count *int `form:"count,omitempty" json:"count,omitempty"`
 
-	// Thread Only the message with this sequence number and the messages whose reply_to is it.
+	// Thread Only the message with this sequence number and the messages whose reply_to is it. The other filters still apply, so a root without the requested tags is left out (the example answer holds two replies).
 	Thread *int64 `form:"thread,omitempty" json:"thread,omitempty"`
 
 	// Tags Only messages whose tags satisfy every pattern, each pattern matching one of the message's tags; a pattern is a tag, or a tag prefix followed by an asterisk. Comma separated. At most 10 items.
