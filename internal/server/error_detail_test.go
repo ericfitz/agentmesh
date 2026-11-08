@@ -114,3 +114,20 @@ func TestTrailingJSONRefused(t *testing.T) {
 		t.Errorf("token endpoint: %d %+v %v", resp.StatusCode, oe, err)
 	}
 }
+
+// TestPatternDetailIsPlain: a pattern refusal names the rule in one line and
+// never the submitted string (the validator quotes it: 'bad tag' does not
+// match pattern).
+func TestPatternDetailIsPlain(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.identity("pat", false)
+	resp := e.raw("pat", newReq(t, "GET", "/v1/channels/dev/messages?tags="+secretValue+"%20x", nil))
+	p := readProblem(t, resp)
+	d := detailText(p)
+	if resp.StatusCode != 400 && resp.StatusCode != 404 {
+		t.Fatalf("got %d %q", resp.StatusCode, d)
+	}
+	if strings.Contains(d, "SECRETVALUE") || strings.Contains(d, "jsonschema validation failed") || strings.Contains(d, "\n") {
+		t.Errorf("detail %q", d)
+	}
+}

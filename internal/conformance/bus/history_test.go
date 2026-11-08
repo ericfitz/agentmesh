@@ -100,8 +100,12 @@ func TestHistoryValidationMessagesArePlain(t *testing.T) {
 		if !errors.As(err, &be) || be.Code != ab2bus.CodeValidation {
 			t.Fatalf("err = %v, want a validation error", err)
 		}
-		if strings.HasPrefix(be.Message, "{") || strings.Contains(be.Message, `\"code\"`) || !strings.Contains(be.Message, `"bad tag"`) {
+		if strings.HasPrefix(be.Message, "{") || strings.Contains(be.Message, `\"code\"`) || !strings.Contains(be.Message, "does not match pattern") {
 			t.Errorf("message = %q, want plain text naming the pattern", be.Message)
+		}
+		// RB2 (issue #30): the detail never echoes the submitted value.
+		if strings.Contains(be.Message, "bad tag") {
+			t.Errorf("message = %q, echoes the submitted value", be.Message)
 		}
 	})
 }

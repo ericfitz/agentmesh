@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -54,7 +55,7 @@ func collectDetail(err error, where string, parts *[]string) {
 			*parts = append(*parts, prefixed(where, requestErrorReason(e)))
 		}
 	case *openapi3.SchemaError:
-		reason := e.Reason
+		reason := plainReason(e.Reason, e.Value)
 		switch {
 		case e.SchemaField == "additionalProperties" || strings.HasSuffix(reason, "is unsupported"):
 			// The reason names the submitted member.
@@ -77,6 +78,24 @@ func collectDetail(err error, where string, parts *[]string) {
 			*parts = append(*parts, prefixed(where, err.Error()))
 		}
 	}
+}
+
+// jsonschemaPreamble is the wrapper kin-openapi puts around a message of the
+// JSON Schema 2020-12 validator, with the pointer it repeats.
+var jsonschemaPreamble = regexp.MustCompile(`(?s)^jsonschema validation failed with '[^']*'\n- at '[^']*': `)
+
+// plainReason strips the validator's wrapper from reason and replaces the
+// submitted string, which the validator's messages quote ('bad tag' does not
+// match pattern ...), with "the value".
+func plainReason(reason string, value any) string {
+	reason = jsonschemaPreamble.ReplaceAllString(reason, "")
+	reason = strings.ReplaceAll(reason, "\n- at '", "; at '")
+	if v, ok := value.(string); ok && v != "" {
+		for _, q := range []string{"'", `"`} {
+			reason = strings.ReplaceAll(reason, q+v+q, "the value")
+		}
+	}
+	return reason
 }
 
 // requestErrorReason is the fixed wording of a request error that carries no

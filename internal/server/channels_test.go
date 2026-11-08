@@ -323,8 +323,10 @@ func TestUnsubscribeTagsCommaIsOnePattern(t *testing.T) {
 	if r.StatusCode() != 400 || len(r.Body) == 0 || problemOf(t, r.Body).Code != gen.ProblemCode("validation") {
 		t.Fatalf("comma pattern: %d %s, want 400 validation about the one pattern", r.StatusCode(), r.Body)
 	}
-	if !strings.Contains(string(r.Body), "a,b") {
-		t.Fatalf("the core did not see the one pattern a,b: %s", r.Body)
+	// The detail never echoes the submitted value (issue #30, RB2); the
+	// request line below proves the pattern went out as the one value a,b.
+	if !strings.Contains(string(r.Body), "does not match pattern") {
+		t.Fatalf("the refusal does not name the pattern rule: %s", r.Body)
 	}
 	rec.mu.Lock()
 	got := rec.paths[len(rec.paths)-1]
