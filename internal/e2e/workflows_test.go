@@ -37,6 +37,7 @@ type wfRunner struct {
 	r        *arazzotest.Runner
 	audience string
 	prefix   string // "" or "slack:"
+	ran      map[string]bool
 }
 
 // run runs one workflow as a subtest named name; a failure ends the sequence,
@@ -44,6 +45,10 @@ type wfRunner struct {
 func (w *wfRunner) run(t *testing.T, name, id string, in map[string]any) map[string]any {
 	t.Helper()
 	var out map[string]any
+	if w.ran == nil {
+		w.ran = map[string]bool{}
+	}
+	w.ran[id] = true
 	ok := t.Run(w.prefix+name, func(t *testing.T) {
 		res, err := w.r.Run(context.Background(), id, in)
 		if err != nil {
@@ -179,7 +184,7 @@ func TestArazzoWorkflows(t *testing.T) {
 			t.Fatal(err)
 		}
 		req.Header.Set("Authorization", "Bearer "+jroot)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 		if err != nil {
 			return false
 		}
@@ -202,4 +207,11 @@ func TestArazzoWorkflows(t *testing.T) {
 	})
 	two.run(t, "bridges-inbound-remove", "bridges-inbound-remove", map[string]any{
 		"admin_bearer": jroot, "channel": "j9wf-room", "after": seq})
+
+	// Every workflow of the document ran against one server or the other.
+	for _, wf := range doc.Workflows {
+		if !one.ran[wf.ID] && !two.ran[wf.ID] {
+			t.Errorf("workflow %s of api/arazzo.yaml was run against neither fixture", wf.ID)
+		}
+	}
 }
