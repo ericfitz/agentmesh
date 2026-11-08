@@ -1054,6 +1054,17 @@ func TestRegisterRefusesWideJWK(t *testing.T) {
 // A store outage behind an ordinary operation is a 503 problem+json whose
 // detail is one fixed sentence: never the driver's text ("sql: database is
 // closed", or pgx's connect error naming the user, database and host).
+// Without an issuer, jwks is a configuration state, not an outage: 503
+// unavailable, retryable false (issuerUnavailable).
+func TestJwksWithoutIssuerIsNotRetryable(t *testing.T) {
+	e := newEnv(t, envOptions{registration: identities.ModeOpen})
+	resp := e.do("GET", "/v1/auth/jwks", "", "", "")
+	p := readProblem(t, resp)
+	if resp.StatusCode != 503 || p.Code != "unavailable" || p.Retryable {
+		t.Fatalf("%d %+v, want 503 unavailable retryable=false", resp.StatusCode, p)
+	}
+}
+
 const storeUnavailableText = "the store is temporarily unavailable"
 
 func TestStoreOutageDetailIsFixed(t *testing.T) {

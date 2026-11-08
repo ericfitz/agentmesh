@@ -13,10 +13,12 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/assertion"
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
+	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/core/sessions"
 	"github.com/ericfitz/agentmesh/internal/core/tasks"
+	"github.com/ericfitz/agentmesh/internal/gen"
 	"github.com/ericfitz/agentmesh/internal/slackapi"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
@@ -419,6 +421,24 @@ func TestSpecBounds(t *testing.T) {
 		}
 		if fmt.Sprint(enums) != fmt.Sprint(want) {
 			t.Errorf("request enums %v, want %v (ruling 5)", enums, want)
+		}
+		// The status tag's enum is bus.SettableStatusTags, member for member
+		// (Spec and the generated type both).
+		var spec, generated, source []string
+		for _, m := range Spec().Components.Schemas["SetAgentStatusRequest"].Value.Properties["tag"].Value.Enum {
+			spec = append(spec, fmt.Sprint(m))
+		}
+		for _, m := range []gen.SetAgentStatusRequestTag{gen.Blocked, gen.Idle, gen.Implementing, gen.NeedsHuman, gen.Planning, gen.Reviewing, gen.Waiting} {
+			generated = append(generated, string(m))
+		}
+		for _, m := range bus.SettableStatusTags() {
+			source = append(source, string(m))
+		}
+		sort.Strings(spec)
+		sort.Strings(generated)
+		sort.Strings(source)
+		if fmt.Sprint(spec) != fmt.Sprint(source) || fmt.Sprint(generated) != fmt.Sprint(source) {
+			t.Errorf("SetAgentStatusRequest.tag enum: spec %v, generated %v, bus.SettableStatusTags %v", spec, generated, source)
 		}
 	})
 }
