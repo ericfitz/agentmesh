@@ -17,9 +17,9 @@ import (
 // Issue #35: every tag, operation, parameter, response, schema and property of
 // api/openapi.yaml has a description, and every request body, response body,
 // parameter and schema has an example. The two tests walk the embedded
-// document. Until the area tasks finish, `undocumented` (the deny-list, in
-// spec_docs_undocumented_test.go) names what is still bare; a listed element
-// that passes is `stale`, an unlisted one that fails is `undocumented`.
+// document. Every failing check fails its subtest: there is no deny-list (it
+// held the elements still bare while the area tasks documented them, and was
+// deleted with the last).
 
 // elemChk is one check of one element; name is empty for the element itself.
 type elemChk struct {
@@ -27,22 +27,13 @@ type elemChk struct {
 	msg  string // empty when the check passes
 }
 
-// elem is one documented thing: kind/name is its deny-list key.
+// elem is one documented thing: kind/name names its subtest.
 type elem struct {
 	kind, name string
 	checks     []elemChk
 }
 
 func (e *elem) key() string { return e.kind + "/" + e.name }
-
-func (e *elem) failing() bool {
-	for _, c := range e.checks {
-		if c.msg != "" {
-			return true
-		}
-	}
-	return false
-}
 
 // elemSet collects elements in first-seen order; a key seen twice merges.
 type elemSet struct {
@@ -77,52 +68,11 @@ func (s *elemSet) add(kind, name, check, msg string) {
 	e.checks = append(e.checks, elemChk{name: check, msg: msg})
 }
 
-func (s *elemSet) failingKeys() map[string]bool {
-	out := map[string]bool{}
-	for _, e := range s.elems {
-		if e.failing() {
-			out[e.key()] = true
-		}
-	}
-	return out
-}
-
-func (s *elemSet) keys() map[string]bool {
-	out := map[string]bool{}
-	for _, e := range s.elems {
-		out[e.key()] = true
-	}
-	return out
-}
-
-// Element kinds of the deny-list. Anything else in a key is refused.
+// Element kinds of each audit: the first path element of a subtest.
 var (
 	descriptionKinds = map[string]bool{"tags": true, "operations": true, "parameters": true, "responses": true, "schemas": true, "properties": true}
 	exampleKinds     = map[string]bool{"requests": true, "responses": true, "parameters": true, "schemas": true}
 )
-
-func allKinds() map[string]bool {
-	out := map[string]bool{}
-	maps.Copy(out, descriptionKinds)
-	maps.Copy(out, exampleKinds)
-	return out
-}
-
-// denyKeyProblems returns one text per deny-list key whose kind is not in
-// allowed or which is not of the form kind/name.
-func denyKeyProblems(list map[string]string, allowed map[string]bool) []string {
-	var out []string
-	for _, k := range slices.Sorted(maps.Keys(list)) {
-		kind, name, ok := strings.Cut(k, "/")
-		switch {
-		case !ok || name == "":
-			out = append(out, fmt.Sprintf("malformed deny-list key %q (want kind/name)", k))
-		case !allowed[kind]:
-			out = append(out, fmt.Sprintf("deny-list key %q has unknown kind %q", k, kind))
-		}
-	}
-	return out
-}
 
 // ---- walking the document ----
 
@@ -189,7 +139,7 @@ func countProperties(doc *openapi3.T) int {
 }
 
 // paramKeys resolves the parameters of an operation (and of its path item) to
-// deny-list names: a shared one by its components name, an inline one as
+// subtest names: a shared one by its components name, an inline one as
 // <op>.<name>. Inline path-level parameters are refused: the document has none
 // and the walker does not know their key.
 func paramKeys(opID string, op *openapi3.Operation, item *openapi3.PathItem, visit func(name string, p *openapi3.Parameter, shared bool)) error {
@@ -475,41 +425,12 @@ func exampleWalk(doc *openapi3.T) (*elemSet, error) {
 	return set, nil
 }
 
-// ---- running an audit against the deny-list ----
+// ---- running an audit ----
 
-// staleProblem is the stale rule: a listed element that passes both audits.
-func staleProblem(e *elem, otherFailing map[string]bool, list map[string]string) string {
-	key := e.key()
-	if _, listed := list[key]; listed && !e.failing() && !otherFailing[key] {
-		return fmt.Sprintf("stale: %s is documented; remove it from undocumented", key)
-	}
-	return ""
-}
-
-// checkProblem is the undocumented rule: a failing check of an unlisted element.
-func checkProblem(e *elem, c elemChk, list map[string]string) string {
-	if _, listed := list[e.key()]; c.msg != "" && !listed {
-		return fmt.Sprintf("undocumented: %s (%s)", e.key(), c.msg)
-	}
-	return ""
-}
-
-// unknownKeyProblems reports malformed keys, keys of an unknown kind, and keys
-// of this audit's kinds that name no element in seen.
-func unknownKeyProblems(list map[string]string, kinds, seen map[string]bool) []string {
-	out := denyKeyProblems(list, allKinds())
-	for _, k := range slices.Sorted(maps.Keys(list)) {
-		kind, _, _ := strings.Cut(k, "/")
-		if kinds[kind] && !seen[k] {
-			out = append(out, fmt.Sprintf("stale: %s names no element of the document", k))
-		}
-	}
-	return out
-}
-
-func runAudit(t *testing.T, set, other *elemSet, kinds map[string]bool, list map[string]string) {
+// runAudit runs every check of every element of the given kinds as a subtest:
+// kind/name, then the check's name when it has one. A failing check fails it.
+func runAudit(t *testing.T, set *elemSet, kinds map[string]bool) {
 	t.Helper()
-	otherFailing := other.failingKeys()
 	for _, kind := range slices.Sorted(maps.Keys(kinds)) {
 		t.Run(kind, func(t *testing.T) {
 			for _, e := range set.elems {
@@ -517,13 +438,10 @@ func runAudit(t *testing.T, set, other *elemSet, kinds map[string]bool, list map
 					continue
 				}
 				t.Run(e.name, func(t *testing.T) {
-					if p := staleProblem(e, otherFailing, list); p != "" {
-						t.Error(p)
-					}
 					for _, c := range e.checks {
 						body := func(t *testing.T) {
-							if p := checkProblem(e, c, list); p != "" {
-								t.Error(p)
+							if c.msg != "" {
+								t.Errorf("undocumented: %s (%s)", e.key(), c.msg)
 							}
 						}
 						if c.name == "" {
@@ -536,13 +454,6 @@ func runAudit(t *testing.T, set, other *elemSet, kinds map[string]bool, list map
 			}
 		})
 	}
-	t.Run("deny-list", func(t *testing.T) {
-		seen := set.keys()
-		maps.Copy(seen, other.keys())
-		for _, p := range unknownKeyProblems(list, kinds, seen) {
-			t.Error(p)
-		}
-	})
 }
 
 func TestSpecDescriptions(t *testing.T) {
@@ -551,11 +462,7 @@ func TestSpecDescriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex, err := exampleWalk(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runAudit(t, desc, ex, descriptionKinds, undocumented)
+	runAudit(t, desc, descriptionKinds)
 	t.Run("not-a-type", func(t *testing.T) {
 		raw := marshalDoc(t, doc)
 		walkJSON(raw, false, nil, func(path, s string) {
@@ -781,11 +688,7 @@ func TestSpecExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desc, err := descWalk(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	runAudit(t, ex, desc, exampleKinds, undocumented)
+	runAudit(t, ex, exampleKinds)
 	t.Run("unsupported-shapes", func(t *testing.T) {
 		for _, p := range unsupportedShapes(doc) {
 			t.Error(p)
@@ -911,22 +814,6 @@ func TestSpecDocsHelpers(t *testing.T) {
 			if ok != c.ok || got != c.want {
 				t.Errorf("%s: (%v, %v), want (%v, %v)", c.name, got, ok, c.want, c.ok)
 			}
-		}
-	})
-	t.Run("unknown-kinds-are-refused", func(t *testing.T) {
-		got := denyKeyProblems(map[string]string{
-			"operations/ok": "Task 2", "widgets/x": "Task 2", "noslash": "Task 2", "schemas/": "Task 2", "requests/op": "Task 3",
-		}, allKinds())
-		if len(got) != 3 {
-			t.Fatalf("problems = %v, want 3 (unknown kind, no slash, empty name)", got)
-		}
-		for _, k := range []string{"requests", "tags"} {
-			if !allKinds()[k] {
-				t.Errorf("kind %q missing from allKinds", k)
-			}
-		}
-		if p := denyKeyProblems(map[string]string{"requests/op": "x"}, descriptionKinds); len(p) != 1 {
-			t.Errorf("an example kind in a description-only list: %v, want 1 problem", p)
 		}
 	})
 	t.Run("walker-refuses-unrecognized-shapes", func(t *testing.T) {
@@ -1066,30 +953,6 @@ paths:
 			t.Errorf("a valid example was refused: %v", got)
 		}
 	})
-	t.Run("audit-rules", func(t *testing.T) {
-		pass := &elem{kind: "schemas", name: "A", checks: []elemChk{{}}}
-		fail := &elem{kind: "schemas", name: "B", checks: []elemChk{{msg: "no example"}}}
-		list := map[string]string{"schemas/A": "Task 2", "schemas/B": "Task 2"}
-		if staleProblem(pass, nil, list) == "" {
-			t.Error("a listed element that passes must be stale")
-		}
-		if staleProblem(pass, map[string]bool{"schemas/A": true}, list) != "" {
-			t.Error("a listed element still failing the other audit is not stale (shared key)")
-		}
-		if staleProblem(pass, nil, nil) != "" || staleProblem(fail, nil, list) != "" {
-			t.Error("unlisted passing and listed failing elements are not stale")
-		}
-		if checkProblem(fail, fail.checks[0], nil) == "" {
-			t.Error("an unlisted failing check must be undocumented")
-		}
-		if checkProblem(fail, fail.checks[0], list) != "" || checkProblem(pass, pass.checks[0], nil) != "" {
-			t.Error("a listed failing check and a passing check are silent")
-		}
-		got := unknownKeyProblems(map[string]string{"schemas/Gone": "x", "widgets/y": "x", "schemas/A": "x"}, exampleKinds, map[string]bool{"schemas/A": true})
-		if len(got) != 2 {
-			t.Errorf("unknownKeyProblems = %v, want the unknown kind and the missing element", got)
-		}
-	})
 	t.Run("walk-members-keys", func(t *testing.T) {
 		item := &openapi3.SchemaRef{Value: &openapi3.Schema{Properties: openapi3.Schemas{"sub": {Value: &openapi3.Schema{}}}}}
 		s := &openapi3.Schema{Properties: openapi3.Schemas{
@@ -1121,15 +984,4 @@ paths:
 			t.Errorf("examples = %v", exs)
 		}
 	})
-}
-
-func TestSpecDocsDenyListWellFormed(t *testing.T) {
-	for _, p := range denyKeyProblems(undocumented, allKinds()) {
-		t.Error(p)
-	}
-	for k, v := range undocumented {
-		if !regexp.MustCompile(`^Task [2-6]$`).MatchString(v) {
-			t.Errorf("%s: owner %q is not Task 2 to Task 6", k, v)
-		}
-	}
 }

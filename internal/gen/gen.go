@@ -606,11 +606,20 @@ type AccessToken struct {
 
 // AgentIdentity The result of creating an agent identity: the identity, its scope, whether this call created it and the one-time enrollment token bound to the name with its expiry.
 type AgentIdentity struct {
-	Created         bool    `json:"created"`
-	EnrollmentToken string  `json:"enrollment_token"`
-	ExpiresAt       int64   `json:"expires_at"`
-	Identity        string  `json:"identity"`
-	Scope           *string `json:"scope,omitempty"`
+	// Created True when this call created the identity, false when it already existed as a keyless agent of the same scope.
+	Created bool `json:"created"`
+
+	// EnrollmentToken The one-time enrollment token bound to the name, valid for 24 hours; the agent presents it with its public key to register. The server never stores it in clear: this answer is the only copy.
+	EnrollmentToken string `json:"enrollment_token"`
+
+	// ExpiresAt When the token expires, in Unix milliseconds.
+	ExpiresAt int64 `json:"expires_at"`
+
+	// Identity The agent identity's name.
+	Identity string `json:"identity"`
+
+	// Scope The identity's scope; absent for an unscoped agent.
+	Scope *string `json:"scope,omitempty"`
 }
 
 // AgentStatus One status revision of one identity: its tag, text, problem, session and the time it was set.
@@ -702,34 +711,53 @@ type AuthorizationServerMetadata struct {
 
 // Bridge The link between a bus channel and a Slack channel, with its state and times.
 type Bridge struct {
-	ArchivedAt     *int64      `json:"archived_at,omitempty"`
-	Channel        string      `json:"channel"`
-	CreatedAt      int64       `json:"created_at"`
-	Scope          string      `json:"scope"`
-	SlackChannelId *string     `json:"slack_channel_id,omitempty"`
-	SlackName      string      `json:"slack_name"`
-	State          BridgeState `json:"state"`
+	// ArchivedAt When the bridge was archived, in Unix milliseconds; absent until then.
+	ArchivedAt *int64 `json:"archived_at,omitempty"`
+
+	// Channel The bridged bus channel's name.
+	Channel string `json:"channel"`
+
+	// CreatedAt When the bridge was reserved, in Unix milliseconds.
+	CreatedAt int64 `json:"created_at"`
+
+	// Scope The scope of the bridged channel.
+	Scope string `json:"scope"`
+
+	// SlackChannelId Slack's id of the private channel; absent until Slack has created it.
+	SlackChannelId *string `json:"slack_channel_id,omitempty"`
+
+	// SlackName The name of the Slack channel.
+	SlackName string `json:"slack_name"`
+
+	// State creating: the bridge is reserved and its Slack channel is being set up (a create that failed part way stays here until the next create resumes it). live: the bridge mirrors the bus channel to Slack and Slack to the bus channel. archived: the Slack channel is archived and nothing is mirrored.
+	State BridgeState `json:"state"`
 }
 
-// BridgeState defines model for Bridge.State.
+// BridgeState creating: the bridge is reserved and its Slack channel is being set up (a create that failed part way stays here until the next create resumes it). live: the bridge mirrors the bus channel to Slack and Slack to the bus channel. archived: the Slack channel is archived and nothing is mirrored.
 type BridgeState string
 
 // BridgeCreated The created bridge and the humans it could not invite.
 type BridgeCreated struct {
 	// Bridge The link between a bus channel and a Slack channel, with its state and times.
-	Bridge     Bridge             `json:"bridge"`
+	Bridge Bridge `json:"bridge"`
+
+	// NotInvited Every human with write on the channel whom Slack could not invite; empty when all were invited.
 	NotInvited []BridgeNotInvited `json:"not_invited"`
 }
 
 // BridgeList The bridges of the server.
 type BridgeList struct {
+	// Bridges Every bridge by channel name, in any state.
 	Bridges []Bridge `json:"bridges"`
 }
 
 // BridgeNotInvited A human the bridge could not invite, and why.
 type BridgeNotInvited struct {
+	// Identity The human identity, which is its email address, that Slack did not invite.
 	Identity string `json:"identity"`
-	Reason   string `json:"reason"`
+
+	// Reason Why: not found in Slack (no Slack account for the address, or a bot or deleted one), Slack guest or external user, or invite failed followed by Slack's error code.
+	Reason string `json:"reason"`
 }
 
 // Channel What a caller sees of a channel it may list: name, kind and capabilities.
@@ -779,19 +807,19 @@ type ClaimTaskRequest struct {
 
 // CreateAgentIdentityRequest Creates an agent identity by name, optionally in a scope.
 type CreateAgentIdentityRequest struct {
-	// Name At most 128 bytes (the server counts bytes).
+	// Name The agent identity's name: not a reserved name and not the name of a retired identity. At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 
-	// Scope At most 128 bytes (the server counts bytes).
+	// Scope The open scope the identity joins; absent makes an unscoped agent. At most 128 bytes (the server counts bytes).
 	Scope *string `json:"scope,omitempty"`
 }
 
 // CreateBridgeRequest Creates a bridge from a bus channel to a Slack channel, optionally with a Slack channel name.
 type CreateBridgeRequest struct {
-	// Channel At most 128 bytes (the server counts bytes).
+	// Channel The ordinary channel to bridge: it must belong to an open scope. At most 128 bytes (the server counts bytes).
 	Channel string `json:"channel"`
 
-	// SlackName At most 80 code points of lowercase letters, digits, underscore and hyphen.
+	// SlackName The name of the new Slack channel; absent, the bus channel's name is used, lowercased with every other character turned into a hyphen. At most 80 code points of lowercase letters, digits, underscore and hyphen.
 	SlackName *string `json:"slack_name,omitempty"`
 }
 
@@ -803,7 +831,7 @@ type CreateChannelRequest struct {
 	// Kind ordinary (the default) carries messages; memory makes every message a memory that agents read with search and getMemory; tasks is a task list managed with the task operations, and send is refused on it. Absent means ordinary.
 	Kind *CreateChannelRequestKind `json:"kind,omitempty"`
 
-	// Name The new channel's name: no slash, and <scope>-<rest> in a scope. A name already taken is 409 conflict. At most 128 bytes (the server counts bytes).
+	// Name The new channel's name: no slash; a scoped agent's names are <scope>-<rest> (administrators are exempt). A name already taken is 409 conflict. At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 
 	// Scope Administrators only: the scope the channel belongs to, which must exist and not be done. A scoped creator's channel names must start with its scope's prefix <scope>-; an administrator's need not, but no channel outside the scope may take the prefix. Absent means the creator's own scope, or none for an unscoped creator. At most 128 bytes (the server counts bytes).
@@ -815,20 +843,23 @@ type CreateChannelRequestKind string
 
 // CreateIdentityByEmailRequest Creates a human identity from an email address.
 type CreateIdentityByEmailRequest struct {
-	// Email At most 128 bytes (the server counts bytes).
+	// Email The email address the human identity is created for; it is trimmed and lowercased, and the result is the identity's name. At most 128 bytes (the server counts bytes).
 	Email string `json:"email"`
 }
 
 // CreateScopeRequest Creates a scope by name.
 type CreateScopeRequest struct {
-	// Name At most 128 bytes (the server counts bytes).
+	// Name The scope's name; a scoped agent's channels are named <name>-<rest>, so the name is also the prefix of those channels. At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 }
 
 // CredentialReset The result of a credential reset: the identity and how many registered keys were removed.
 type CredentialReset struct {
-	Identity    string `json:"identity"`
-	KeysRemoved int    `json:"keys_removed"`
+	// Identity The identity whose credential was reset.
+	Identity string `json:"identity"`
+
+	// KeysRemoved How many registered keys were removed; for a human identity, 1 when a provider subject was cleared, else 0.
+	KeysRemoved int `json:"keys_removed"`
 }
 
 // Discovery The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods and the issuer metadata locations.
@@ -860,10 +891,11 @@ type Discovery struct {
 
 // DoneScopeRequest Retires a scope; retire is with_bridge or normal.
 type DoneScopeRequest struct {
+	// Retire with_bridge: retire the scope once its Slack channel is archived (409 conflict when the scope has no live bridge). normal: retire it when its last channel is removed by the normal rules.
 	Retire DoneScopeRequestRetire `json:"retire"`
 }
 
-// DoneScopeRequestRetire defines model for DoneScopeRequest.Retire.
+// DoneScopeRequestRetire with_bridge: retire the scope once its Slack channel is archived (409 conflict when the scope has no live bridge). normal: retire it when its last channel is removed by the normal rules.
 type DoneScopeRequestRetire string
 
 // EditMemoryRequest Every field is optional and an omitted field keeps the live revision's value; a present empty subject, type, metadata or tags clears it. Content cannot be cleared (an empty content is a validation error). A request with no field is a validation error.
@@ -1036,7 +1068,10 @@ type HealthStoreEngine string
 
 // HumanIdentity The normalized human identity name and whether this call created it.
 type HumanIdentity struct {
-	Created  bool   `json:"created"`
+	// Created True when this call created the identity, false when the address was already bound to one.
+	Created bool `json:"created"`
+
+	// Identity The identity's name: the normalized email address.
 	Identity string `json:"identity"`
 }
 
@@ -1126,9 +1161,14 @@ type MessageSenderKind string
 
 // Notice A server notice shown to administrators: its kind, message and the time it was set.
 type Notice struct {
-	Kind    string `json:"kind"`
+	// Kind What the notice reports: capacity (storage is over its budget), embedding (the embedding service is failing) or inspection (the write inspector cannot answer).
+	Kind string `json:"kind"`
+
+	// Message The notice text an operator reads.
 	Message string `json:"message"`
-	SetAt   int64  `json:"set_at"`
+
+	// SetAt When the notice was set (rewritten, for an inspection notice that keeps failing), in Unix milliseconds.
+	SetAt int64 `json:"set_at"`
 }
 
 // OAuthError RFC 6749 section 5.2 error body.
@@ -1301,24 +1341,40 @@ type RenameChannelRequest struct {
 
 // Scope A named group of channels and agent identities retired as one unit; channels and identities are filled on a get only.
 type Scope struct {
-	Channels     *[]string    `json:"channels,omitempty"`
-	CreatedAt    int64        `json:"created_at"`
-	DoneAt       *int64       `json:"done_at,omitempty"`
-	Identities   *[]string    `json:"identities,omitempty"`
-	LastActivity int64        `json:"last_activity"`
-	Name         string       `json:"name"`
-	Retire       *ScopeRetire `json:"retire,omitempty"`
-	State        ScopeState   `json:"state"`
+	// Channels The names of the scope's channels; present on a get only (an empty array is a scope with none).
+	Channels *[]string `json:"channels,omitempty"`
+
+	// CreatedAt When the scope was created, in Unix milliseconds.
+	CreatedAt int64 `json:"created_at"`
+
+	// DoneAt When the scope was marked done, in Unix milliseconds; absent while it is open.
+	DoneAt *int64 `json:"done_at,omitempty"`
+
+	// Identities The names of the scope's agent identities; present on a get only.
+	Identities *[]string `json:"identities,omitempty"`
+
+	// LastActivity The time of the latest message on any of the scope's channels, in Unix milliseconds; the creation time until the first message. The idle rule (scope_idle_hours) reads it.
+	LastActivity int64 `json:"last_activity"`
+
+	// Name The scope's name; also the prefix of its channels' names (<name>-<rest>).
+	Name string `json:"name"`
+
+	// Retire How the scope is retired; present once the scope is done.
+	Retire *ScopeRetire `json:"retire,omitempty"`
+
+	// State open: the scope takes new channels and identities. done: an administrator marked it done and nothing new may join it. retired: its resources are gone; this API never returns a retired scope (the list omits it, a get answers 404).
+	State ScopeState `json:"state"`
 }
 
-// ScopeRetire defines model for Scope.Retire.
+// ScopeRetire How the scope is retired; present once the scope is done.
 type ScopeRetire string
 
-// ScopeState defines model for Scope.State.
+// ScopeState open: the scope takes new channels and identities. done: an administrator marked it done and nothing new may join it. retired: its resources are gone; this API never returns a retired scope (the list omits it, a get answers 404).
 type ScopeState string
 
 // ScopeList The scopes of the server.
 type ScopeList struct {
+	// Scopes The open and done scopes by name, without their channels and identities; retired scopes are left out.
 	Scopes []Scope `json:"scopes"`
 }
 
@@ -1429,11 +1485,16 @@ type SetAgentStatusRequest struct {
 
 // SigningKey One token signing key: its id, state, provider, algorithm and times.
 type SigningKey struct {
+	// Algorithm The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key.
 	Algorithm SigningKeyAlgorithm `json:"algorithm"`
-	CreatedAt int64               `json:"created_at"`
 
-	// Kid The RFC 7638 thumbprint of the public key.
-	Kid      string             `json:"kid"`
+	// CreatedAt When the key was created, in Unix milliseconds.
+	CreatedAt int64 `json:"created_at"`
+
+	// Kid The RFC 7638 thumbprint of the public key; the kid that bearers carry and /v1/auth/jwks publishes.
+	Kid string `json:"kid"`
+
+	// Provider Where the private key lives: store (a database row) or an external key service.
 	Provider SigningKeyProvider `json:"provider"`
 
 	// ProviderRef The key URI inside an external provider; empty for the store provider.
@@ -1443,21 +1504,24 @@ type SigningKey struct {
 	RemoveAfter int64 `json:"remove_after"`
 
 	// RetiredAt Unix milliseconds; 0 while the key is active.
-	RetiredAt int64           `json:"retired_at"`
-	State     SigningKeyState `json:"state"`
+	RetiredAt int64 `json:"retired_at"`
+
+	// State active: the key signs new bearers. retiring: it no longer signs and verifies until remove_after.
+	State SigningKeyState `json:"state"`
 }
 
-// SigningKeyAlgorithm defines model for SigningKey.Algorithm.
+// SigningKeyAlgorithm The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key.
 type SigningKeyAlgorithm string
 
-// SigningKeyProvider defines model for SigningKey.Provider.
+// SigningKeyProvider Where the private key lives: store (a database row) or an external key service.
 type SigningKeyProvider string
 
-// SigningKeyState defines model for SigningKey.State.
+// SigningKeyState active: the key signs new bearers. retiring: it no longer signs and verifies until remove_after.
 type SigningKeyState string
 
 // SigningKeyList The server's token signing keys.
 type SigningKeyList struct {
+	// Keys The key set, the active key first; public facts only.
 	Keys []SigningKey `json:"keys"`
 }
 
@@ -1475,14 +1539,29 @@ type SigningKeyRotation struct {
 
 // Status The administrator's view: live sessions, every channel with its creator, server notices and the embedding backlog and rejections.
 type Status struct {
-	Channels              []ChannelInfo `json:"channels"`
-	EmbeddingBacklog      int           `json:"embedding_backlog"`
-	EmbeddingError        *string       `json:"embedding_error,omitempty"`
-	EmbeddingErrorAt      *int64        `json:"embedding_error_at,omitempty"`
-	EmbeddingRejected     int           `json:"embedding_rejected"`
-	EmbeddingRejectedLast *string       `json:"embedding_rejected_last,omitempty"`
-	Notices               []Notice      `json:"notices"`
-	Sessions              []SessionInfo `json:"sessions"`
+	// Channels Every channel on the server, whatever its kind or scope, with its creator and capabilities.
+	Channels []ChannelInfo `json:"channels"`
+
+	// EmbeddingBacklog Memories still waiting for an embedding, counted up to 1000; 0 when no embedding service is configured.
+	EmbeddingBacklog int `json:"embedding_backlog"`
+
+	// EmbeddingError The text of the embedding notice while the service is failing; absent otherwise.
+	EmbeddingError *string `json:"embedding_error,omitempty"`
+
+	// EmbeddingErrorAt When the embedding notice was set, in Unix milliseconds; absent while the service is not failing.
+	EmbeddingErrorAt *int64 `json:"embedding_error_at,omitempty"`
+
+	// EmbeddingRejected How many memories the embedding service rejected for the configured model; 0 when no embedding service is configured.
+	EmbeddingRejected int `json:"embedding_rejected"`
+
+	// EmbeddingRejectedLast The reason of the latest rejection; absent when there is none.
+	EmbeddingRejectedLast *string `json:"embedding_rejected_last,omitempty"`
+
+	// Notices The notices that are set, in the order capacity, embedding, inspection; empty when there are none.
+	Notices []Notice `json:"notices"`
+
+	// Sessions The live sessions of every identity; empty when there are none.
+	Sessions []SessionInfo `json:"sessions"`
 }
 
 // SubscribeRequest Subscribes the caller to a channel, from now or from the oldest retained message.
@@ -1709,24 +1788,29 @@ type TokenRequest struct {
 
 // Usage Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set.
 type Usage struct {
+	// BudgetBytes The budget of the server's engine (sqlite_budget_mib or postgres_budget_mib) in bytes.
 	BudgetBytes int64 `json:"budget_bytes"`
 
 	// Bytes The enforced measure: used file bytes on SQLite, the logical sum on Postgres.
-	Bytes     int64 `json:"bytes"`
+	Bytes int64 `json:"bytes"`
+
+	// DiskBytes The physical size of the store in bytes.
 	DiskBytes int64 `json:"disk_bytes"`
 
-	// DiskRatio disk_bytes / bytes; 0 when bytes is 0
+	// DiskRatio disk_bytes divided by bytes; 0 when bytes is 0.
 	DiskRatio float64 `json:"disk_ratio"`
 
-	// Evictable A budget is enforced.
+	// Evictable True when a budget is enforced, which it always is in this release.
 	Evictable bool `json:"evictable"`
 
 	// Notice The capacity notice text, when one is set.
-	Notice *string   `json:"notice,omitempty"`
-	Tier   UsageTier `json:"tier"`
+	Notice *string `json:"notice,omitempty"`
+
+	// Tier How close bytes is to the budget. normal: at or below the size a sweep stops at (the budget less cleanup_free_percent). approaching: above that and within the budget. soft: over the budget and the sweep still has rows it deletes first. hard: over the budget and only rows it deletes last remain. exhausted: over the budget and nothing is left to evict.
+	Tier UsageTier `json:"tier"`
 }
 
-// UsageTier defines model for Usage.Tier.
+// UsageTier How close bytes is to the budget. normal: at or below the size a sweep stops at (the budget less cleanup_free_percent). approaching: above that and within the budget. soft: over the budget and the sweep still has rows it deletes first. hard: over the budget and only rows it deletes last remain. exhausted: over the budget and nothing is left to evict.
 type UsageTier string
 
 // Wake The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on.
@@ -1809,7 +1893,7 @@ type ResetCredentialParams struct {
 
 // AdminResetParams defines parameters for AdminReset.
 type AdminResetParams struct {
-	// Scope data keeps identities and keys; everything removes them too; default: data
+	// Scope What to wipe: data keeps the identities, their keys and the signing keys; everything removes the other identities, their keys and every enrollment token too. Default data.
 	Scope *AdminResetParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
 
 	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
@@ -1833,7 +1917,7 @@ type DoneScopeParams struct {
 
 // RotateSigningKeyParams defines parameters for RotateSigningKey.
 type RotateSigningKeyParams struct {
-	// RevokePrevious Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; default false
+	// RevokePrevious Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; the bearers the deleted key signed stop verifying. Default false.
 	RevokePrevious *bool `form:"revoke_previous,omitempty" json:"revoke_previous,omitempty"`
 
 	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
@@ -2186,12 +2270,14 @@ type ClientInterface interface {
 
 	// ListBridges List bridges
 	//
+	// Lists every bridge by channel name, in any state (creating, live or archived). Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
+	//
 	// Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
 	ListBridges(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateBridgeWithBody Bridge a channel to a new private Slack channel
 	//
-	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+	// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2200,7 +2286,7 @@ type ClientInterface interface {
 
 	// CreateBridge Bridge a channel to a new private Slack channel
 	//
-	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+	// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2209,17 +2295,21 @@ type ClientInterface interface {
 
 	// RemoveBridge Remove a channel's bridge, archiving its Slack channel
 	//
+	// Removes a channel's bridge: posts a final line to the Slack channel and archives it (a channel already archived or gone counts as done), then deletes the bridge row with its message map, unsubscribes slack-bridge from the bus channel and removes its ACL entry. The bus channel and the scope stay. A channel with no bridge is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. No idempotency key: a second call is 404 not_found because the bridge row is gone. Source: ADR 0009, docs/ops/slack-bridge.md.
+	//
 	// Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
 	RemoveBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetBridge Read a channel's bridge
+	//
+	// Returns the bridge of a channel, in any state, found by the channel name stored with the bridge. A channel with no bridge, including one whose bridge was removed, is 404 not_found. Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
 	//
 	// Corresponds with GET /v1/admin/bridges/{channel} (the `GetBridge` operationId).
 	GetBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateAgentIdentityWithBody Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
-	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+	// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2228,7 +2318,7 @@ type ClientInterface interface {
 
 	// CreateAgentIdentity Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
-	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+	// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2237,12 +2327,16 @@ type ClientInterface interface {
 
 	// CreateIdentityByEmailWithBody Create a human identity for an email address
 	//
+	// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
+	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 	CreateIdentityByEmailWithBody(ctx context.Context, params *CreateIdentityByEmailParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateIdentityByEmail Create a human identity for an email address
+	//
+	// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2251,20 +2345,28 @@ type ClientInterface interface {
 
 	// ResetCredential Remove an identity's registered keys
 	//
+	// Removes every registered key of the identity in the path and answers how many it removed (0 is success), so the identity can no longer mint a bearer until a key is registered for it again; a bearer already minted stays valid until it expires. A human identity holds no keys: the call clears the provider subject recorded at its first sign-in, so the next sign-in binds afresh, and the Slack account bound to it, and answers 1 when a subject was recorded, else 0. A name that is not registered or is reserved is 403 not_registered; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Side effects: deletes the key rows or clears the binding; nothing is appended. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, Decision 58, Decision 73.
+	//
 	// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 	ResetCredential(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminReset Reset the store (an administrator's reset)
+	//
+	// Wipes the bus data. With scope data (the default) it deletes the channels with their messages, memories, tasks, ACLs and subscriptions, every session, the agent statuses, the notices and the idempotency receipts, and keeps the identities with their keys, the enrollment tokens, the users and administrators lists, the scopes, the bridges and the signing keys. With scope everything it also removes every identity except the caller and the reserved slack-bridge identity, every enrollment token and the users list, and restarts the administrators list as the caller alone. Either way the server then recreates the general channel and subscribes every remaining identity to it except slack-bridge. Administrator only. Any other caller gets 403 forbidden. Side effects: the data is gone for every client, sessions included, and the watches are woken. Idempotency-Key: a repeat with the same key and scope returns the first answer without wiping again; the same key with another scope is 409 conflict. Without a key a second reset leaves the same empty state. Source: ADR 0003 (the admin reset scope), Decision 12, Decision 48.
 	//
 	// Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 	AdminReset(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListScopes List scopes
 	//
+	// Lists the open and done scopes by name, without their channels and identities (getScope fills those); retired scopes are not listed. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
+	//
 	// Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
 	ListScopes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateScopeWithBody Create a scope
+	//
+	// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2273,6 +2375,8 @@ type ClientInterface interface {
 
 	// CreateScope Create a scope
 	//
+	// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
@@ -2280,10 +2384,14 @@ type ClientInterface interface {
 
 	// GetScope Read a scope
 	//
+	// Returns one scope, open or done, with the names of its channels and identities. A scope that does not exist or is retired is 404 not_found; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
+	//
 	// Corresponds with GET /v1/admin/scopes/{scope} (the `GetScope` operationId).
 	GetScope(ctx context.Context, scope ScopeParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DoneScopeWithBody Retire a scope, with or without its bridge
+	//
+	// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2292,6 +2400,8 @@ type ClientInterface interface {
 
 	// DoneScope Retire a scope, with or without its bridge
 	//
+	// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
@@ -2299,26 +2409,28 @@ type ClientInterface interface {
 
 	// ListSigningKeys List the server's token signing keys
 	//
-	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
+	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
 	//
 	// Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 	ListSigningKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RotateSigningKey Rotate the active token signing key
 	//
-	// Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
+	// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
 	//
 	// Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 	RotateSigningKey(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog
 	//
+	// Returns the administrator's view of the server: every live session of every identity, every channel with its creator, scope and capabilities, the server notices (capacity, embedding and inspection, in that order; an inspection notice that no failing replica has rewritten within inspection_notice_ttl_seconds is left out) and, when an embedding service is configured, the embedding backlog (counted up to 1000), the rejections and the embedding error. Without an embedding service the two counts are 0 and the other embedding members are absent. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 73.
+	//
 	// Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
 	AdminStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AdminUsage The database size, budget and capacity notice
 	//
-	// The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
+	// Returns the size of the stored data against the budget of the server's engine (sqlite_budget_mib on SQLite, postgres_budget_mib on Postgres): bytes (the enforced measure), the budget, the physical disk size and its ratio to bytes, the pressure tier and, when the budget sweep has set one, the capacity notice text. Administrator only. Any other caller gets 403 forbidden. Writes nothing: the tier is computed at read time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 48, ADR 0004.
 	//
 	// Corresponds with GET /v1/admin/usage (the `AdminUsage` operationId).
 	AdminUsage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2560,14 +2672,14 @@ type ClientInterface interface {
 
 	// GetMemory Read a memory's live revision
 	//
-	// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
+	// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). The id may also be a task's id (a task is a memory on a task list): the answer is then the task's live row as a message and no access time moves; getTask returns the task itself. No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 	//
 	// Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 	GetMemory(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListMemoryRevisions List a memory's revisions
 	//
-	// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+	// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. The id may also be a task's id: the answer is then the task's rows (one per revision) as messages; getTask returns the task itself. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
 	//
 	// Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 	ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2808,6 +2920,8 @@ func (c *Client) OpenidConfiguration(ctx context.Context, reqEditors ...RequestE
 
 // ListBridges List bridges
 //
+// Lists every bridge by channel name, in any state (creating, live or archived). Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
+//
 // Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
 func (c *Client) ListBridges(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListBridgesRequest(c.Server)
@@ -2823,7 +2937,7 @@ func (c *Client) ListBridges(ctx context.Context, reqEditors ...RequestEditorFn)
 
 // CreateBridgeWithBody Bridge a channel to a new private Slack channel
 //
-// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2842,7 +2956,7 @@ func (c *Client) CreateBridgeWithBody(ctx context.Context, contentType string, b
 
 // CreateBridge Bridge a channel to a new private Slack channel
 //
-// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2861,6 +2975,8 @@ func (c *Client) CreateBridge(ctx context.Context, body CreateBridgeJSONRequestB
 
 // RemoveBridge Remove a channel's bridge, archiving its Slack channel
 //
+// Removes a channel's bridge: posts a final line to the Slack channel and archives it (a channel already archived or gone counts as done), then deletes the bridge row with its message map, unsubscribes slack-bridge from the bus channel and removes its ACL entry. The bus channel and the scope stay. A channel with no bridge is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. No idempotency key: a second call is 404 not_found because the bridge row is gone. Source: ADR 0009, docs/ops/slack-bridge.md.
+//
 // Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
 func (c *Client) RemoveBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemoveBridgeRequest(c.Server, channel)
@@ -2875,6 +2991,8 @@ func (c *Client) RemoveBridge(ctx context.Context, channel ChannelParam, reqEdit
 }
 
 // GetBridge Read a channel's bridge
+//
+// Returns the bridge of a channel, in any state, found by the channel name stored with the bridge. A channel with no bridge, including one whose bridge was removed, is 404 not_found. Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
 //
 // Corresponds with GET /v1/admin/bridges/{channel} (the `GetBridge` operationId).
 func (c *Client) GetBridge(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2891,7 +3009,7 @@ func (c *Client) GetBridge(ctx context.Context, channel ChannelParam, reqEditors
 
 // CreateAgentIdentityWithBody Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
-// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2910,7 +3028,7 @@ func (c *Client) CreateAgentIdentityWithBody(ctx context.Context, contentType st
 
 // CreateAgentIdentity Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
-// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2929,6 +3047,8 @@ func (c *Client) CreateAgentIdentity(ctx context.Context, body CreateAgentIdenti
 
 // CreateIdentityByEmailWithBody Create a human identity for an email address
 //
+// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
+//
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
@@ -2945,6 +3065,8 @@ func (c *Client) CreateIdentityByEmailWithBody(ctx context.Context, params *Crea
 }
 
 // CreateIdentityByEmail Create a human identity for an email address
+//
+// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2963,6 +3085,8 @@ func (c *Client) CreateIdentityByEmail(ctx context.Context, params *CreateIdenti
 
 // ResetCredential Remove an identity's registered keys
 //
+// Removes every registered key of the identity in the path and answers how many it removed (0 is success), so the identity can no longer mint a bearer until a key is registered for it again; a bearer already minted stays valid until it expires. A human identity holds no keys: the call clears the provider subject recorded at its first sign-in, so the next sign-in binds afresh, and the Slack account bound to it, and answers 1 when a subject was recorded, else 0. A name that is not registered or is reserved is 403 not_registered; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Side effects: deletes the key rows or clears the binding; nothing is appended. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, Decision 58, Decision 73.
+//
 // Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 func (c *Client) ResetCredential(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewResetCredentialRequest(c.Server, identity, params)
@@ -2977,6 +3101,8 @@ func (c *Client) ResetCredential(ctx context.Context, identity string, params *R
 }
 
 // AdminReset Reset the store (an administrator's reset)
+//
+// Wipes the bus data. With scope data (the default) it deletes the channels with their messages, memories, tasks, ACLs and subscriptions, every session, the agent statuses, the notices and the idempotency receipts, and keeps the identities with their keys, the enrollment tokens, the users and administrators lists, the scopes, the bridges and the signing keys. With scope everything it also removes every identity except the caller and the reserved slack-bridge identity, every enrollment token and the users list, and restarts the administrators list as the caller alone. Either way the server then recreates the general channel and subscribes every remaining identity to it except slack-bridge. Administrator only. Any other caller gets 403 forbidden. Side effects: the data is gone for every client, sessions included, and the watches are woken. Idempotency-Key: a repeat with the same key and scope returns the first answer without wiping again; the same key with another scope is 409 conflict. Without a key a second reset leaves the same empty state. Source: ADR 0003 (the admin reset scope), Decision 12, Decision 48.
 //
 // Corresponds with POST /v1/admin/reset (the `AdminReset` operationId).
 func (c *Client) AdminReset(ctx context.Context, params *AdminResetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2993,6 +3119,8 @@ func (c *Client) AdminReset(ctx context.Context, params *AdminResetParams, reqEd
 
 // ListScopes List scopes
 //
+// Lists the open and done scopes by name, without their channels and identities (getScope fills those); retired scopes are not listed. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
+//
 // Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
 func (c *Client) ListScopes(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListScopesRequest(c.Server)
@@ -3007,6 +3135,8 @@ func (c *Client) ListScopes(ctx context.Context, reqEditors ...RequestEditorFn) 
 }
 
 // CreateScopeWithBody Create a scope
+//
+// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3025,6 +3155,8 @@ func (c *Client) CreateScopeWithBody(ctx context.Context, params *CreateScopePar
 
 // CreateScope Create a scope
 //
+// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
@@ -3042,6 +3174,8 @@ func (c *Client) CreateScope(ctx context.Context, params *CreateScopeParams, bod
 
 // GetScope Read a scope
 //
+// Returns one scope, open or done, with the names of its channels and identities. A scope that does not exist or is retired is 404 not_found; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
+//
 // Corresponds with GET /v1/admin/scopes/{scope} (the `GetScope` operationId).
 func (c *Client) GetScope(ctx context.Context, scope ScopeParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetScopeRequest(c.Server, scope)
@@ -3056,6 +3190,8 @@ func (c *Client) GetScope(ctx context.Context, scope ScopeParam, reqEditors ...R
 }
 
 // DoneScopeWithBody Retire a scope, with or without its bridge
+//
+// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3074,6 +3210,8 @@ func (c *Client) DoneScopeWithBody(ctx context.Context, scope ScopeParam, params
 
 // DoneScope Retire a scope, with or without its bridge
 //
+// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
@@ -3091,7 +3229,7 @@ func (c *Client) DoneScope(ctx context.Context, scope ScopeParam, params *DoneSc
 
 // ListSigningKeys List the server's token signing keys
 //
-// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
+// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
 //
 // Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 func (c *Client) ListSigningKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3108,7 +3246,7 @@ func (c *Client) ListSigningKeys(ctx context.Context, reqEditors ...RequestEdito
 
 // RotateSigningKey Rotate the active token signing key
 //
-// Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
+// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
 //
 // Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 func (c *Client) RotateSigningKey(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3125,6 +3263,8 @@ func (c *Client) RotateSigningKey(ctx context.Context, params *RotateSigningKeyP
 
 // AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog
 //
+// Returns the administrator's view of the server: every live session of every identity, every channel with its creator, scope and capabilities, the server notices (capacity, embedding and inspection, in that order; an inspection notice that no failing replica has rewritten within inspection_notice_ttl_seconds is left out) and, when an embedding service is configured, the embedding backlog (counted up to 1000), the rejections and the embedding error. Without an embedding service the two counts are 0 and the other embedding members are absent. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 73.
+//
 // Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
 func (c *Client) AdminStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAdminStatusRequest(c.Server)
@@ -3140,7 +3280,7 @@ func (c *Client) AdminStatus(ctx context.Context, reqEditors ...RequestEditorFn)
 
 // AdminUsage The database size, budget and capacity notice
 //
-// The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
+// Returns the size of the stored data against the budget of the server's engine (sqlite_budget_mib on SQLite, postgres_budget_mib on Postgres): bytes (the enforced measure), the budget, the physical disk size and its ratio to bytes, the pressure tier and, when the budget sweep has set one, the capacity notice text. Administrator only. Any other caller gets 403 forbidden. Writes nothing: the tier is computed at read time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 48, ADR 0004.
 //
 // Corresponds with GET /v1/admin/usage (the `AdminUsage` operationId).
 func (c *Client) AdminUsage(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3682,7 +3822,7 @@ func (c *Client) DeleteMemory(ctx context.Context, id IdParam, params *DeleteMem
 
 // GetMemory Read a memory's live revision
 //
-// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
+// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). The id may also be a task's id (a task is a memory on a task list): the answer is then the task's live row as a message and no access time moves; getTask returns the task itself. No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 //
 // Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 func (c *Client) GetMemory(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3699,7 +3839,7 @@ func (c *Client) GetMemory(ctx context.Context, id IdParam, reqEditors ...Reques
 
 // ListMemoryRevisions List a memory's revisions
 //
-// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. The id may also be a task's id: the answer is then the task's rows (one per revision) as messages; getTask returns the task itself. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
 //
 // Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 func (c *Client) ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6944,6 +7084,8 @@ type ClientWithResponsesInterface interface {
 
 	// ListBridgesWithResponse List bridges
 	//
+	// Lists every bridge by channel name, in any state (creating, live or archived). Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
@@ -6951,7 +7093,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateBridgeWithBodyWithResponse Bridge a channel to a new private Slack channel
 	//
-	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+	// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6960,7 +7102,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateBridgeWithResponse Bridge a channel to a new private Slack channel
 	//
-	// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+	// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6969,12 +7111,16 @@ type ClientWithResponsesInterface interface {
 
 	// RemoveBridgeWithResponse Remove a channel's bridge, archiving its Slack channel
 	//
+	// Removes a channel's bridge: posts a final line to the Slack channel and archives it (a channel already archived or gone counts as done), then deletes the bridge row with its message map, unsubscribes slack-bridge from the bus channel and removes its ACL entry. The bus channel and the scope stay. A channel with no bridge is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. No idempotency key: a second call is 404 not_found because the bridge row is gone. Source: ADR 0009, docs/ops/slack-bridge.md.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
 	RemoveBridgeWithResponse(ctx context.Context, channel ChannelParam, reqEditors ...RequestEditorFn) (*RemoveBridgeResponse, error)
 
 	// GetBridgeWithResponse Read a channel's bridge
+	//
+	// Returns the bridge of a channel, in any state, found by the channel name stored with the bridge. A channel with no bridge, including one whose bridge was removed, is 404 not_found. Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6983,7 +7129,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAgentIdentityWithBodyWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
-	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+	// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6992,7 +7138,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateAgentIdentityWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 	//
-	// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+	// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7001,12 +7147,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateIdentityByEmailWithBodyWithResponse Create a human identity for an email address
 	//
+	// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
 	CreateIdentityByEmailWithBodyWithResponse(ctx context.Context, params *CreateIdentityByEmailParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIdentityByEmailResponse, error)
 
 	// CreateIdentityByEmailWithResponse Create a human identity for an email address
+	//
+	// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7015,12 +7165,16 @@ type ClientWithResponsesInterface interface {
 
 	// ResetCredentialWithResponse Remove an identity's registered keys
 	//
+	// Removes every registered key of the identity in the path and answers how many it removed (0 is success), so the identity can no longer mint a bearer until a key is registered for it again; a bearer already minted stays valid until it expires. A human identity holds no keys: the call clears the provider subject recorded at its first sign-in, so the next sign-in binds afresh, and the Slack account bound to it, and answers 1 when a subject was recorded, else 0. A name that is not registered or is reserved is 403 not_registered; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Side effects: deletes the key rows or clears the binding; nothing is appended. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, Decision 58, Decision 73.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
 	ResetCredentialWithResponse(ctx context.Context, identity string, params *ResetCredentialParams, reqEditors ...RequestEditorFn) (*ResetCredentialResponse, error)
 
 	// AdminResetWithResponse Reset the store (an administrator's reset)
+	//
+	// Wipes the bus data. With scope data (the default) it deletes the channels with their messages, memories, tasks, ACLs and subscriptions, every session, the agent statuses, the notices and the idempotency receipts, and keeps the identities with their keys, the enrollment tokens, the users and administrators lists, the scopes, the bridges and the signing keys. With scope everything it also removes every identity except the caller and the reserved slack-bridge identity, every enrollment token and the users list, and restarts the administrators list as the caller alone. Either way the server then recreates the general channel and subscribes every remaining identity to it except slack-bridge. Administrator only. Any other caller gets 403 forbidden. Side effects: the data is gone for every client, sessions included, and the watches are woken. Idempotency-Key: a repeat with the same key and scope returns the first answer without wiping again; the same key with another scope is 409 conflict. Without a key a second reset leaves the same empty state. Source: ADR 0003 (the admin reset scope), Decision 12, Decision 48.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7029,12 +7183,16 @@ type ClientWithResponsesInterface interface {
 
 	// ListScopesWithResponse List scopes
 	//
+	// Lists the open and done scopes by name, without their channels and identities (getScope fills those); retired scopes are not listed. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
 	ListScopesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListScopesResponse, error)
 
 	// CreateScopeWithBodyWithResponse Create a scope
+	//
+	// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7043,12 +7201,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateScopeWithResponse Create a scope
 	//
+	// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
 	CreateScopeWithResponse(ctx context.Context, params *CreateScopeParams, body CreateScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateScopeResponse, error)
 
 	// GetScopeWithResponse Read a scope
+	//
+	// Returns one scope, open or done, with the names of its channels and identities. A scope that does not exist or is retired is 404 not_found; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7057,12 +7219,16 @@ type ClientWithResponsesInterface interface {
 
 	// DoneScopeWithBodyWithResponse Retire a scope, with or without its bridge
 	//
+	// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 	DoneScopeWithBodyWithResponse(ctx context.Context, scope ScopeParam, params *DoneScopeParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DoneScopeResponse, error)
 
 	// DoneScopeWithResponse Retire a scope, with or without its bridge
+	//
+	// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7071,7 +7237,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListSigningKeysWithResponse List the server's token signing keys
 	//
-	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
+	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7080,7 +7246,7 @@ type ClientWithResponsesInterface interface {
 
 	// RotateSigningKeyWithResponse Rotate the active token signing key
 	//
-	// Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
+	// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7089,6 +7255,8 @@ type ClientWithResponsesInterface interface {
 
 	// AdminStatusWithResponse The administrator's view of the server: sessions, channels, notices and the embedding backlog
 	//
+	// Returns the administrator's view of the server: every live session of every identity, every channel with its creator, scope and capabilities, the server notices (capacity, embedding and inspection, in that order; an inspection notice that no failing replica has rewritten within inspection_notice_ttl_seconds is left out) and, when an embedding service is configured, the embedding backlog (counted up to 1000), the rejections and the embedding error. Without an embedding service the two counts are 0 and the other embedding members are absent. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 73.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
@@ -7096,7 +7264,7 @@ type ClientWithResponsesInterface interface {
 
 	// AdminUsageWithResponse The database size, budget and capacity notice
 	//
-	// The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
+	// Returns the size of the stored data against the budget of the server's engine (sqlite_budget_mib on SQLite, postgres_budget_mib on Postgres): bytes (the enforced measure), the budget, the physical disk size and its ratio to bytes, the pressure tier and, when the budget sweep has set one, the capacity notice text. Administrator only. Any other caller gets 403 forbidden. Writes nothing: the tier is computed at read time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 48, ADR 0004.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7366,7 +7534,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetMemoryWithResponse Read a memory's live revision
 	//
-	// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
+	// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). The id may also be a task's id (a task is a memory on a task list): the answer is then the task's live row as a message and no access time moves; getTask returns the task itself. No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7375,7 +7543,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListMemoryRevisionsWithResponse List a memory's revisions
 	//
-	// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+	// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. The id may also be a task's id: the answer is then the task's rows (one per revision) as messages; getTask returns the task itself. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12562,6 +12730,8 @@ func (c *ClientWithResponses) OpenidConfigurationWithResponse(ctx context.Contex
 
 // ListBridgesWithResponse List bridges
 //
+// Lists every bridge by channel name, in any state (creating, live or archived). Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/admin/bridges (the `ListBridges` operationId).
@@ -12575,7 +12745,7 @@ func (c *ClientWithResponses) ListBridgesWithResponse(ctx context.Context, reqEd
 
 // CreateBridgeWithBodyWithResponse Bridge a channel to a new private Slack channel
 //
-// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12590,7 +12760,7 @@ func (c *ClientWithResponses) CreateBridgeWithBodyWithResponse(ctx context.Conte
 
 // CreateBridgeWithResponse Bridge a channel to a new private Slack channel
 //
-// Bridges a channel to a new private Slack channel. Unavailable (not retryable) with the text "the Slack bridge is not configured" when the server has no Slack bridge.
+// Bridges an ordinary channel of a scope to a new private Slack channel and starts mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a scope (400 validation) and the scope must be open (409 conflict when done); its ACL may not name everyone or humans nor give admins read or write (403 forbidden). slack_name, when given, must match the pattern of the request (400 validation); a Slack name already taken and a channel already bridged are 409 conflict. The call creates the Slack channel, invites every human with write on the bus channel who is a full member of the Slack workspace (guests and external users never are), adds a read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge live; the humans it could not invite are listed in not_invited and named in a notice posted to Slack and to the channel. A failure part way leaves the bridge in state creating and the next call resumes it. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge is not configured"; before the bridge has reached Slack the 503 is retryable. No idempotency key: a repeat on a live bridge is 409 conflict and on a creating one resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12605,6 +12775,8 @@ func (c *ClientWithResponses) CreateBridgeWithResponse(ctx context.Context, body
 
 // RemoveBridgeWithResponse Remove a channel's bridge, archiving its Slack channel
 //
+// Removes a channel's bridge: posts a final line to the Slack channel and archives it (a channel already archived or gone counts as done), then deletes the bridge row with its message map, unsubscribes slack-bridge from the bus channel and removes its ACL entry. The bus channel and the scope stay. A channel with no bridge is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. No idempotency key: a second call is 404 not_found because the bridge row is gone. Source: ADR 0009, docs/ops/slack-bridge.md.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/admin/bridges/{channel} (the `RemoveBridge` operationId).
@@ -12617,6 +12789,8 @@ func (c *ClientWithResponses) RemoveBridgeWithResponse(ctx context.Context, chan
 }
 
 // GetBridgeWithResponse Read a channel's bridge
+//
+// Returns the bridge of a channel, in any state, found by the channel name stored with the bridge. A channel with no bridge, including one whose bridge was removed, is 404 not_found. Administrator only. Any other caller gets 403 forbidden. A server with no Slack bridge answers 503 unavailable, not retryable; before the bridge has reached Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12631,7 +12805,7 @@ func (c *ClientWithResponses) GetBridgeWithResponse(ctx context.Context, channel
 
 // CreateAgentIdentityWithBodyWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
-// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12646,7 +12820,7 @@ func (c *ClientWithResponses) CreateAgentIdentityWithBodyWithResponse(ctx contex
 
 // CreateAgentIdentityWithResponse Create an agent identity, optionally in a scope, with a one-time enrollment token
 //
-// Creates an agent identity, optionally in an open scope, and a one-time enrollment token bound to its name (24 hours, one use). Administrator only. The token is never stored in clear and is not in an idempotency receipt, so the operation takes no idempotency key.
+// Creates a keyless agent identity, optionally in a scope, and a one-time enrollment token bound to its name (24 hours, one use); the agent registers its own key with the token, so the private key never leaves its host. An unscoped agent is subscribed to general, a scoped one is not. The scope must be open: an unknown or retired one is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of the same scope answers created false with a fresh token and revokes its earlier unused tokens. A reserved or malformed name, and a scope given for a human or an administrator, are 400 validation; an existing human, an identity in another scope or in none, an identity that already has a key and a name held by a retired identity are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and the token row. No idempotency key: the token is never stored in clear and is not in an idempotency receipt, so a receipt could not replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR 0011.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12661,6 +12835,8 @@ func (c *ClientWithResponses) CreateAgentIdentityWithResponse(ctx context.Contex
 
 // CreateIdentityByEmailWithBodyWithResponse Create a human identity for an email address
 //
+// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/admin/identities/by-email (the `CreateIdentityByEmail` operationId).
@@ -12673,6 +12849,8 @@ func (c *ClientWithResponses) CreateIdentityByEmailWithBodyWithResponse(ctx cont
 }
 
 // CreateIdentityByEmailWithResponse Create a human identity for an email address
+//
+// Creates the human identity for an email address, or returns the one already bound to it. The address is trimmed and lowercased and the normalized address is the identity's name; it must pass the name rule (at most 128 bytes), have one @ with text on each side and not be a reserved name (400 validation otherwise). The identity has no provider subject until the human first signs in, and is subscribed to general. An address already bound to a human answers that identity with created false; a name held by an agent, or by a human bound to another address, is 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the identity and its binding when it creates one. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12687,6 +12865,8 @@ func (c *ClientWithResponses) CreateIdentityByEmailWithResponse(ctx context.Cont
 
 // ResetCredentialWithResponse Remove an identity's registered keys
 //
+// Removes every registered key of the identity in the path and answers how many it removed (0 is success), so the identity can no longer mint a bearer until a key is registered for it again; a bearer already minted stays valid until it expires. A human identity holds no keys: the call clears the provider subject recorded at its first sign-in, so the next sign-in binds afresh, and the Slack account bound to it, and answers 1 when a subject was recorded, else 0. A name that is not registered or is reserved is 403 not_registered; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Side effects: deletes the key rows or clears the binding; nothing is appended. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0002, Decision 58, Decision 73.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/admin/identities/{identity}/reset-credential (the `ResetCredential` operationId).
@@ -12699,6 +12879,8 @@ func (c *ClientWithResponses) ResetCredentialWithResponse(ctx context.Context, i
 }
 
 // AdminResetWithResponse Reset the store (an administrator's reset)
+//
+// Wipes the bus data. With scope data (the default) it deletes the channels with their messages, memories, tasks, ACLs and subscriptions, every session, the agent statuses, the notices and the idempotency receipts, and keeps the identities with their keys, the enrollment tokens, the users and administrators lists, the scopes, the bridges and the signing keys. With scope everything it also removes every identity except the caller and the reserved slack-bridge identity, every enrollment token and the users list, and restarts the administrators list as the caller alone. Either way the server then recreates the general channel and subscribes every remaining identity to it except slack-bridge. Administrator only. Any other caller gets 403 forbidden. Side effects: the data is gone for every client, sessions included, and the watches are woken. Idempotency-Key: a repeat with the same key and scope returns the first answer without wiping again; the same key with another scope is 409 conflict. Without a key a second reset leaves the same empty state. Source: ADR 0003 (the admin reset scope), Decision 12, Decision 48.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12713,6 +12895,8 @@ func (c *ClientWithResponses) AdminResetWithResponse(ctx context.Context, params
 
 // ListScopesWithResponse List scopes
 //
+// Lists the open and done scopes by name, without their channels and identities (getScope fills those); retired scopes are not listed. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/admin/scopes (the `ListScopes` operationId).
@@ -12725,6 +12909,8 @@ func (c *ClientWithResponses) ListScopesWithResponse(ctx context.Context, reqEdi
 }
 
 // CreateScopeWithBodyWithResponse Create a scope
+//
+// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12739,6 +12925,8 @@ func (c *ClientWithResponses) CreateScopeWithBodyWithResponse(ctx context.Contex
 
 // CreateScopeWithResponse Create a scope
 //
+// Creates an open scope: a named group of channels and agent identities that is retired as one unit. The name follows the channel name rule and its prefix <name>- must not overlap another scope's prefix or name a channel of another scope or of none; a name that exists in any state, retired included, is 409 conflict, as is an overlap. Administrator only. Any other caller gets 403 forbidden. Side effects: writes the scope row with last_activity set to now. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/admin/scopes (the `CreateScope` operationId).
@@ -12751,6 +12939,8 @@ func (c *ClientWithResponses) CreateScopeWithResponse(ctx context.Context, param
 }
 
 // GetScopeWithResponse Read a scope
+//
+// Returns one scope, open or done, with the names of its channels and identities. A scope that does not exist or is retired is 404 not_found; a name the name rule refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009, ADR 0011.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12765,6 +12955,8 @@ func (c *ClientWithResponses) GetScopeWithResponse(ctx context.Context, scope Sc
 
 // DoneScopeWithBodyWithResponse Retire a scope, with or without its bridge
 //
+// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
@@ -12777,6 +12969,8 @@ func (c *ClientWithResponses) DoneScopeWithBodyWithResponse(ctx context.Context,
 }
 
 // DoneScopeWithResponse Retire a scope, with or without its bridge
+//
+// Marks an open scope done and records how it is retired; this call retires nothing, and nothing new may join a done scope (409 conflict). with_bridge needs a live bridge of the scope (409 conflict otherwise) and the scope is retired once none of its bridges is creating or live, which the bridge rules bring about (slack_archive_after_done_hours after this call, an idle scope, or no human left in the Slack channel). normal retires it when its last channel is removed by the normal rules. Either way a scope with no message on any of its channels for scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the scope's bridges, its channels of every kind with their messages, subscriptions and ACLs and its scoped identities with their keys and sessions, and keeps those names reserved for good. A scope already done is 409 conflict; an unknown or retired one is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side effects: marks the scope done. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12791,7 +12985,7 @@ func (c *ClientWithResponses) DoneScopeWithResponse(ctx context.Context, scope S
 
 // ListSigningKeysWithResponse List the server's token signing keys
 //
-// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Local mode and a server without a key service answer 503 unavailable.
+// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12806,7 +13000,7 @@ func (c *ClientWithResponses) ListSigningKeysWithResponse(ctx context.Context, r
 
 // RotateSigningKeyWithResponse Rotate the active token signing key
 //
-// Asks the configured key provider for the next key and makes it the active key. The previous active key keeps verifying until its removal time (state retiring), or is deleted at once with revoke_previous, which also skips the rotation cooldown. Inside the cooldown a plain rotation answers 409 conflict. Administrator only.
+// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12821,6 +13015,8 @@ func (c *ClientWithResponses) RotateSigningKeyWithResponse(ctx context.Context, 
 
 // AdminStatusWithResponse The administrator's view of the server: sessions, channels, notices and the embedding backlog
 //
+// Returns the administrator's view of the server: every live session of every identity, every channel with its creator, scope and capabilities, the server notices (capacity, embedding and inspection, in that order; an inspection notice that no failing replica has rewritten within inspection_notice_ttl_seconds is left out) and, when an embedding service is configured, the embedding backlog (counted up to 1000), the rejections and the embedding error. Without an embedding service the two counts are 0 and the other embedding members are absent. Administrator only. Any other caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 73.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/admin/status (the `AdminStatus` operationId).
@@ -12834,7 +13030,7 @@ func (c *ClientWithResponses) AdminStatusWithResponse(ctx context.Context, reqEd
 
 // AdminUsageWithResponse The database size, budget and capacity notice
 //
-// The database size, the budget of the store's engine, the disk size and ratio, the pressure tier and the capacity notice (spec 3.2, Decision 48).
+// Returns the size of the stored data against the budget of the server's engine (sqlite_budget_mib on SQLite, postgres_budget_mib on Postgres): bytes (the enforced measure), the budget, the physical disk size and its ratio to bytes, the pressure tier and, when the budget sweep has set one, the capacity notice text. Administrator only. Any other caller gets 403 forbidden. Writes nothing: the tier is computed at read time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 48, ADR 0004.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13284,7 +13480,7 @@ func (c *ClientWithResponses) DeleteMemoryWithResponse(ctx context.Context, id I
 
 // GetMemoryWithResponse Read a memory's live revision
 //
-// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
+// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). The id may also be a task's id (a task is a memory on a task list): the answer is then the task's live row as a message and no access time moves; getTask returns the task itself. No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13299,7 +13495,7 @@ func (c *ClientWithResponses) GetMemoryWithResponse(ctx context.Context, id IdPa
 
 // ListMemoryRevisionsWithResponse List a memory's revisions
 //
-// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. The id may also be a task's id: the answer is then the task's rows (one per revision) as messages; getTask returns the task itself. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
 //
 // Returns a wrapper object for the known response body format(s).
 //

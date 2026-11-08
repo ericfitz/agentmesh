@@ -1534,9 +1534,11 @@ paths:
         Needs read on the memory's channel (the channel ACL's read permission): without
         it 403 forbidden; an id with no live revision, or whose channel lies outside a
         scoped caller's scope, is 404 not_found. Side effects: moves the memory's access
-        time to now (a memory's expiry counts from it). No idempotency key: reading
-        again returns whatever revision is then live. Source: spec 3.2, Decision 95,
-        ADR 0008.
+        time to now (a memory's expiry counts from it). The id may also be a task's id (a
+        task is a memory on a task list): the answer is then the task's live row as
+        a message and no access time moves; getTask returns the task itself. No
+        idempotency key: reading again returns whatever revision is then live.
+        Source: spec 3.2, Decision 95, ADR 0008.
       parameters:
         - $ref: "#/components/parameters/IdParam"
       responses:
@@ -1621,8 +1623,10 @@ paths:
         is the live one unless the memory was deleted. Needs read on the memory's
         channel (the channel ACL's read permission): without it 403 forbidden; an id
         with no revision at all, or whose channel lies outside a scoped caller's scope,
-        is 404 not_found. Writes nothing and does not move the access time. No
-        idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+        is 404 not_found. The id may also be a task's id: the answer is then the
+        task's rows (one per revision) as messages; getTask returns the task itself.
+        Writes nothing and does not move the access time. No idempotency key: a
+        read has nothing to repeat. Source: spec 3.2, ADR 0008.
       parameters:
         - $ref: "#/components/parameters/IdParam"
       responses:
@@ -1652,8 +1656,7 @@ paths:
                   channel: release-notes
                   sender: acme-coder-1
                   sender_kind: agent
-                  session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
-                  display: acme-coder-1/builder
+                  display: ""
                   created_at: 1794096000000
                   type: note
                   subject: Release notes 2026.11
@@ -2053,7 +2056,7 @@ paths:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
-        description: "The time the claim's lease lasts until (absent or 0: no lease)"
+        description: "The claim's lease. The body is required: send {} to claim with no lease (leased_until absent or 0 sets none)"
         required: true
         content:
           application/json:
@@ -2174,6 +2177,16 @@ paths:
       operationId: adminStatus
       summary: "The administrator's view of the server: sessions, channels, notices and the embedding backlog"
       tags: [admin]
+      description: >-
+        Returns the administrator's view of the server: every live session of every
+        identity, every channel with its creator, scope and capabilities, the server notices
+        (capacity, embedding and inspection, in that order; an inspection notice that no
+        failing replica has rewritten within inspection_notice_ttl_seconds is left out) and,
+        when an embedding service is configured, the embedding backlog (counted up to 1000),
+        the rejections and the embedding error. Without an embedding service the two counts
+        are 0 and the other embedding members are absent. Administrator only. Any other
+        caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to
+        repeat. Source: spec 3.2, Decision 73.
       responses:
         "200":
           description: Server status for administrators.
@@ -2197,9 +2210,13 @@ paths:
       summary: "The database size, budget and capacity notice"
       tags: [admin]
       description: >-
-        The database size, the budget of the store's engine, the disk size and
-        ratio, the pressure tier and the capacity notice (spec 3.2,
-        Decision 48).
+        Returns the size of the stored data against the budget of the server's engine
+        (sqlite_budget_mib on SQLite, postgres_budget_mib on Postgres): bytes (the enforced
+        measure), the budget, the physical disk size and its ratio to bytes, the pressure
+        tier and, when the budget sweep has set one, the capacity notice text. Administrator
+        only. Any other caller gets 403 forbidden. Writes nothing: the tier is computed at
+        read time. No idempotency key: a read has nothing to repeat. Source: spec 3.2,
+        Decision 48, ADR 0004.
       responses:
         "200":
           description: Database usage for administrators.
@@ -2346,11 +2363,27 @@ paths:
       operationId: adminReset
       summary: "Reset the store (an administrator's reset)"
       tags: [admin]
+      description: >-
+        Wipes the bus data. With scope data (the default) it deletes the channels with their
+        messages, memories, tasks, ACLs and subscriptions, every session, the agent
+        statuses, the notices and the idempotency receipts, and keeps the identities with
+        their keys, the enrollment tokens, the users and administrators lists, the scopes,
+        the bridges and the signing keys. With scope everything it also removes every
+        identity except the caller and the reserved slack-bridge identity, every enrollment
+        token and the users list, and restarts the administrators list as the caller alone.
+        Either way the server then recreates the general channel and subscribes every
+        remaining identity to it except slack-bridge. Administrator only. Any other caller
+        gets 403 forbidden. Side effects: the data is gone for every client, sessions
+        included, and the watches are woken. Idempotency-Key: a repeat with the same key and
+        scope returns the first answer without wiping again; the same key with another scope
+        is 409 conflict. Without a key a second reset leaves the same empty state. Source:
+        ADR 0003 (the admin reset scope), Decision 12, Decision 48.
       parameters:
         - name: scope
-          description: "data keeps identities and keys; everything removes them too; default: data"
+          description: "What to wipe: data keeps the identities, their keys and the signing keys; everything removes the other identities, their keys and every enrollment token too. Default data."
           in: query
           required: false
+          example: data
           schema:
             type: string
             enum: [data, everything]
@@ -2376,6 +2409,18 @@ paths:
       operationId: resetCredential
       summary: "Remove an identity's registered keys"
       tags: [admin]
+      description: >-
+        Removes every registered key of the identity in the path and answers how many it
+        removed (0 is success), so the identity can no longer mint a bearer until a key is
+        registered for it again; a bearer already minted stays valid until it expires. A
+        human identity holds no keys: the call clears the provider subject recorded at its
+        first sign-in, so the next sign-in binds afresh, and the Slack account bound to it,
+        and answers 1 when a subject was recorded, else 0. A name that is not registered or
+        is reserved is 403 not_registered; a name the name rule refuses is 400 validation.
+        Administrator only. Any other caller gets 403 forbidden. Side effects: deletes the
+        key rows or clears the binding; nothing is appended. Idempotency-Key: a repeat with
+        the same key and body returns the first answer and changes nothing; the same key
+        with a different body is 409 conflict. Source: ADR 0002, Decision 58, Decision 73.
       parameters:
         - name: identity
           in: path
@@ -2383,8 +2428,11 @@ paths:
           schema:
             type: string
             maxLength: 384
+          example: acme-builder
           description: >-
-            At most 384 characters: the percent-encoded length (the server counts 128 decoded bytes).
+            The identity whose registered keys are removed, percent-encoded once; a human
+            identity's name is its email address. At most 384 characters: the percent-encoded
+            length (the server counts 128 decoded bytes).
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       responses:
         "200":
@@ -2413,10 +2461,11 @@ paths:
       summary: "List the server's token signing keys"
       tags: [admin]
       description: >-
-        The server's token signing key set, the active key first. Public
-        facts only: a private key is never part of the answer. Administrator
-        only. Local mode and a server without a key service answer 503
-        unavailable.
+        The server's token signing key set, the active key first. Public facts only: a
+        private key is never part of the answer. Administrator only. Any other caller gets
+        403 forbidden. Local mode and a server without a key service answer 503 unavailable,
+        not retryable. Writes nothing. No idempotency key: a read has nothing to repeat.
+        Source: ADR 0012, docs/ops/signing-keys.md.
       responses:
         "200":
           description: The signing key set.
@@ -2440,16 +2489,25 @@ paths:
       summary: "Rotate the active token signing key"
       tags: [admin]
       description: >-
-        Asks the configured key provider for the next key and makes it the
-        active key. The previous active key keeps verifying until its removal
-        time (state retiring), or is deleted at once with revoke_previous, which
-        also skips the rotation cooldown. Inside the cooldown a plain rotation
-        answers 409 conflict. Administrator only.
+        Asks the configured key provider for the next key and makes it the active key. The
+        previous active key becomes retiring and keeps verifying until its remove_after
+        time, or is deleted at once with revoke_previous, which also skips the rotation
+        cooldown and stops the bearers it signed from verifying. Inside the cooldown
+        (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a
+        plain rotation is 409 conflict, as is a provider whose next key is the active key.
+        Administrator only. Any other caller gets 403 forbidden. A provider that cannot
+        answer is 503 unavailable, retryable; local mode and a server without a key service
+        answer 503 unavailable, not retryable. Side effects: writes the new key row, retires
+        or deletes the previous one and refreshes the server's key set. Idempotency-Key: a
+        repeat with the same key and body returns the first answer and changes nothing; the
+        same key with a different body is 409 conflict. Source: ADR 0012,
+        docs/ops/signing-keys.md.
       parameters:
         - name: revoke_previous
-          description: "Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; default false"
+          description: "Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; the bearers the deleted key signed stop verifying. Default false."
           in: query
           required: false
+          example: false
           schema:
             type: boolean
             default: false
@@ -2478,6 +2536,18 @@ paths:
       operationId: createIdentityByEmail
       summary: "Create a human identity for an email address"
       tags: [admin]
+      description: >-
+        Creates the human identity for an email address, or returns the one already bound to
+        it. The address is trimmed and lowercased and the normalized address is the
+        identity's name; it must pass the name rule (at most 128 bytes), have one @ with
+        text on each side and not be a reserved name (400 validation otherwise). The
+        identity has no provider subject until the human first signs in, and is subscribed
+        to general. An address already bound to a human answers that identity with created
+        false; a name held by an agent, or by a human bound to another address, is 409
+        conflict. Administrator only. Any other caller gets 403 forbidden. Side effects:
+        writes the identity and its binding when it creates one. Idempotency-Key: a repeat
+        with the same key and body returns the first answer and changes nothing; the same
+        key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
@@ -2514,10 +2584,20 @@ paths:
       summary: "Create an agent identity, optionally in a scope, with a one-time enrollment token"
       tags: [admin]
       description: >-
-        Creates an agent identity, optionally in an open scope, and a one-time
-        enrollment token bound to its name (24 hours, one use). Administrator
-        only. The token is never stored in clear and is not in an idempotency
-        receipt, so the operation takes no idempotency key.
+        Creates a keyless agent identity, optionally in a scope, and a one-time enrollment
+        token bound to its name (24 hours, one use); the agent registers its own key with
+        the token, so the private key never leaves its host. An unscoped agent is subscribed
+        to general, a scoped one is not. The scope must be open: an unknown or retired one
+        is 404 not_found, a done one 409 conflict. A repeat for an existing keyless agent of
+        the same scope answers created false with a fresh token and revokes its earlier
+        unused tokens. A reserved or malformed name, and a scope given for a human or an
+        administrator, are 400 validation; an existing human, an identity in another scope
+        or in none, an identity that already has a key and a name held by a retired identity
+        are 409 conflict. Administrator only. Any other caller gets 403 forbidden. Side
+        effects: writes the identity and the token row. No idempotency key: the token is
+        never stored in clear and is not in an idempotency receipt, so a receipt could not
+        replay it; repeating the call issues a fresh token instead. Source: ADR 0009, ADR
+        0011.
       requestBody:
         description: "The agent identity's name and, optionally, its scope"
         required: true
@@ -2553,6 +2633,15 @@ paths:
       operationId: createScope
       summary: "Create a scope"
       tags: [admin]
+      description: >-
+        Creates an open scope: a named group of channels and agent identities that is
+        retired as one unit. The name follows the channel name rule and its prefix <name>-
+        must not overlap another scope's prefix or name a channel of another scope or of
+        none; a name that exists in any state, retired included, is 409 conflict, as is an
+        overlap. Administrator only. Any other caller gets 403 forbidden. Side effects:
+        writes the scope row with last_activity set to now. Idempotency-Key: a repeat with
+        the same key and body returns the first answer and changes nothing; the same key
+        with a different body is 409 conflict. Source: ADR 0009, ADR 0011.
       parameters:
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       requestBody:
@@ -2587,6 +2676,11 @@ paths:
       operationId: listScopes
       summary: "List scopes"
       tags: [admin]
+      description: >-
+        Lists the open and done scopes by name, without their channels and identities
+        (getScope fills those); retired scopes are not listed. Administrator only. Any other
+        caller gets 403 forbidden. Writes nothing. No idempotency key: a read has nothing to
+        repeat. Source: ADR 0009, ADR 0011.
       responses:
         "200":
           description: The open and done scopes, without their members.
@@ -2611,6 +2705,12 @@ paths:
       operationId: getScope
       summary: "Read a scope"
       tags: [admin]
+      description: >-
+        Returns one scope, open or done, with the names of its channels and identities. A
+        scope that does not exist or is retired is 404 not_found; a name the name rule
+        refuses is 400 validation. Administrator only. Any other caller gets 403 forbidden.
+        Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0009,
+        ADR 0011.
       responses:
         "200":
           description: The scope with its channel and identity names.
@@ -2635,6 +2735,22 @@ paths:
       operationId: doneScope
       summary: "Retire a scope, with or without its bridge"
       tags: [admin]
+      description: >-
+        Marks an open scope done and records how it is retired; this call retires nothing,
+        and nothing new may join a done scope (409 conflict). with_bridge needs a live
+        bridge of the scope (409 conflict otherwise) and the scope is retired once none of
+        its bridges is creating or live, which the bridge rules bring about
+        (slack_archive_after_done_hours after this call, an idle scope, or no human left in
+        the Slack channel). normal retires it when its last channel is removed by the normal
+        rules. Either way a scope with no message on any of its channels for
+        scope_idle_hours is retired too. Retirement, run by the maintenance job, deletes the
+        scope's bridges, its channels of every kind with their messages, subscriptions and
+        ACLs and its scoped identities with their keys and sessions, and keeps those names
+        reserved for good. A scope already done is 409 conflict; an unknown or retired one
+        is 404 not_found. Administrator only. Any other caller gets 403 forbidden. Side
+        effects: marks the scope done. Idempotency-Key: a repeat with the same key and body
+        returns the first answer and changes nothing; the same key with a different body is
+        409 conflict. Source: ADR 0009, ADR 0011.
       parameters:
         - $ref: "#/components/parameters/ScopeParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -2674,9 +2790,23 @@ paths:
       summary: "Bridge a channel to a new private Slack channel"
       tags: [admin]
       description: >-
-        Bridges a channel to a new private Slack channel. Unavailable (not
-        retryable) with the text "the Slack bridge is not configured" when the
-        server has no Slack bridge.
+        Bridges an ordinary channel of a scope to a new private Slack channel and starts
+        mirroring it. The channel must exist (404 not_found), be of kind ordinary and have a
+        scope (400 validation) and the scope must be open (409 conflict when done); its ACL
+        may not name everyone or humans nor give admins read or write (403 forbidden).
+        slack_name, when given, must match the pattern of the request (400 validation); a
+        Slack name already taken and a channel already bridged are 409 conflict. The call
+        creates the Slack channel, invites every human with write on the bus channel who is
+        a full member of the Slack workspace (guests and external users never are), adds a
+        read entry for slack-bridge to the ACL, subscribes slack-bridge and makes the bridge
+        live; the humans it could not invite are listed in not_invited and named in a notice
+        posted to Slack and to the channel. A failure part way leaves the bridge in state
+        creating and the next call resumes it. Administrator only. Any other caller gets 403
+        forbidden. Slack's rate limit is 429 rate_limited with Retry-After. A server with no
+        Slack bridge answers 503 unavailable, not retryable, with the text "the Slack bridge
+        is not configured"; before the bridge has reached Slack the 503 is retryable. No
+        idempotency key: a repeat on a live bridge is 409 conflict and on a creating one
+        resumes it. Source: ADR 0009, docs/ops/slack-bridge.md.
       requestBody:
         description: "The channel to bridge and, optionally, the Slack channel's name"
         required: true
@@ -2713,6 +2843,12 @@ paths:
       operationId: listBridges
       summary: "List bridges"
       tags: [admin]
+      description: >-
+        Lists every bridge by channel name, in any state (creating, live or archived).
+        Administrator only. Any other caller gets 403 forbidden. A server with no Slack
+        bridge answers 503 unavailable, not retryable; before the bridge has reached Slack
+        the 503 is retryable. Writes nothing. No idempotency key: a read has nothing to
+        repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
       responses:
         "200":
           description: Every bridge.
@@ -2737,6 +2873,13 @@ paths:
       operationId: getBridge
       summary: "Read a channel's bridge"
       tags: [admin]
+      description: >-
+        Returns the bridge of a channel, in any state, found by the channel name stored with
+        the bridge. A channel with no bridge, including one whose bridge was removed, is 404
+        not_found. Administrator only. Any other caller gets 403 forbidden. A server with no
+        Slack bridge answers 503 unavailable, not retryable; before the bridge has reached
+        Slack the 503 is retryable. Writes nothing. No idempotency key: a read has nothing
+        to repeat. Source: ADR 0009, docs/ops/slack-bridge.md.
       responses:
         "200":
           description: The channel's bridge.
@@ -2760,6 +2903,16 @@ paths:
       operationId: removeBridge
       summary: "Remove a channel's bridge, archiving its Slack channel"
       tags: [admin]
+      description: >-
+        Removes a channel's bridge: posts a final line to the Slack channel and archives it
+        (a channel already archived or gone counts as done), then deletes the bridge row
+        with its message map, unsubscribes slack-bridge from the bus channel and removes its
+        ACL entry. The bus channel and the scope stay. A channel with no bridge is 404
+        not_found. Administrator only. Any other caller gets 403 forbidden. Slack's rate
+        limit is 429 rate_limited with Retry-After. A server with no Slack bridge answers
+        503 unavailable, not retryable; before the bridge has reached Slack the 503 is
+        retryable. No idempotency key: a second call is 404 not_found because the bridge row
+        is gone. Source: ADR 0009, docs/ops/slack-bridge.md.
       responses:
         "204":
           description: The Slack channel is archived and the bridge is deleted.
@@ -3138,21 +3291,27 @@ components:
         type:
           type: string
           format: uri
+          example: urn:agentmesh:problem:not_found
           description: "A URN naming the code: the prefix urn:agentmesh:problem: followed by the code (RFC 9457 section 3.1.1)."
         title:
           type: string
+          example: Not Found
           description: "The HTTP status text of the status, for example Not Found."
         status:
           type: integer
+          example: 404
           description: "The HTTP status code of the response, repeated in the body."
         detail:
           type: string
+          example: 'channel "release-train" does not exist'
           description: "An explanation specific to this occurrence; absent when there is none. The health 503 and the token endpoint never carry the text of a store failure; an internal problem carries the truncated text of the failure."
         instance:
           type: string
+          example: /v1/channels/release-train/acl
           description: "The path of the request that failed, for example /v1/channels/release-train/acl; absent when the request is unknown."
         code:
           type: string
+          example: not_found
           description: agentmesh extension member (RFC 9457 section 3.2).
           # inspection_rejected is declared per operation (issue #33)
           enum:
@@ -3172,6 +3331,7 @@ components:
             - payload_too_large
         retryable:
           type: boolean
+          example: false
           description: agentmesh extension member (RFC 9457 section 3.2).
     Wake:
       example:
@@ -3922,7 +4082,7 @@ components:
         name:
           type: string
           maxLength: 128
-          description: "The new channel's name: no slash, and <scope>-<rest> in a scope. A name already taken is 409 conflict. At most 128 bytes (the server counts bytes)."
+          description: "The new channel's name: no slash; a scoped agent's names are <scope>-<rest> (administrators are exempt). A name already taken is 409 conflict. At most 128 bytes (the server counts bytes)."
         kind:
           type: string
           enum: [ordinary, memory, tasks]
@@ -4526,46 +4686,99 @@ components:
           maximum: 9223372036854775807
           description: "When the claim's lease ends, in Unix milliseconds; it must be in the future (400 validation). Absent or 0 sets none: a task claimed from pending then has no lease, and a task already in_progress keeps the lease it has."
     Notice:
+      example:
+        kind: capacity
+        message: "agentmesh storage is over budget: sqlite_budget_mib=2048 MiB holds 2200 MiB (disk 2400 MiB, 1.09x); orphaned and expired rows, idle task lists and memories, and ordinary messages older than 1 hour are being deleted to make room"
+        set_at: 1794099600000
       description: "A server notice shown to administrators: its kind, message and the time it was set."
       type: object
       required: [kind, message, set_at]
       properties:
         kind:
           type: string
+          description: "What the notice reports: capacity (storage is over its budget), embedding (the embedding service is failing) or inspection (the write inspector cannot answer)."
         message:
           type: string
+          description: "The notice text an operator reads."
         set_at:
           type: integer
           format: int64
+          description: "When the notice was set (rewritten, for an inspection notice that keeps failing), in Unix milliseconds."
     Status:
+      example:
+        sessions:
+          - id: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+            identity: acme-coder-1
+            display_name: acme-coder-1/builder
+            opened_at: 1794096000000
+        channels:
+          - name: general
+            kind: ordinary
+            capabilities: []
+            creator: ""
+            created_at: 1794092400000
+          - name: acme-ops
+            kind: ordinary
+            capabilities: [bridged]
+            creator: acme-coder-1
+            scope: acme
+            created_at: 1794096000000
+        notices:
+          - kind: capacity
+            message: "agentmesh storage is over budget: sqlite_budget_mib=2048 MiB holds 2200 MiB (disk 2400 MiB, 1.09x); orphaned and expired rows, idle task lists and memories, and ordinary messages older than 1 hour are being deleted to make room"
+            set_at: 1794099600000
+          - kind: embedding
+            message: "embedding service unreachable: connection refused"
+            set_at: 1794095000000
+        embedding_backlog: 3
+        embedding_rejected: 1
+        embedding_rejected_last: "input exceeds the model context window"
+        embedding_error: "embedding service unreachable: connection refused"
+        embedding_error_at: 1794095000000
       description: "The administrator's view: live sessions, every channel with its creator, server notices and the embedding backlog and rejections."
       type: object
       required: [sessions, channels, notices, embedding_backlog, embedding_rejected]
       properties:
         sessions:
           type: array
+          description: "The live sessions of every identity; empty when there are none."
           items:
             $ref: "#/components/schemas/SessionInfo"
         channels:
           type: array
+          description: "Every channel on the server, whatever its kind or scope, with its creator and capabilities."
           items:
             $ref: "#/components/schemas/ChannelInfo"
         notices:
           type: array
+          description: "The notices that are set, in the order capacity, embedding, inspection; empty when there are none."
           items:
             $ref: "#/components/schemas/Notice"
         embedding_backlog:
           type: integer
+          description: "Memories still waiting for an embedding, counted up to 1000; 0 when no embedding service is configured."
         embedding_rejected:
           type: integer
+          description: "How many memories the embedding service rejected for the configured model; 0 when no embedding service is configured."
         embedding_rejected_last:
           type: string
+          description: "The reason of the latest rejection; absent when there is none."
         embedding_error:
           type: string
+          description: "The text of the embedding notice while the service is failing; absent otherwise."
         embedding_error_at:
           type: integer
           format: int64
+          description: "When the embedding notice was set, in Unix milliseconds; absent while the service is not failing."
     Usage:
+      example:
+        bytes: 2306867200
+        budget_bytes: 2147483648
+        evictable: true
+        disk_bytes: 2516582400
+        disk_ratio: 1.0909
+        tier: soft
+        notice: "agentmesh storage is over budget: sqlite_budget_mib=2048 MiB holds 2200 MiB (disk 2400 MiB, 1.09x); orphaned and expired rows, idle task lists and memories, and ordinary messages older than 1 hour are being deleted to make room"
       description: "Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set."
       type: object
       required: [bytes, budget_bytes, evictable, disk_bytes, disk_ratio, tier]
@@ -4577,22 +4790,25 @@ components:
         budget_bytes:
           type: integer
           format: int64
+          description: "The budget of the server's engine (sqlite_budget_mib or postgres_budget_mib) in bytes."
         evictable:
           type: boolean
-          description: A budget is enforced.
+          description: "True when a budget is enforced, which it always is in this release."
         disk_bytes:
           type: integer
           format: int64
+          description: "The physical size of the store in bytes."
         disk_ratio:
           type: number
           format: double
-          description: disk_bytes / bytes; 0 when bytes is 0
+          description: "disk_bytes divided by bytes; 0 when bytes is 0."
         tier:
           type: string
           enum: [normal, approaching, soft, hard, exhausted]
+          description: "How close bytes is to the budget. normal: at or below the size a sweep stops at (the budget less cleanup_free_percent). approaching: above that and within the budget. soft: over the budget and the sweep still has rows it deletes first. hard: over the budget and only rows it deletes last remain. exhausted: over the budget and nothing is left to evict."
         notice:
           type: string
-          description: The capacity notice text, when one is set.
+          description: "The capacity notice text, when one is set."
     Health:
       example:
         status: degraded
@@ -4974,6 +5190,8 @@ components:
           type: boolean
           description: "True when this call created the identity, false when it already existed (a repeat of the same key included)."
     CreateIdentityByEmailRequest:
+      example:
+        email: dana@example.com
       description: Creates a human identity from an email address.
       type: object
       additionalProperties: false
@@ -4982,48 +5200,71 @@ components:
         email:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The email address the human identity is created for; it is trimmed and lowercased, and the result is the identity's name. At most 128 bytes (the server counts bytes)."
     HumanIdentity:
+      example:
+        identity: dana@example.com
+        created: true
       description: The normalized human identity name and whether this call created it.
       type: object
       required: [identity, created]
       properties:
         identity:
           type: string
+          description: "The identity's name: the normalized email address."
         created:
           type: boolean
+          description: "True when this call created the identity, false when the address was already bound to one."
     CredentialReset:
+      example:
+        identity: acme-builder
+        keys_removed: 1
       description: "The result of a credential reset: the identity and how many registered keys were removed."
       type: object
       required: [identity, keys_removed]
       properties:
         identity:
           type: string
+          description: "The identity whose credential was reset."
         keys_removed:
           type: integer
+          description: "How many registered keys were removed; for a human identity, 1 when a provider subject was cleared, else 0."
     SigningKey:
+      example:
+        kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+        state: retiring
+        provider: store
+        provider_ref: ""
+        algorithm: EdDSA
+        created_at: 1794096000000
+        retired_at: 1794182400000
+        remove_after: 1794268890000
       description: "One token signing key: its id, state, provider, algorithm and times."
       type: object
       required: [kid, state, provider, provider_ref, algorithm, created_at, retired_at, remove_after]
       properties:
         kid:
           type: string
-          description: The RFC 7638 thumbprint of the public key.
+          description: The RFC 7638 thumbprint of the public key; the kid that bearers carry and /v1/auth/jwks publishes.
         state:
           type: string
           enum: [active, retiring]
+          description: "active: the key signs new bearers. retiring: it no longer signs and verifies until remove_after."
         provider:
           type: string
           enum: [store, awskms, gcpkms, azurekms, hashivault]
+          description: "Where the private key lives: store (a database row) or an external key service."
         provider_ref:
           type: string
           description: The key URI inside an external provider; empty for the store provider.
         algorithm:
           type: string
+          description: "The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key."
           enum: [EdDSA, ES256]
         created_at:
           type: integer
           format: int64
+          description: "When the key was created, in Unix milliseconds."
         retired_at:
           type: integer
           format: int64
@@ -5033,15 +5274,54 @@ components:
           format: int64
           description: Unix milliseconds, the earliest removal of a retiring key; 0 while the key is active.
     SigningKeyList:
+      example:
+        keys:
+          - kid: ZXhhbXBsZS1uZXh0LWtleS1pZC1ub3QtcmVhbC0zMmI
+            state: active
+            provider: store
+            provider_ref: ""
+            algorithm: EdDSA
+            created_at: 1794182400000
+            retired_at: 0
+            remove_after: 0
+          - kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+            state: retiring
+            provider: store
+            provider_ref: ""
+            algorithm: EdDSA
+            created_at: 1794096000000
+            retired_at: 1794182400000
+            remove_after: 1794268890000
       description: The server's token signing keys.
       type: object
       required: [keys]
       properties:
         keys:
           type: array
+          description: "The key set, the active key first; public facts only."
           items:
             $ref: "#/components/schemas/SigningKey"
     SigningKeyRotation:
+      example:
+        active:
+          kid: ZXhhbXBsZS1uZXh0LWtleS1pZC1ub3QtcmVhbC0zMmI
+          state: active
+          provider: store
+          provider_ref: ""
+          algorithm: EdDSA
+          created_at: 1794182400000
+          retired_at: 0
+          remove_after: 0
+        previous:
+          kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+          state: retiring
+          provider: store
+          provider_ref: ""
+          algorithm: EdDSA
+          created_at: 1794096000000
+          retired_at: 1794182400000
+          remove_after: 1794268890000
+        revoked: false
       description: "The result of a rotation: the new active key, the key that was active before and whether that key was deleted."
       type: object
       required: [active, revoked]
@@ -5055,6 +5335,9 @@ components:
           type: boolean
           description: True when previous was deleted instead of retired.
     CreateAgentIdentityRequest:
+      example:
+        name: acme-builder
+        scope: acme
       description: Creates an agent identity by name, optionally in a scope.
       type: object
       additionalProperties: false
@@ -5063,28 +5346,41 @@ components:
         name:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The agent identity's name: not a reserved name and not the name of a retired identity. At most 128 bytes (the server counts bytes)."
         scope:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The open scope the identity joins; absent makes an unscoped agent. At most 128 bytes (the server counts bytes)."
     AgentIdentity:
+      example:
+        identity: acme-builder
+        scope: acme
+        created: true
+        enrollment_token: abe_ZXhhbXBsZS1lbnJvbGxtZW50LXRvay1ub3QtcmVhbDE
+        expires_at: 1794182400000
       description: "The result of creating an agent identity: the identity, its scope, whether this call created it and the one-time enrollment token bound to the name with its expiry."
       type: object
       required: [identity, created, enrollment_token, expires_at]
       properties:
         identity:
           type: string
+          description: "The agent identity's name."
         scope:
           type: string
+          description: "The identity's scope; absent for an unscoped agent."
         created:
           type: boolean
+          description: "True when this call created the identity, false when it already existed as a keyless agent of the same scope."
         enrollment_token:
           type: string
+          description: "The one-time enrollment token bound to the name, valid for 24 hours; the agent presents it with its public key to register. The server never stores it in clear: this answer is the only copy."
         expires_at:
           type: integer
           format: int64
+          description: "When the token expires, in Unix milliseconds."
     CreateScopeRequest:
+      example:
+        name: acme
       description: Creates a scope by name.
       type: object
       additionalProperties: false
@@ -5093,8 +5389,10 @@ components:
         name:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The scope's name; a scoped agent's channels are named <name>-<rest>, so the name is also the prefix of those channels. At most 128 bytes (the server counts bytes)."
     DoneScopeRequest:
+      example:
+        retire: normal
       description: Retires a scope; retire is with_bridge or normal.
       type: object
       additionalProperties: false
@@ -5103,46 +5401,80 @@ components:
         retire:
           type: string
           enum: [with_bridge, normal]
+          description: "with_bridge: retire the scope once its Slack channel is archived (409 conflict when the scope has no live bridge). normal: retire it when its last channel is removed by the normal rules."
     Scope:
+      example:
+        name: acme
+        state: done
+        retire: normal
+        created_at: 1794096000000
+        done_at: 1794182400000
+        last_activity: 1794099600000
+        channels: [acme-ops]
+        identities: [acme-builder]
       description: A named group of channels and agent identities retired as one unit; channels and identities are filled on a get only.
       type: object
       required: [name, state, created_at, last_activity]
       properties:
         name:
           type: string
+          description: "The scope's name; also the prefix of its channels' names (<name>-<rest>)."
         state:
           type: string
           enum: [open, done, retired]
+          description: "open: the scope takes new channels and identities. done: an administrator marked it done and nothing new may join it. retired: its resources are gone; this API never returns a retired scope (the list omits it, a get answers 404)."
         retire:
           type: string
           enum: [with_bridge, normal]
+          description: "How the scope is retired; present once the scope is done."
         created_at:
           type: integer
           format: int64
+          description: "When the scope was created, in Unix milliseconds."
         done_at:
           type: integer
           format: int64
+          description: "When the scope was marked done, in Unix milliseconds; absent while it is open."
         last_activity:
           type: integer
           format: int64
+          description: "The time of the latest message on any of the scope's channels, in Unix milliseconds; the creation time until the first message. The idle rule (scope_idle_hours) reads it."
         channels:
           type: array
+          description: "The names of the scope's channels; present on a get only (an empty array is a scope with none)."
           items:
             type: string
         identities:
           type: array
+          description: "The names of the scope's agent identities; present on a get only."
           items:
             type: string
     ScopeList:
+      example:
+        scopes:
+          - name: acme
+            state: done
+            retire: normal
+            created_at: 1794096000000
+            done_at: 1794182400000
+            last_activity: 1794099600000
+          - name: globex
+            state: open
+            created_at: 1794092400000
+            last_activity: 1794092400000
       description: The scopes of the server.
       type: object
       required: [scopes]
       properties:
         scopes:
           type: array
+          description: "The open and done scopes by name, without their channels and identities; retired scopes are left out."
           items:
             $ref: "#/components/schemas/Scope"
     CreateBridgeRequest:
+      example:
+        channel: acme-ops
+        slack_name: acme-ops
       description: Creates a bridge from a bus channel to a Slack channel, optionally with a Slack channel name.
       type: object
       additionalProperties: false
@@ -5151,45 +5483,78 @@ components:
         channel:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The ordinary channel to bridge: it must belong to an open scope. At most 128 bytes (the server counts bytes)."
         slack_name:
           type: string
           maxLength: 80
           pattern: ^[a-z0-9_-]{1,80}$
           description: >-
-            At most 80 code points of lowercase letters, digits, underscore and hyphen.
+            The name of the new Slack channel; absent, the bus channel's name is used, lowercased with every
+            other character turned into a hyphen. At most 80 code points of lowercase letters, digits,
+            underscore and hyphen.
     Bridge:
+      example:
+        channel: acme-docs
+        scope: acme
+        slack_channel_id: C0EXAMPLE02
+        slack_name: acme-docs
+        state: archived
+        created_at: 1794096000000
+        archived_at: 1794182400000
       description: The link between a bus channel and a Slack channel, with its state and times.
       type: object
       required: [channel, scope, slack_name, state, created_at]
       properties:
         channel:
           type: string
+          description: "The bridged bus channel's name."
         scope:
           type: string
+          description: "The scope of the bridged channel."
         slack_channel_id:
           type: string
+          description: "Slack's id of the private channel; absent until Slack has created it."
         slack_name:
           type: string
+          description: "The name of the Slack channel."
         state:
           type: string
           enum: [creating, live, archived]
+          description: "creating: the bridge is reserved and its Slack channel is being set up (a create that failed part way stays here until the next create resumes it). live: the bridge mirrors the bus channel to Slack and Slack to the bus channel. archived: the Slack channel is archived and nothing is mirrored."
         created_at:
           type: integer
           format: int64
+          description: "When the bridge was reserved, in Unix milliseconds."
         archived_at:
           type: integer
           format: int64
+          description: "When the bridge was archived, in Unix milliseconds; absent until then."
     BridgeNotInvited:
+      example:
+        identity: dana@example.com
+        reason: not found in Slack
       description: A human the bridge could not invite, and why.
       type: object
       required: [identity, reason]
       properties:
         identity:
           type: string
+          description: "The human identity, which is its email address, that Slack did not invite."
         reason:
           type: string
+          description: "Why: not found in Slack (no Slack account for the address, or a bot or deleted one), Slack guest or external user, or invite failed followed by Slack's error code."
     BridgeCreated:
+      example:
+        bridge:
+          channel: acme-ops
+          scope: acme
+          slack_channel_id: C0EXAMPLE01
+          slack_name: acme-ops
+          state: live
+          created_at: 1794096000000
+        not_invited:
+          - identity: dana@example.com
+            reason: not found in Slack
       description: The created bridge and the humans it could not invite.
       type: object
       required: [bridge, not_invited]
@@ -5198,14 +5563,31 @@ components:
           $ref: "#/components/schemas/Bridge"
         not_invited:
           type: array
+          description: "Every human with write on the channel whom Slack could not invite; empty when all were invited."
           items:
             $ref: "#/components/schemas/BridgeNotInvited"
     BridgeList:
+      example:
+        bridges:
+          - channel: acme-docs
+            scope: acme
+            slack_channel_id: C0EXAMPLE02
+            slack_name: acme-docs
+            state: archived
+            created_at: 1794096000000
+            archived_at: 1794182400000
+          - channel: acme-ops
+            scope: acme
+            slack_channel_id: C0EXAMPLE01
+            slack_name: acme-ops
+            state: live
+            created_at: 1794096000000
       description: The bridges of the server.
       type: object
       required: [bridges]
       properties:
         bridges:
           type: array
+          description: "Every bridge by channel name, in any state."
           items:
             $ref: "#/components/schemas/Bridge"
