@@ -230,6 +230,22 @@ func TestFromStoreMapping(t *testing.T) {
 	}
 }
 
+// A store outage is one fixed sentence whatever the driver said; the driver's
+// text is only the Cause, which the server logs.
+func TestFromStoreOutageHidesDriverText(t *testing.T) {
+	cause := fmt.Errorf("%w: failed to connect to `user=app database=agentmesh host=10.0.0.1`", store.ErrRetryable)
+	be, ok := FromStore(cause).(*bus.Error)
+	if !ok {
+		t.Fatal("not a *bus.Error")
+	}
+	if be.Code != bus.CodeUnavailable || !be.Retryable || be.Message != bus.StoreUnavailableMessage || be.Cause != cause {
+		t.Errorf("FromStore = %+v", be)
+	}
+	if strings.Contains(be.Error(), "agentmesh") {
+		t.Errorf("rendered error carries the driver text: %s", be.Error())
+	}
+}
+
 func TestEFixedRetryable(t *testing.T) {
 	table := map[bus.Code]bool{
 		bus.CodeRateLimited: true, bus.CodeUnavailable: true, bus.CodeInternal: true,

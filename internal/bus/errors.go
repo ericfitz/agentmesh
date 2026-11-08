@@ -82,6 +82,22 @@ type Error struct {
 	// duration; on the remote Bus it is whole seconds (the header's value). It
 	// is not part of the JSON form, so Error() is unchanged.
 	RetryAfter time.Duration `json:"-"`
+	// Cause is the underlying error the server logs and never sends (a store
+	// outage's driver text); it is not part of the JSON form, so Error() is
+	// unchanged. Nothing unwraps it: errors.Is does not see through a Cause.
+	Cause error `json:"-"`
+}
+
+// StoreUnavailableMessage is the one detail of a store outage: the driver's
+// own text (a closed handle, pgx's connect error with the user, database and
+// host) never reaches a client; it travels as Error.Cause for the server log.
+const StoreUnavailableMessage = "the store is temporarily unavailable"
+
+// StoreUnavailable is the unavailable error of a Store outage or a
+// transaction that could not complete: retryable, a fixed message, the cause
+// kept for the log.
+func StoreUnavailable(cause error) *Error {
+	return &Error{Code: CodeUnavailable, Message: StoreUnavailableMessage, Retryable: true, Cause: cause}
 }
 
 // Error renders the JSON form, as v1 did.

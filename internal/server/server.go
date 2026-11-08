@@ -97,6 +97,10 @@ func New(c *core.Core, o Options) http.Handler {
 				log.Debug("client gone; nothing written", "path", r.URL.Path, "err", err)
 				return
 			}
+			var be *bus.Error
+			if errors.As(err, &be) && be.Cause != nil {
+				log.Warn("request failed", "path", r.URL.Path, "code", string(be.Code), "cause", be.Cause.Error())
+			}
 			responseError(w, r, err)
 		},
 	})

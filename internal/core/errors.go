@@ -46,7 +46,7 @@ func FromStore(err error) error {
 	case errors.Is(err, store.ErrInvalid):
 		return E(bus.CodeValidation, "%s", reason(err, store.ErrInvalid))
 	case errors.Is(err, store.ErrRetryable):
-		return E(bus.CodeUnavailable, "%s", reason(err, store.ErrRetryable))
+		return bus.StoreUnavailable(err)
 	}
 	return bus.Internal(err)
 }

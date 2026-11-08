@@ -59,7 +59,7 @@ func fromStore(err error) error {
 	case errors.Is(err, store.ErrNotFound):
 		return bus.Errorf(bus.CodeNotFound, false, "%s", err.Error())
 	case errors.Is(err, store.ErrRetryable):
-		return bus.Errorf(bus.CodeUnavailable, true, "%s", err.Error())
+		return bus.StoreUnavailable(err)
 	}
 	return bus.Internal(err)
 }

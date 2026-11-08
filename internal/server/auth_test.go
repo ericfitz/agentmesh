@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"encoding/json"
@@ -740,7 +741,7 @@ func TestTokenServerError(t *testing.T) {
 	if resp.StatusCode != 503 || resp.Header.Get("Content-Type") != "application/json" || resp.Header.Get("Cache-Control") != "no-store" {
 		t.Fatalf("%d %q %q", resp.StatusCode, resp.Header.Get("Content-Type"), b)
 	}
-	if want := `{"error":"temporarily_unavailable","error_description":"the store is unavailable, retry"}`; strings.TrimSpace(b) != want {
+	if want := `{"error":"temporarily_unavailable","error_description":"the store is temporarily unavailable"}`; strings.TrimSpace(b) != want {
 		t.Fatalf("body %q, want %q", b, want)
 	}
 }
@@ -1047,5 +1048,37 @@ func TestRegisterRefusesWideJWK(t *testing.T) {
 	wantAuthProblem(t, post(1), 400, "validation", "16")
 	if resp := post(0); resp.StatusCode != 201 {
 		t.Fatalf("16 members: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+}
+
+// A store outage behind an ordinary operation is a 503 problem+json whose
+// detail is one fixed sentence: never the driver's text ("sql: database is
+// closed", or pgx's connect error naming the user, database and host).
+const storeUnavailableText = "the store is temporarily unavailable"
+
+func TestStoreOutageDetailIsFixed(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	var logs bytes.Buffer
+	e.opts.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	if err := e.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := e.client("pat").ListChannelsWithResponse(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := problemOf(t, r.Body)
+	if r.StatusCode() != 503 || p.Code != "unavailable" || !p.Retryable {
+		t.Fatalf("%d %+v", r.StatusCode(), p)
+	}
+	if p.Detail == nil || *p.Detail != storeUnavailableText {
+		t.Fatalf("detail = %v, want %q", p.Detail, storeUnavailableText)
+	}
+	if p.Instance == nil || *p.Instance != "/v1/channels" {
+		t.Fatalf("instance = %v", p.Instance)
+	}
+	// The driver's text is in the server log, not the response.
+	if !strings.Contains(logs.String(), "sql: database is closed") {
+		t.Fatalf("log lacks the cause: %q", logs.String())
 	}
 }

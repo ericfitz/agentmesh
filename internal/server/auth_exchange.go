@@ -121,6 +121,7 @@ func (a *api) tokenExchange(ctx context.Context, b *gen.TokenFormdataRequestBody
 		IssuerName: ext.Name, Issuer: ext.Issuer, Email: fed.Email, Groups: fed.Groups, Subject: fed.Subject,
 	})
 	if err != nil {
+		a.logCause(err)
 		oe := oauthFromBus(err, true)
 		// The email claim is the identity the sign-in aimed at; it is not a token.
 		who, _ := identities.NormalizeEmail(fed.Email)

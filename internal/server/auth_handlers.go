@@ -23,6 +23,15 @@ func issuerUnavailable() error {
 	return bus.Errorf(bus.CodeUnavailable, false, "token issuer not configured") // not retryable: a configuration state, not an outage
 }
 
+// logCause leaves the cause of a bus error (a store outage's driver text,
+// which no client sees) in the server log.
+func (a *api) logCause(err error) {
+	var be *bus.Error
+	if errors.As(err, &be) && be.Cause != nil {
+		a.log.Warn("token endpoint: request failed", "code", string(be.Code), "cause", be.Cause.Error())
+	}
+}
+
 // noStoreToken adds the RFC 6749 section 5.1 cache headers to a 200 token
 // response.
 type noStoreToken struct{ gen.Token200JSONResponse }
@@ -86,6 +95,7 @@ func (a *api) clientCredentials(ctx context.Context, iss *token.Issuer, b *gen.T
 		if bus.CodeOf(err) == bus.CodeNotFound {
 			return refuse("unknown identity or key")
 		}
+		a.logCause(err)
 		return oauthFromBus(err, false)
 	}
 	now := a.core.Now()
@@ -107,7 +117,9 @@ func (a *api) clientCredentials(ctx context.Context, iss *token.Issuer, b *gen.T
 		return refuse("assertion replayed")
 	}
 	if err != nil {
-		return oauthFromBus(core.FromStore(err), false)
+		err = core.FromStore(err)
+		a.logCause(err)
+		return oauthFromBus(err, false)
 	}
 	raw, _, err := iss.Mint(ctx, token.MintInput{Identity: p.Identity, Kind: token.KindAgent})
 	if errors.Is(err, token.ErrSignerUnavailable) {
