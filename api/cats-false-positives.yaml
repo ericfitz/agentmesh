@@ -78,3 +78,39 @@ rules:
   - id: OPEN_OPERATION
     why: "The 8 open operations declare security [] (api/openapi.yaml: GET /v1/health, /v1/discover, /v1/auth/jwks, the three /.well-known/*, POST /v1/auth/token and /v1/auth/register), so a request without a bearer is answered: 200, or the body's 400. CATS's BypassAuthentication expects 401 or 403."
     when: {response_code: {in: [200, 400]}, fuzzer: BypassAuthentication, path: {in: [/v1/health, /v1/discover, /v1/auth/jwks, /.well-known/agentmesh, /.well-known/oauth-authorization-server, /.well-known/openid-configuration, /v1/auth/token, /v1/auth/register]}}
+  - id: TOKEN_ENDPOINT_OAUTH_400
+    why: "POST /v1/auth/token answers every malformed request with the RFC 6749 section 5.2 body (spec section 8.1; tokenRequestError and rejectRepeatedTokenParams in internal/server/oauth.go), not problem+json; CATS cannot sign a client assertion, so its field fuzzers never reach 200."
+    when: {response_code: 400, path: /v1/auth/token}
+  - id: TOKEN_ENDPOINT_OAUTH_401
+    why: "ExamplesFields sends the spec's example assertion, which names no registered key; 401 invalid_client is the RFC 6749 section 5.2 answer (spec section 8.1)."
+    when: {response_code: 401, path: /v1/auth/token, fuzzer: ExamplesFields}
+  - id: NET_HTTP_400_AFTER_BAD_CONTENT_LENGTH
+    why: "net/http's connection-level '400 Bad Request' (text/plain, 15 bytes) on the request that follows an InvalidContentLengthHeaders test on the same connection; no handler ran (no text/plain writer exists in internal/server; the transport family of Open item 1)."
+    when: {response_code: 400, response_content_type: {starts_with: text/plain}, result_reason: "Response content type not matching the contract"}
+  - id: READ_TIMEOUT_954
+    why: "CATS records its pseudo-code 954 when it times out reading the answer to an InvalidContentLengthHeaders request (the server waits for the declared body); a sibling of 999, not an HTTP status (plan ruling 35)."
+    when: {response_code: 954, fuzzer: InvalidContentLengthHeaders}
+  - id: UNKNOWN_METHOD_404
+    why: "An undeclared method answers 404 not_found with detail 'method not allowed' by design (TestUndeclaredMethodsRefused, internal/server/routes_test.go:172; ADR 0002 audit; Open item 2 default); CATS expects 405."
+    when: {response_code: 404, fuzzer: {in: [HttpMethods, NonRestHttpMethods, CustomHttpMethods]}, result_reason: {starts_with: "Unexpected response code"}}
+  - id: ACCEPT_NOT_NEGOTIATED
+    why: "The server does no Accept negotiation (no non-test file in internal/server reads the Accept header; Open item 2 default): under an unsupported or dummy Accept the operation answers as it would without the header, 2xx or the same 4xx. CATS expects 406."
+    when: {response_code: {in: [200, 201, 204, 400, 403, 404, 409]}, fuzzer: {in: [UnsupportedAcceptHeaders, DummyAcceptHeaders]}}
+  - id: CONTENT_TYPE_NOT_CHECKED
+    why: "An unsupported Content-Type on an operation with a body is refused by the request validator as 400 validation (problem+json) and ignored on a bodiless operation, where the normal answer follows; the spec declares BadRequest, not 415 (ADR 0001 addendum, the 11 shared responses; Open item 2 default)."
+    when: {response_code: {in: [200, 201, 204, 400, 403, 404, 409]}, fuzzer: {in: [UnsupportedContentTypesHeaders, DummyContentTypeHeaders]}}
+  - id: DUPLICATE_HEADERS_2XX
+    why: "net/http joins a repeated request header and the operation answers normally (2xx, or the 409 the same create gets anyway); CATS expects 4xx."
+    when: {response_code: {in: [200, 201, 204, 409]}, fuzzer: DuplicateHeaders}
+  - id: SECURITY_HEADERS_JSON_API
+    why: "CATS's recommended browser headers (X-Frame-Options, Content-Security-Policy frame-ancestors, X-Content-Type-Options, Cache-Control no-store) are not part of the API contract; the server serves JSON to non-browser clients (plan ruling 34; a header middleware is Open item 7 for Eric, default the rule)."
+    when: {response_code: {in: [200, 201, 204, 400, 403, 404, 409]}, fuzzer: CheckSecurityHeaders, result_reason: "Missing recommended security headers"}
+  - id: NO_REQUEST_BODY_IGNORED
+    why: "POST /v1/tasks/{id}/release, POST /v1/admin/reset, POST /v1/admin/identities/{identity}/reset-credential and POST /v1/admin/signing-keys/rotate (revoke_previous is a query parameter) declare no requestBody (api/openapi.yaml), so a body the fuzzer invents is ignored and the normal 200 or 204 follows."
+    when: {response_code: {in: [200, 204]}, path: {in: ["/v1/tasks/{id}/release", /v1/admin/reset, "/v1/admin/identities/{identity}/reset-credential", /v1/admin/signing-keys/rotate]}, fuzzer: {in: [RandomDummyInvalidJsonBody, NewFields, InvalidContentLengthHeaders]}}
+  - id: ROTATION_COOLDOWN_409
+    why: "The harness runs the standalone server with signing_key_rotation_cooldown_seconds=1, the setting's floor (Task 8.1 g; internal/server/config), and CATS fires many requests per second, so after a rotation succeeds (Step 2b HappyPath Test 1 and NewFields Test 46 answered 200) every rotation within the same second is the documented 409 ErrCooldown (internal/core/signingkeys/service.go:324; ADR 0012)."
+    when: {response_code: 409, path: /v1/admin/signing-keys/rotate, json_body.code: conflict, json_body.detail: {contains: "the next rotation is allowed at"}}
+  - id: RESET_CREDENTIAL_UNKNOWN_IDENTITY_403
+    why: "RandomResources and InvalidReferencesFields mangle the identity path variable (cats-victim.json, a UUID, a random word); an identity that was never registered answers the documented 403 not_registered (components/responses/Forbidden code enum; internal/core/identities/admin.go:33). The real target cats-victim answered 200 (Step 2b HappyPath Test 1)."
+    when: {response_code: 403, path: "/v1/admin/identities/{identity}/reset-credential", json_body.code: not_registered}
