@@ -4310,6 +4310,7 @@ components:
         Content cannot be cleared (an empty content is a validation error).
         A request with no field is a validation error.
       additionalProperties: false
+      minProperties: 1
       properties:
         if_revision:
           type: integer
