@@ -3926,8 +3926,8 @@ components:
         tag:
           type: string
           description: >-
-            The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed. At most 256 code points.
-          maxLength: 256
+            The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed.
+          enum: [idle, planning, implementing, reviewing, waiting, blocked, needs-human]
         text:
           type: string
           maxLength: 200

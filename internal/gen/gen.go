@@ -430,6 +430,39 @@ func (e ScopeState) Valid() bool {
 	}
 }
 
+// Defines values for SetAgentStatusRequestTag.
+const (
+	Blocked      SetAgentStatusRequestTag = "blocked"
+	Idle         SetAgentStatusRequestTag = "idle"
+	Implementing SetAgentStatusRequestTag = "implementing"
+	NeedsHuman   SetAgentStatusRequestTag = "needs-human"
+	Planning     SetAgentStatusRequestTag = "planning"
+	Reviewing    SetAgentStatusRequestTag = "reviewing"
+	Waiting      SetAgentStatusRequestTag = "waiting"
+)
+
+// Valid indicates whether the value is a known member of the SetAgentStatusRequestTag enum.
+func (e SetAgentStatusRequestTag) Valid() bool {
+	switch e {
+	case Blocked:
+		return true
+	case Idle:
+		return true
+	case Implementing:
+		return true
+	case NeedsHuman:
+		return true
+	case Planning:
+		return true
+	case Reviewing:
+		return true
+	case Waiting:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SigningKeyAlgorithm.
 const (
 	SigningKeyAlgorithmES256 SigningKeyAlgorithm = "ES256"
@@ -1476,12 +1509,15 @@ type SetAgentStatusRequest struct {
 	// Problem One line saying what blocks the agent; optional, usually with blocked or needs-human. At most 200 code points.
 	Problem *string `json:"problem,omitempty"`
 
-	// Tag The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed. At most 256 code points.
-	Tag string `json:"tag"`
+	// Tag The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed.
+	Tag SetAgentStatusRequestTag `json:"tag"`
 
 	// Text One line saying what the agent is doing now; required, and surrounding spaces are trimmed. At most 200 code points.
 	Text string `json:"text"`
 }
+
+// SetAgentStatusRequestTag The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed.
+type SetAgentStatusRequestTag string
 
 // SigningKey One token signing key: its id, state, provider, algorithm and times.
 type SigningKey struct {

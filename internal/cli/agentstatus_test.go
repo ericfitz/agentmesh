@@ -66,7 +66,7 @@ func TestAgentStatusUnknownTagExit1(t *testing.T) {
 	e := newTestEnv(t)
 	sess := parkSession(t, e)
 	code, so, se := runAS(t, e, "set", "-session", sess.ID, "bogus", "x")
-	if code != 1 || so != "" || !strings.HasPrefix(se, `agentmesh: validation: unknown tag "bogus": `) {
+	if code != 1 || so != "" || !strings.HasPrefix(se, "agentmesh: validation: request body: /tag: value must be one of ") {
 		t.Fatalf("exit %d stdout %q stderr %q", code, so, se)
 	}
 }

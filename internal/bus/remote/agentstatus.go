@@ -37,7 +37,7 @@ func FromGenAgentStatusEntry(e gen.AgentStatusEntry) (ab2bus.AgentStatusEntry, e
 // SetAgentStatusRequest builds the request for SetAgentStatus; Body is always
 // set and problem is absent when empty.
 func SetAgentStatusRequest(in ab2bus.SetAgentStatusInput) gen.SetAgentStatusRequestObject {
-	body := gen.SetAgentStatusJSONRequestBody{Tag: string(in.Tag), Text: in.Text, Problem: strPtr(in.Problem)}
+	body := gen.SetAgentStatusJSONRequestBody{Tag: gen.SetAgentStatusRequestTag(in.Tag), Text: in.Text, Problem: strPtr(in.Problem)}
 	return gen.SetAgentStatusRequestObject{
 		Session: in.Session,
 		Params:  gen.SetAgentStatusParams{IdempotencyKey: key(in.IdempotencyKey)},

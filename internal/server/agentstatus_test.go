@@ -77,8 +77,9 @@ func TestSetAgentStatusWire(t *testing.T) {
 			t.Errorf("%s: status %d code %q: %s", name, code, p.Code, raw)
 		}
 	}
+	// The spec's enum refuses an empty tag before the core does (issue #30).
 	_, raw = statusReq(t, e.env, "pat", http.MethodPost, path, "", `{"tag":"","text":"x"}`)
-	if !strings.Contains(string(raw), "tag is required") {
+	if !strings.Contains(string(raw), "/tag: value must be one of") {
 		t.Errorf("empty tag text: %s", raw)
 	}
 

@@ -72,7 +72,6 @@ probe schemas/SendRequest.tags send_tags_items
 probe schemas/SendRequest.tags[] send_tag_len
 probe schemas/SendRequest.type send_type_runes
 probe schemas/SetAgentStatusRequest.problem status_problem_runes
-probe schemas/SetAgentStatusRequest.tag status_tag_runes
 probe schemas/SetAgentStatusRequest.text status_text_runes
 probe schemas/TagPatterns.patterns subscribe_tags_items
 probe schemas/TagPatterns.patterns[] subscribe_tags_pattern_len

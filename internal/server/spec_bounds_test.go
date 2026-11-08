@@ -207,7 +207,6 @@ var bounds = map[string]bound{
 	"schemas/SendRequest.type":           labelBound("send type"),
 
 	"schemas/SetAgentStatusRequest.problem": lineBound("agent status problem"),
-	"schemas/SetAgentStatusRequest.tag":     labelBound("agent status tag"),
 	"schemas/SetAgentStatusRequest.text":    lineBound("agent status text"),
 
 	"schemas/TagPatterns.patterns":   patternsBound("tag subscription patterns"),
@@ -397,8 +396,10 @@ func TestSpecBounds(t *testing.T) {
 	})
 
 	// Ruling 5: the request side keeps the six enums it had; the core-owned
-	// vocabularies (status tags, task statuses, token grant types) stay
-	// strings so the core's own messages are what a client sees.
+	// vocabularies (task statuses, token grant types) stay strings so the
+	// core's own messages are what a client sees. The status tag gained its
+	// enum in issue #30 (CATS: the spec presented a refused value as a free
+	// string); bus.SettableStatusTags is the source of the seven members.
 	t.Run("enums", func(t *testing.T) {
 		_, enums := walkRequests(Spec())
 		sort.Strings(enums)
@@ -408,6 +409,7 @@ func TestSpecBounds(t *testing.T) {
 			"schemas/ACLEntry.permissions[]",
 			"schemas/CreateChannelRequest.kind",
 			"schemas/DoneScopeRequest.retire",
+			"schemas/SetAgentStatusRequest.tag",
 			"schemas/SubscribeRequest.from",
 		}
 		if fmt.Sprint(enums) != fmt.Sprint(want) {

@@ -38,7 +38,8 @@ func TestSetStatusUnknownTagFromServer(t *testing.T) {
 	r := startServer(t, e, newFakeTable(), "claude-code")
 	r.must(t, "register", nil)
 	be := r.failure(t, "set_status", map[string]any{"tag": "bogus", "text": "x"}, bus.CodeValidation)
-	if !strings.Contains(be.Message, `unknown tag "bogus"`) {
+	// The spec's enum on the tag refuses it first (issue #30).
+	if !strings.Contains(be.Message, "/tag: value must be one of") {
 		t.Fatalf("message = %q", be.Message)
 	}
 }
