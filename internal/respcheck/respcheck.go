@@ -3,12 +3,14 @@ package respcheck
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -23,6 +25,64 @@ import (
 // violation: the checker counts it (Skipped) and Transport and Proxy do not
 // report it.
 var ErrNoRoute = errors.New("respcheck: no operation matches the request")
+
+// Exception names one request a test may answer 500 to on purpose. The
+// no-500 rule (Eric 2026-11-08, ADR 0001) makes a 500 seen in any test a
+// must-fix bug, so the table is empty today and an entry needs a Reason. Path
+// is the document's path template (for example "/v1/things/{id}"); an entry
+// that names no operation of the checked document is stale and TestExceptions
+// fails it.
+type Exception struct {
+	Method string
+	Path   string
+	Reason string
+}
+
+// Exceptions is the one table of deliberate 500 answers; it is empty.
+var Exceptions = []Exception{}
+
+func (c *Checker) excepted(method, template string) bool {
+	for _, e := range Exceptions {
+		if e.Method == method && e.Path == template {
+			return true
+		}
+	}
+	return false
+}
+
+// StaleExceptions lists the Exceptions entries that name no operation of the
+// document the Checker was built over.
+func (c *Checker) StaleExceptions(doc *openapi3.T) []Exception {
+	var stale []Exception
+	for _, e := range Exceptions {
+		if e.Reason == "" || doc.Paths.Find(e.Path) == nil || doc.Paths.Find(e.Path).GetOperation(e.Method) == nil {
+			stale = append(stale, e)
+		}
+	}
+	return stale
+}
+
+// noFiveHundred is the guard's failure: a 500 answer reached the response
+// check. detail is the problem's detail member, else the start of the body.
+func noFiveHundred(method, path, opID string, body []byte) error {
+	detail := string(body)
+	var p struct {
+		Detail           string `json:"detail"`
+		ErrorDescription string `json:"error_description"` // the token endpoint's RFC 6749 body
+	}
+	if json.Unmarshal(body, &p) == nil {
+		if p.Detail != "" {
+			detail = p.Detail
+		} else if p.ErrorDescription != "" {
+			detail = p.ErrorDescription
+		}
+	}
+	detail = strings.TrimSpace(detail)
+	if len(detail) > 300 {
+		detail = detail[:300] + "..."
+	}
+	return fmt.Errorf("respcheck: no-500 rule (Eric 2026-11-08, ADR 0001): %s %s (operation %q) answered 500: detail %q; a 500 seen in any test is a must-fix bug, handle the case with its proper status", method, path, opID, detail)
+}
 
 // Checker validates responses against one document. It is safe for concurrent
 // use.
@@ -47,6 +107,18 @@ func New(doc *openapi3.T) (*Checker, error) {
 func (c *Checker) Check(req *http.Request, status int, header http.Header, body []byte) error {
 	c.checked.Add(1)
 	route, pathParams, err := c.router.FindRoute(req)
+	if status == http.StatusInternalServerError {
+		opID, template := "", ""
+		if err == nil {
+			template = route.Path
+			if route.Operation != nil {
+				opID = route.Operation.OperationID
+			}
+		}
+		if err != nil || !c.excepted(req.Method, template) {
+			return noFiveHundred(req.Method, req.URL.Path, opID, body)
+		}
+	}
 	if err != nil {
 		c.skipped.Add(1)
 		return fmt.Errorf("%w: %s %s: %v", ErrNoRoute, req.Method, req.URL.Path, err)

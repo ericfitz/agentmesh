@@ -50,7 +50,7 @@ func classifyCmd(args []string, stdout, stderr io.Writer) int {
 			used[id] = true
 		case violation != "":
 			findings++
-			say(stdout, fmt.Sprintf("catscheck: rule %s matched a %d response and was refused\n", violation, rec.ResponseCode))
+			say(stdout, fmt.Sprintf("catscheck: rule %s matched a %d response and was refused (a 5xx is never a false positive; a 500 is a must-fix bug under the no-500 rule, Eric 2026-11-08, ADR 0001)\n", violation, rec.ResponseCode))
 		default:
 			findings++
 			if printed >= *maxLines {

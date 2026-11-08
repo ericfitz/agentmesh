@@ -436,3 +436,36 @@ func TestCheckedCounters(t *testing.T) {
 		t.Fatalf("transport %d/%d checker %d/%d, want 2/1 each", tr.Checked(), tr.Skipped(), c.Checked(), c.Skipped())
 	}
 }
+
+// TestNoFiveHundred pins the no-500 rule (Eric 2026-11-08): a 500 fails even
+// when the document declares it, on a routed and an unrouted path, naming the
+// method, path and detail; an Exceptions entry (with a reason) lets one pass.
+func TestNoFiveHundred(t *testing.T) {
+	problem := hdr("Content-Type", "application/problem+json")
+	body := []byte(`{"code":"internal","detail":"boom happened"}`)
+	c := newChecker(t)
+	for _, path := range []string{"/things/a", "/nothing"} {
+		err := c.Check(get(path), 500, problem, body)
+		if err == nil || errors.Is(err, respcheck.ErrNoRoute) {
+			t.Fatalf("%s: want the no-500 failure, got %v", path, err)
+		}
+		for _, want := range []string{"no-500 rule", "GET " + path, "boom happened"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("%s: %q lacks %q", path, err, want)
+			}
+		}
+	}
+	old := respcheck.Exceptions
+	t.Cleanup(func() { respcheck.Exceptions = old })
+	respcheck.Exceptions = []respcheck.Exception{{Method: "GET", Path: "/things/{id}", Reason: "test"}}
+	if stale := c.StaleExceptions(loadDoc(t)); len(stale) != 0 {
+		t.Fatalf("stale: %v", stale)
+	}
+	if err := c.Check(get("/things/a"), 500, problem, body); err != nil && strings.Contains(err.Error(), "no-500") {
+		t.Fatalf("excepted request still failed the guard: %v", err)
+	}
+	respcheck.Exceptions = []respcheck.Exception{{Method: "GET", Path: "/gone/{id}", Reason: "test"}, {Method: "GET", Path: "/things/{id}"}}
+	if stale := c.StaleExceptions(loadDoc(t)); len(stale) != 2 {
+		t.Fatalf("want 2 stale, got %v", stale)
+	}
+}

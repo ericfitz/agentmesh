@@ -41,7 +41,7 @@ func TestCommittedRules(t *testing.T) {
 				for _, v := range codeValues(t, r.ID, c) {
 					codes = true
 					if v >= 500 && v < 600 {
-						t.Errorf("%s: response_code %d is 5xx", r.ID, v)
+						t.Errorf("%s: response_code %d is 5xx (the no-500 rule, Eric 2026-11-08: a 5xx is never a false positive)", r.ID, v)
 					}
 				}
 			}
