@@ -490,7 +490,7 @@ Eric's decisions (2026-11-06):
 - Decision 3: the journeys come from the `profile:journeys` skill and Eric tunes them by hand; the `openapi:arazzo` skill emits `arazzo.yaml`; a small test-only Go runner over kin-openapi runs them against the e2e server. It supports steps by operationId, runtime-expression parameters and bodies, success criteria on status and JSON pointer, and step outputs, refuses any other feature loudly and has its own tests.
 - Decision 4 (2026-11-07): the bridges journey runs against a live bridge: a second e2e fixture starts the server wiring in the test process through `cmd.RunWith` with `internal/slackapi/slackfake` in `Config.Slack`; it replaces plan ruling 11.
 
-Where things live: the ruleset is `api/vacuum-ruleset.yaml` (extends `all`, seven rules off, each with its reason in the file); the gate is `make spec-lint` (`VACUUM_VERSION` 0.36.2, exact; `-n info`, so a finding of any severity fails; two failure texts: not installed, wrong version). `api/arazzo.yaml` and `docs/journeys.md` are written after Eric's hand-tuning of the journeys (the plan's controller steps C2 to C4); the runner is `internal/arazzotest`, test-only, kept out of both binaries by the m4 rule (`scripts/m4-exit-checks.sh`). The document holds twelve workflows, run by `TestArazzoWorkflows` (`internal/e2e/workflows_test.go`): on fixture 1 (the binary's server, started with `signing_key_rotation_cooldown_seconds=1`) `register-and-login` (three identities), `send-receive-ack`, `memories`, `task-claim-complete`, `task-list-maintain`, `admin-bootstrap`, `search-history`, `agent-status`, `channel-access` and `signing-key-rotation`; on fixture 2 (the in-process server with the Slack fake) `register-and-login`, `admin-bootstrap`, `bridges` and `bridges-inbound-remove`.
+Where things live: the ruleset is `api/vacuum-ruleset.yaml` (extends `all`, seven rules off, each with its reason in the file (issue #35 turned on `oas3-missing-example` and `oas3-api-servers`; five are off)); the gate is `make spec-lint` (`VACUUM_VERSION` 0.36.2, exact; `-n info`, so a finding of any severity fails; two failure texts: not installed, wrong version). `api/arazzo.yaml` and `docs/journeys.md` are written after Eric's hand-tuning of the journeys (the plan's controller steps C2 to C4); the runner is `internal/arazzotest`, test-only, kept out of both binaries by the m4 rule (`scripts/m4-exit-checks.sh`). The document holds twelve workflows, run by `TestArazzoWorkflows` (`internal/e2e/workflows_test.go`): on fixture 1 (the binary's server, started with `signing_key_rotation_cooldown_seconds=1`) `register-and-login` (three identities), `send-receive-ack`, `memories`, `task-claim-complete`, `task-list-maintain`, `admin-bootstrap`, `search-history`, `agent-status`, `channel-access` and `signing-key-rotation`; on fixture 2 (the in-process server with the Slack fake) `register-and-login`, `admin-bootstrap`, `bridges` and `bridges-inbound-remove`.
 
 The route completeness test is two directions and says what it proves. `TestNoRoutesOutsideTheDocument` (`internal/server/routes_test.go`, go/ast) allows exactly one selector reference to `NewServeMux` and one to `HandlerWithOptions`, both in `server.go`, and fails on any other reference to `Handle`, `HandleFunc`, `ServeMux`, `HandlerFromMux` or `HandlerFromMuxWithBaseURL` and on a dot-import; `TestDeclaredMethodsRouted` and `TestUndeclaredMethodsRefused` probe every documented path through `server.New`. Stated limit: a 400 from the validator proves the router matched, not that the handler ran; the handler's presence is `var _ gen.StrictServerInterface = (*api)(nil)`, and `generate-check` keeps the generated router equal to the YAML. `TestOperationShape` (`internal/gen`) pins operationId, summary, one defined tag and a 2xx per operation.
 
@@ -499,7 +499,7 @@ The runner's supported surface (plan ruling 9) is steps by operationId; path, qu
 Plan rulings (2026-11-07; Eric may overrule; not his decisions):
 
 - Ruling 1: the ruleset extends `all`, not `recommended`, and the gate runs at `-n info`.
-- Ruling 2: seven rules are off, each with a reason in the ruleset; everything else was fixed. Eric should see `oas3-missing-example` (issue #30 decides the examples).
+- Ruling 2: seven rules are off, each with a reason in the ruleset; everything else was fixed. Eric should see `oas3-missing-example` (issue #30 decides the examples). (issue #35 turned on `oas3-missing-example` and `oas3-api-servers`; five are off)
 - Ruling 3: exact version pin, one variable (`VACUUM_VERSION`), two failure texts; CI installs vacuum with `go install` in every job that reaches `spec-lint`.
 - Ruling 4: the ruleset lives at `api/vacuum-ruleset.yaml`, the Arazzo document at `api/arazzo.yaml`, the journeys at `docs/journeys.md`; no `apis.yaml`.
 - Ruling 5: `DELETE` and `PATCH /v1/channels/{channel}` are tagged `[channels]` only (their rule is the channel ACL's `Admin`, not the administrator flag).
@@ -521,3 +521,48 @@ Plan rulings (2026-11-07; Eric may overrule; not his decisions):
 - Ruling 18 (found while running the document): `createBridge` is declared 200, so the document says 200, not 201; `send-receive-ack` creates and subscribes its own channel (a literal `general` would make the batch depend on every other test); `task-list-maintain` holds a session open, because a task in progress whose owner has no live session is reclaimed as abandoned on the next read; `signing-key-rotation` rotates plainly (the previous key retires and earlier bearers stay valid) and asserts an active and a retiring key, which needs the fixture's one-second rotation cooldown (the default is 3600 s).
 - Mutations: `scripts/check-gates-selftest.sh` block 38 (nine mutations).
 
+## Spec examples and descriptions addendum (issue #35)
+
+Eric's decisions (2026-11-06):
+
+- Decision 1: `info` carries no `contact` and no `license` (the ruleset keeps `info-contact` and `info-license` off, citing this decision).
+- Decision 2: `servers` is the placeholder `http://localhost:8420`, so `oas3-api-servers` is on.
+
+Where things live: every operation description has behavior, access, side effects, idempotency and a source citation; every tag, parameter, schema, property (a `$ref` member inherits the target's description), response and request body has a description; every component schema, inline media type and parameter has an example (a `$ref` media type inherits the schema's). `TestSpecDescriptions` and `TestSpecExamples` (`internal/gen/spec_docs_test.go`) fail on an undocumented element, a placeholder or a real host; they pin 9 tags, 57 operations, 72 schemas and 322 properties; kin validates every example (`TestDocumentIs31AndValidates`). `TestRequestExamples` (`internal/e2e/zz_examples_test.go`, the package's last file because `adminReset` wipes fixture 1's data and the rotation has a cooldown) replays every request example of the 57 operations as 58 rows (`openSession` has `default` and `resume`; 54 rows run on fixture 1 and 4 on fixture 2, the bridges, with the Slack fake): server-assigned values are substituted by JSON pointer, and each row checks the status, the schema (the validating proxy) and the shape (every member of the live body is in the example with the same JSON kind). `api/vacuum-ruleset.yaml` turns `oas3-missing-example` and `oas3-api-servers` on; five rules stay off: `info-contact` and `info-license` (Eric's decision above), `camel-case-properties` (the wire is snake_case; a rename is a protocol change), `description-duplication` (24 live findings, the bound texts and `created_at` descriptions repeat by design) and `openapi-tags-alphabetical` (tags follow spec section 3's order).
+
+Plan rulings (2026-11-07; Eric may overrule; not his decisions):
+
+- Ruling 1: examples live on component schemas, inline media types and parameters; a `$ref` media type inherits; a response example carries every member, a request example one valid request.
+- Ruling 2: a request body may carry named `examples`; only `openSession` does (`default`, `resume`); a singular example counts as `default`.
+- Ruling 3: the document tests landed green behind a literal deny-list keyed by element, each key naming the area task; a stale key fails; the list is empty now.
+- Ruling 4: the operation description has five clauses in order (behavior, access, side effects, idempotency, source citation).
+- Ruling 5: a `$ref`-only property inherits the target's description (kin does not expose the sibling); array `items` need none.
+- Ruling 6: `description-duplication` stays off; `oas3-missing-example` and `oas3-api-servers` turn on.
+- Ruling 7: the replay identity is the example identity `acme-coder-1`, registered by replaying `register`, made an administrator by the host command, so the example names are literally true.
+- Ruling 8: the replay table is a slice in replay order with one row per operation and example name, with both-ways coverage.
+- Ruling 9: the response check is status, schema and shape.
+- Ruling 10: the replay file is `zz_examples_test.go`, `//go:build !windows`, so it runs last.
+- Ruling 11: no example carries a placeholder; token-shaped members must contain `example` when decoded.
+- Ruling 12: `bearerAuth` describes only what `Issuer.Verify` enforces, citing RFC 8725 for the algorithm allowlist, `typ` and audience.
+- Ruling 13: response descriptions are completed, not rewritten.
+- Ruling 14: the replay suffixes `Idempotency-Key` with the row number (receipts are keyed per identity and key).
+- Ruling 15: `include_own` is `true` in the examples of `watch`, `peek` and `ReceiveRequest`, so one identity's replay wakes and receives.
+
+Execution rulings (made while implementing; Eric may overrule):
+
+- Component schema examples may combine members that no single stored object carries; operation-level examples must be producible.
+- Repeated `seq` numbers across examples are accepted (each is producible alone; the replay substitutes live values).
+- The `createTask` and `listTasks` replay rows use a `release-tasks` setup (a tasks channel) and a live `/path/channel` substitution.
+- Response headers are not audited.
+- The pinned counts are 9 tags, 57 operations, 72 schemas and 322 properties.
+- The replay identity is an administrator, so no `forbidden` path is replayed.
+
+Open for Eric:
+
+- Item 1: `description-duplication` stays off (24 findings); the alternative is per-schema phrasing of the same fact.
+- Item 2: no second `token` example for the RFC 8693 exchange (the e2e server has no OIDC issuer; `TestAuthEndToEnd` covers it).
+- Item 3: the replay identity holds the administrator flag, so refusals are covered only by the ACL matrix and the exit-code table.
+- Item 4 (candidate new issue): `claimTask` declares its request body required although the handler tolerates no body (`internal/server/tasks.go`); the validator refuses a bodyless POST first.
+- Item 5 (candidate new issue): `resetCredential` declares a 404 it cannot reach (it answers 403 `not_registered`); dropping it is a wire change.
+
+Mutations: `scripts/check-gates-selftest.sh` block 39 (ten mutations).
