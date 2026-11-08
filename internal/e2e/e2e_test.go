@@ -256,7 +256,7 @@ func startFixture(root string) (*fixture, error) {
 		(*h).ServeHTTP(w, r)
 	}))
 	f.proxy.Start()
-	f.srv = exec.Command(binPath, "server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "issuer="+f.proxy.URL)
+	f.srv = exec.Command(binPath, "server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "signing_key_rotation_cooldown_seconds=1", "-set", "issuer="+f.proxy.URL)
 	f.srv.Env = environFor(filepath.Join(root, "home-server"))
 	f.srv.Stdout, f.srv.Stderr = f.srvOut, f.srvErr
 	if err := f.srv.Start(); err != nil {

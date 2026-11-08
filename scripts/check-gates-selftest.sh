@@ -1180,7 +1180,8 @@ block_wire_roundtrip_fires() {
 	mutate_unit_block wire-gen-type-unpaired internal/gen/gen.go \
 		'// BridgeState defines model for Bridge.State.' \
 		$'// Extra defines model for Extra.\ntype Extra struct {\n\tA string\n}\n\n// BridgeState defines model for Bridge.State.' \
-		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/coverage
+		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/coverage \
+		'generated type Extra is neither paired nor excepted'
 	mutate_unit_block wire-exception-stale internal/server/wire_roundtrip_test.go \
 		'var exceptions = map[string]exception{' \
 		$'var exceptions = map[string]exception{\n\t"gen:Session.Nope": {Reason: "stale"},' \
@@ -1474,11 +1475,16 @@ block_spec_validation_fires() {
 	deps_probe m4-arazzotest-rule-fires cmd/agentmesh-mcponly/probe_m4.go "$m/internal/arazzotest" "deps_violation=$m/cmd/agentmesh-mcponly imports $m/internal/arazzotest"
 	finish m4-arazzotest-rule-fires
 	mutate_rm_block arazzo-refusal-fixture-missing internal/arazzotest/testdata/refuse-operation-path.arazzo.yaml \
-		./internal/arazzotest/ '^TestRefusalCoverage$' TestRefusalCoverage
+		./internal/arazzotest/ '^TestRefusalCoverage$' TestRefusalCoverage 'refusals table names'
 	# fixture 2 (issue #32, decision 4): the runner still starts, the handlers see no bridge
 	mutate_unit_block slack-fixture-fires internal/server/cmd/serve.go \
 		'		bridges = br' '		bridges = nil' \
-		./internal/e2e/ '^TestSlackBridgeFixture$' TestSlackBridgeFixture unavailable
+		./internal/e2e/ '^TestSlackBridgeFixture$' TestSlackBridgeFixture 'the Slack bridge is not configured'
+	# the document's criteria are live: a wrong literal in workflow 1 fails its subtest (CriteriaError: 'criterion ... failed')
+	mutate_unit_block arazzo-criteria-fire api/arazzo.yaml \
+		'          - condition: $response.body#/token_type == "Bearer"' \
+		'          - condition: $response.body#/token_type == "Basic"' \
+		./internal/e2e/ '^TestArazzoWorkflows$' TestArazzoWorkflows/register-and-login 'failed (status 200'
 }
 
 block_skip_in_wiring

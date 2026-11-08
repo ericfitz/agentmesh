@@ -82,17 +82,18 @@ workflows:
 
   # J2: Send and receive with ack.
   - workflowId: send-receive-ack
-    summary: Open a session, receive a peer's message from general, acknowledge it, close
+    summary: Open a session, receive a peer's message from a channel, acknowledge it, close
     description: >-
-      An agent opens a session; a second identity sends a message to general
-      (every registered identity is subscribed to general at registration);
-      the first agent receives the batch, acknowledges its token on the next
+      An agent creates a channel and opens a session, subscribes to the channel
+      from the oldest message; a second identity sends a message to it; the
+      first agent receives the batch, acknowledges its token on the next
       receive (ack_ignored false), peeks at an empty inbox and closes the
-      session.
+      session. The channel is the workflow's own, so the batch is
+      deterministic.
     dependsOn: [register-and-login]
     inputs:
       type: object
-      required: [bearer, peer_bearer]
+      required: [bearer, peer_bearer, channel]
       properties:
         bearer:
           type: string
@@ -100,7 +101,24 @@ workflows:
         peer_bearer:
           type: string
           description: The sending agent's bearer (a second identity registered through register-and-login).
+        channel:
+          type: string
+          description: A channel name unique to this run.
     steps:
+      - stepId: create-channel
+        description: Create the channel.
+        operationId: createChannel
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            name: $inputs.channel
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/kind == "ordinary"
       - stepId: open-session
         description: Open a session for the receiving agent.
         operationId: openSession
@@ -116,13 +134,29 @@ workflows:
           - condition: $response.body#/resumed == false
         outputs:
           session: $response.body#/id
+      - stepId: subscribe
+        description: The receiving agent subscribes to the channel.
+        operationId: subscribe
+        parameters:
+          - name: channel
+            in: path
+            value: $inputs.channel
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload:
+            from: oldest
+        successCriteria:
+          - condition: $statusCode == 204
       - stepId: send
-        description: The peer sends a message to general.
+        description: The peer sends a message to the channel.
         operationId: sendMessage
         parameters:
           - name: channel
             in: path
-            value: general
+            value: $inputs.channel
           - name: Authorization
             in: header
             value: "Bearer {$inputs.peer_bearer}"
@@ -151,7 +185,6 @@ workflows:
             count: 10
         successCriteria:
           - condition: $statusCode == 200
-          - condition: $response.body#/messages/0/channel == "general"
           - condition: $response.body#/messages/0/content == "hello from the arazzo peer"
           - condition: $response.body#/messages/0/sender_kind == "agent"
           - condition: $response.body#/redelivered == false
@@ -508,7 +541,8 @@ workflows:
       and a follow-up blocked by the plan; it then edits the subject and
       description, assigns an owner, reorders the subtasks, removes the
       blocker, starts a task, and lists the plan filtered by status and by
-      owner.
+      owner. The agent holds a session open throughout: a task in progress
+      whose owner has no live session is reclaimed as abandoned.
     dependsOn: [register-and-login]
     inputs:
       type: object
@@ -523,6 +557,20 @@ workflows:
           type: string
           description: The agent's own identity, assigned as the owner (an owner must be a registered identity).
     steps:
+      - stepId: open-session
+        description: Open a session, so the owner is live (a task in progress whose owner has no live session is reclaimed as abandoned).
+        operationId: openSession
+        parameters:
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        requestBody:
+          contentType: application/json
+          payload: {}
+        successCriteria:
+          - condition: $statusCode == 201
+        outputs:
+          session: $response.body#/id
       - stepId: create-channel
         description: Create the task list.
         operationId: createChannel
@@ -784,6 +832,18 @@ workflows:
         successCriteria:
           - condition: $statusCode == 200
           - condition: $response.body#/0/subject == "first step"
+      - stepId: close-session
+        description: Close the session.
+        operationId: closeSession
+        parameters:
+          - name: session
+            in: path
+            value: $steps.open-session.outputs.session
+          - name: Authorization
+            in: header
+            value: "Bearer {$inputs.bearer}"
+        successCriteria:
+          - condition: $statusCode == 204
     outputs:
       plan: $steps.create-plan.outputs.id
 
@@ -1423,27 +1483,22 @@ workflows:
 
   # J10: Signing key rotation.
   - workflowId: signing-key-rotation
-    summary: List the signing key set, rotate it revoking the previous key, log in again and list
+    summary: List the signing key set, rotate it, list again and see the retiring key
     description: >-
-      An administrator lists the token signing key set, rotates it revoking
-      the previous key (the e2e servers' active key is younger than the
-      rotation cooldown, so a plain rotation would be conflict; a revoking
-      rotation is exempt), exchanges a fresh client assertion for a bearer
-      signed by the new key (every bearer the revoked key signed stops
-      verifying at once, including the administrator's) and lists the key set
-      again. Run it last on its server: the bearers of every earlier workflow
-      die with the revoked key.
+      An administrator lists the token signing key set (one active key),
+      rotates it (the previous key is retiring, so every bearer it signed stays
+      valid until the key is removed) and lists the key set again: the new
+      active key first, then the retiring one. The server that runs this
+      document sets signing_key_rotation_cooldown_seconds to 1, so the first
+      rotation is allowed seconds after the server started.
     dependsOn: [register-and-login]
     inputs:
       type: object
-      required: [admin_bearer, client_assertion]
+      required: [admin_bearer]
       properties:
         admin_bearer:
           type: string
-          description: The administrator's bearer, signed by the key about to be revoked.
-        client_assertion:
-          type: string
-          description: A fresh client assertion for the administrator (a client assertion is single-use).
+          description: The administrator's bearer.
     steps:
       - stepId: list-signing-keys
         description: The key set before the rotation, the active key first.
@@ -1458,46 +1513,30 @@ workflows:
         outputs:
           kid: $response.body#/keys/0/kid
       - stepId: rotate
-        description: Rotate, revoking the previous key.
+        description: Rotate; the previous active key retires.
         operationId: rotateSigningKey
         parameters:
-          - name: revoke_previous
-            in: query
-            value: true
           - name: Authorization
             in: header
             value: "Bearer {$inputs.admin_bearer}"
         successCriteria:
           - condition: $statusCode == 200
-          - condition: $response.body#/revoked == true
+          - condition: $response.body#/revoked == false
           - condition: $response.body#/active/state == "active"
+          - condition: $response.body#/previous/state == "retiring"
         outputs:
           kid: $response.body#/active/kid
-      - stepId: token
-        description: A bearer signed by the new key.
-        operationId: token
-        requestBody:
-          contentType: application/x-www-form-urlencoded
-          payload:
-            grant_type: client_credentials
-            client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
-            client_assertion: $inputs.client_assertion
-        successCriteria:
-          - condition: $statusCode == 200
-          - condition: $response.body#/token_type == "Bearer"
-        outputs:
-          access_token: $response.body#/access_token
       - stepId: list-again
-        description: The key set after the rotation, read with the new bearer.
+        description: The key set after the rotation, the active key first and the retiring key after it.
         operationId: listSigningKeys
         parameters:
           - name: Authorization
             in: header
-            value: "Bearer {$steps.token.outputs.access_token}"
+            value: "Bearer {$inputs.admin_bearer}"
         successCriteria:
           - condition: $statusCode == 200
           - condition: $response.body#/keys/0/state == "active"
+          - condition: $response.body#/keys/1/state == "retiring"
     outputs:
       previous_kid: $steps.list-signing-keys.outputs.kid
       active_kid: $steps.rotate.outputs.kid
-      access_token: $steps.token.outputs.access_token
