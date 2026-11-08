@@ -10,11 +10,19 @@ printf '%s\n' "$@" >>"$CATS_FAKE_LOG"
 
 # Test hooks (the real cats ignores them):
 #   CATS_FAKE_SLEEP=N      hold the run open N seconds (the overlap case).
-#   CATS_FAKE_PLANT=MODE   plant a fake bearer-shaped string where the harness's
-#                          leak scan must find it: jwt (stdout, so cats.log),
-#                          abe (a file in the report directory), bearer (the
-#                          harness's server.log), smoke-dir (a file in the smoke
-#                          output directory), smoke-line (the smoke summary line).
+#   CATS_FAKE_PLANT=MODE   plant a secret of this run where the harness's leak
+#                          scan must find it (the fake reads the values the
+#                          harness handed it: the headers file, the credential
+#                          file and leak.secrets, all next to the headers file):
+#                          agent-bearer (stdout, so cats.log), admin-bearer (a
+#                          file in the report directory), credential (a key line,
+#                          in the report), enrollment (the enrollment token, in the
+#                          report), server-log-bearer (the harness's server.log),
+#                          smoke-dir (the agent bearer in the smoke output
+#                          directory), smoke-line (the agent bearer in the smoke
+#                          summary line). spec-examples plants strings shaped like
+#                          the spec's example tokens (a JWT and an abe_ token) in
+#                          cats.log and the report: the scan must NOT fire on them.
 #   CATS_FAKE_KILL_FIXTURE=1|destructive  (destructive: only when --paths names /v1/admin/...) point the first fixture's verify URL at a 404 (a
 #                          destructive run that destroyed it).
 #   CATS_FAKE_WATCH=FILE   start a detached watcher that writes "present" or
@@ -26,6 +34,7 @@ PLANT=${CATS_FAKE_PLANT:-}
 JWT_LIKE='eyJfake0000000000.eyJfake1111111111.fakesignature'
 ABE_LIKE='abe_FAKEFAKEFAKEFAKEFAKEFAKE'
 
+HDIR=
 out=
 headers=
 prev=
@@ -35,15 +44,27 @@ for a in "$@"; do
   prev=$a
 done
 
+[ -z "$headers" ] || HDIR=$(dirname "$headers")
+
+# secret_value KIND: one secret of this run, read from the harness directory.
+secret_value() {
+  case "$1" in
+    agent) sed -n 's/^  Authorization: Bearer //p' "$headers" | head -n 1 ;;
+    admin) awk '/^\/v1\/admin\/status:$/ { f = 1; next } f { sub(/^  Authorization: Bearer /, ""); print; exit }' "$headers" ;;
+    credential) grep -v -e '^-----' "$HDIR/config/credentials/cats/cats-agent" | head -n 1 ;;
+    enrollment) head -n 1 "$HDIR/leak.secrets" ;;
+  esac
+}
+
 if [ "${1:-}" = smoke ]; then
   case "$PLANT" in
     smoke-dir)
       mkdir -p "$out"
-      echo "planted: $JWT_LIKE" >"$out/smoke-report.txt"
+      echo "planted: $(secret_value agent)" >"$out/smoke-report.txt"
       ;;
   esac
   case "$PLANT" in
-    smoke-line) echo "Summary: $ABE_LIKE" ;;
+    smoke-line) echo "Summary: $(secret_value agent)" ;;
     *) echo 'Summary: fake' ;;
   esac
   exit 0
@@ -74,8 +95,9 @@ if [ -n "${CATS_FAKE_WATCH:-}" ]; then
   ) >/dev/null 2>&1 </dev/null &
 fi
 case "$PLANT" in
-  jwt) echo "planted: $JWT_LIKE" ;;
-  bearer) echo "planted: Bearer eyfakefakefakefake" >>"$(dirname "$headers")/server.log" ;;
+  agent-bearer) echo "planted: $(secret_value agent)" ;;
+  server-log-bearer) echo "planted: $(secret_value agent)" >>"$HDIR/server.log" ;;
+  spec-examples) echo "planted: $JWT_LIKE" ;;
 esac
 
 kill_fixture=0
@@ -93,7 +115,12 @@ if [ "$kill_fixture" = 1 ]; then
 fi
 
 mkdir -p "$out"
-[ "$PLANT" = abe ] && echo "planted: $ABE_LIKE" >"$out/leak.txt"
+case "$PLANT" in
+  admin-bearer) echo "planted: $(secret_value admin)" >"$out/leak.txt" ;;
+  credential) echo "planted: $(secret_value credential)" >"$out/leak.txt" ;;
+  enrollment) echo "planted: $(secret_value enrollment)" >"$out/leak.txt" ;;
+  spec-examples) echo "planted: $ABE_LIKE" >"$out/leak.txt" ;;
+esac
 echo '{"totalTests":"3","success":"1","warnings":"1","errors":"1","runStatus":"COMPLETED","qualityGatePassed":false}' \
   >"$out/cats-summary-report.json"
 for n in 1 2 3; do cp "$HERE/report/Test$n.json" "$out/Test$n.json"; done

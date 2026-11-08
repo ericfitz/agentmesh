@@ -319,7 +319,7 @@ case_classify_exit_2() {
 case_harness_nonzero() {
   stage_with edit_subject
   stage_stub
-  CATS_STUB_CP_EXIT=10 CATS_STUB_PATHS=/v1/discover CATS_FAKE_PLANT=jwt hook hn
+  CATS_STUB_CP_EXIT=10 CATS_STUB_PATHS=/v1/discover CATS_FAKE_PLANT=agent-bearer hook hn
   expect_rc 1 hn
   contains hn 'the CATS harness failed'
 }

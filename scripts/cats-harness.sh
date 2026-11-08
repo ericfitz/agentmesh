@@ -15,6 +15,14 @@
 # decoys), 12 (per-path headers), 14 (exit codes), 24 (--paths minus the skip
 # list), 25 (session lease), 31 (check_dir before every rm -rf).
 #
+# Leak scan (ruling 39): `run` looks for the campaign's own secrets, not for
+# token-shaped patterns: the exact minted bearers, the enrollment token and the
+# credential key lines, collected into "$DIR/leak.secrets" (mode 0600, removed
+# with the directory) and matched with `grep -F -f`. No value is ever printed;
+# only the names of the files that hold one. The spec's example tokens and the
+# documented `enrollment_token` answers of createAgentIdentity are expected
+# content and do not match.
+#
 # Bearers: a bearer never reaches stdout, a log or a file outside the harness
 # directory. The one exception is `token`, which prints the bearer alone. There
 # is no `set -x` anywhere. The single-use enrollment token for cats-admin passes
@@ -206,6 +214,24 @@ set_env() {
 # am runs the harness binary with the harness environment.
 am() { "$DIR/agentmesh" "$@"; }
 
+# collect_secrets appends the campaign's secret values to "$DIR/leak.secrets"
+# (0600; one value per line, nothing shorter than 16 characters, so no empty or
+# trivial line can match everything): the cached bearers, the credential key
+# body lines and any value passed as an argument. Nothing is printed.
+collect_secrets() {
+  local f v file=$DIR/leak.secrets
+  [ -f "$file" ] || { : >"$file"; chmod 600 "$file"; }
+  {
+    for v in "$@"; do printf '%s\n' "$v"; done
+    for f in "$DIR"/data/tokens/*/*.json; do
+      [ -f "$f" ] && jq -r '.access_token // empty' "$f"
+    done
+    for f in "$DIR"/config/credentials/*/*; do
+      [ -f "$f" ] && grep -v -e '^-----' "$f"
+    done
+  } 2>/dev/null | awk 'length($0) >= 16' >>"$file" || true
+}
+
 require_live() {
   server_alive || die 3 "no live harness server in $DIR (run: up)"
   set_env
@@ -239,6 +265,7 @@ do_up() {
   tok=$(am server admin -sqlite "$db" enrollment create -identity "$ADMIN" -expires 24h -uses 1 2>>"$DIR/harness.log" |
     sed -nE "s/$TOKEN_RE/\\1/p") || true
   [ -n "$tok" ] || die 3 "enrollment create returned no token (see $DIR/harness.log)"
+  collect_secrets "$tok"
 
   "$DIR/agentmesh" server -listen "127.0.0.1:$PORT" -sqlite "$db" "${SERVER_SETS[@]}" \
     >"$DIR/server.log" 2>&1 </dev/null &
@@ -276,6 +303,7 @@ do_up() {
     kill_server
     die 3 "registration or login failed (see $DIR/harness.log)"
   fi
+  collect_secrets
   echo "dir=$DIR"
   echo "server=$URL"
 }
@@ -353,25 +381,39 @@ do_seed() {
   require_live
   [ -n "$OUT" ] || OUT=$DIR
   mkdir -p "$OUT"
-  # An ACL replaces the default one. Every channel names both identities, so the
+  # An ACL replaces the default one. Every channel but cats-acl names both identities, so the
   # administrator pass reaches messages and subscription too (a channel with the
   # agent alone answered 403 to the administrator). The fuzzed PUT of an ACL in the agent pass may still
   # drop the agent's own admin entry on cats-acl: that leftover is a recorded
   # rule, not a harness change.
   local acl_both='[{"identity":"cats-agent","permissions":["read","write","admin"]},{"identity":"cats-admin","permissions":["read","write","admin"]}]'
+  # cats-acl alone names the agent only. CATS cannot send two different entries
+  # in the root-array body of PUT /v1/channels/{channel}/acl (a refData key such
+  # as identity sets every entry alike), and an agent that is not an
+  # administrator may not take a permission from cats-admin's entry (ADR 0011),
+  # so with both seeded the agent's PUT could never succeed. The administrator
+  # keeps admin on it through the flag (Task 8.4).
+  local acl_agent='[{"identity":"cats-agent","permissions":["read","write","admin"]}]'
   local a=(-profile "$PROFILE" -identity "$ADMIN")
 
   cli_seed channels create "${a[@]}" -acl "$acl_both" cats-ordinary
   cli_seed channels create "${a[@]}" -acl "$acl_both" cats-ordinary-decoy
   # The fuzzed PUT of an ACL rewrites it (and may drop the agent's own admin), so
   # it gets a channel of its own: cats-ordinary stays usable for the nested paths.
-  cli_seed channels create "${a[@]}" -acl "$acl_both" cats-acl
+  cli_seed channels create "${a[@]}" -acl "$acl_agent" cats-acl
   # CATS mangles a path parameter with "?" and "#", so a request for
   # DELETE /v1/channels/cats-sub?/subscription reaches DELETE /v1/channels/cats-sub:
   # the one nested operation with a DELETE prefix gets a channel of its own too.
   cli_seed channels create "${a[@]}" -acl "$acl_both" cats-sub
   cli_seed channels create "${a[@]}" -acl "$acl_both" -kind tasks cats-tasks
   cli_seed channels create "${a[@]}" -acl "$acl_both" -kind memory cats-memory
+  # An earlier pass may have emptied or rewritten an existing channel's ACL (a
+  # fuzzed PUT); every seed puts acl_both back (Task 8.4).
+  local ch
+  for ch in cats-ordinary cats-ordinary-decoy cats-sub cats-tasks cats-memory; do
+    cli_seed channels acl "${a[@]}" -set "$acl_both" "$ch"
+  done
+  cli_seed channels acl "${a[@]}" -set "$acl_agent" cats-acl
   cli_seed scopes create "${a[@]}" cats-scope
   cli_seed scopes create "${a[@]}" cats-scope-decoy
 
@@ -421,7 +463,7 @@ $scope_line
 /v1/channels/{channel}/acl:
   channel: cats-acl
   identity: cats-agent
-  permissions: [read, write, admin]
+  permissions[*]: admin
 /v1/channels/{channel}/subscription:
   channel: cats-sub
 /v1/channels/{channel}/messages:
@@ -430,6 +472,10 @@ $scope_line
   session: $session_id
 /v1/channels/{channel}/tasks:
   channel: cats-tasks
+  parent: cats_remove_field
+  blocked_by: cats_remove_field
+  before: cats_remove_field
+  after: cats_remove_field
 /v1/tasks/{id}:
   id: $task_decoy_id
 /v1/tasks/{id}/claim:
@@ -483,6 +529,7 @@ mint_token() {
   local name=$1
   am login -profile "$PROFILE" -identity "$name" >>"$DIR/harness.log" 2>&1 ||
     die 3 "login $name failed (see $DIR/harness.log)"
+  collect_secrets
   jq -r .access_token "$DIR/data/tokens/$PROFILE/$name.json"
 }
 
@@ -650,17 +697,29 @@ do_run() {
     agent_b=
   fi
 
-  # Bearer check.
-  local leaks=() hit scan
-  for scan in "$DIR/server.log" "$OUT/cats.log" "$OUT/report" "$OUT/smoke" "$OUT/smoke.txt"; do
-    [ -e "$scan" ] || continue
-    while IFS= read -r hit; do
-      [ -n "$hit" ] && leaks+=("$hit")
-    done < <(grep -rl -E 'Bearer ey|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|abe_[A-Za-z0-9_-]{20,}' "$scan" 2>/dev/null || true)
-  done
-  if [ "${#leaks[@]}" -gt 0 ]; then
-    echo "bearer leaked into: $(join_comma "${leaks[@]}")"
+  # Leak scan (ruling 39): the exact secrets of this run, never a pattern.
+  collect_secrets
+  local leaks=() hit scan grc
+  if [ ! -s "$DIR/leak.secrets" ]; then
+    echo "leak scan has no secrets to look for"
     rc=1
+  else
+    for scan in "$DIR/server.log" "$OUT/cats.log" "$OUT/report" "$OUT/smoke" "$OUT/smoke.txt"; do
+      [ -e "$scan" ] || continue
+      grc=0
+      hit=$(grep -r -l -F -f "$DIR/leak.secrets" "$scan" 2>/dev/null) || grc=$?
+      if [ "$grc" -gt 1 ]; then
+        echo "leak scan failed on $scan"
+        rc=1
+      fi
+      while IFS= read -r hit; do
+        [ -n "$hit" ] && leaks+=("$hit")
+      done <<<"$hit"
+    done
+    if [ "${#leaks[@]}" -gt 0 ]; then
+      echo "bearer leaked into: $(join_comma "${leaks[@]}")"
+      rc=1
+    fi
   fi
 
   jq -r '"tests=\(.totalTests) success=\(.success) warnings=\(.warnings) errors=\(.errors) status=\(.runStatus)"' "$summary"

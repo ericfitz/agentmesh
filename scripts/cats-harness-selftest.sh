@@ -221,6 +221,12 @@ case_refdata_recorded() {
   for t in SESSION DECOY_SESSION TASK DECOY_TASK MEMORY DECOY_MEMORY; do
     grep -q -F "<$t>" "$TMP/refdata-tokenized.yml" || fail "refdata has no <$t> after tokenizing (an id changed shape?)"
   done
+  # Task 8.4: the agent's PUT of an ACL keeps its own admin, and createTask drops
+  # the members that name other objects (a random parent or blocked_by is a 400).
+  grep -q -x -F '  permissions[*]: admin' "$s/refdata.yml" || fail "refdata lacks permissions[*]: admin for the ACL PUT"
+  for t in parent blocked_by before after; do
+    grep -q -x -F "  $t: cats_remove_field" "$s/refdata.yml" || fail "refdata does not remove $t from createTask"
+  done
   # Task 8.1 g: the throwaway identity is registered and mapped in the refData.
   grep -q -x -F '/v1/admin/identities/{identity}/reset-credential:' "$s/refdata.yml" || fail "refdata lacks the reset-credential section"
   grep -q -x -F '  identity: cats-victim' "$s/refdata.yml" || fail "refdata does not map reset-credential's identity to cats-victim"
@@ -238,15 +244,16 @@ case_refdata_recorded() {
   done
 }
 
-# admin_curl METHOD PATH: an API call as cats-admin; the bearer goes to curl on
-# stdin (-K -), never on argv or into a capture. Prints the HTTP code and, for a
-# GET, the body after it.
+# admin_curl METHOD PATH [JSON-BODY]: an API call as cats-admin; the bearer goes
+# to curl on stdin (-K -), never on argv or into a capture. Prints the HTTP code
+# and, for a GET, the body after it.
 admin_curl() {
-  local t url
+  local t url body=()
   url=$(cat "$D/server.url")
   t=$(bash "$HARNESS" token --dir "$D" admin)
+  [ -z "${3:-}" ] || body=(-H 'Content-Type: application/json' -d "$3")
   printf 'header = "Authorization: Bearer %s"\n' "$t" |
-    curl -s -m 10 -K - -X "$1" -w '\n%{http_code}' "$url$2"
+    curl -s -m 10 -K - -X "$1" -w '\n%{http_code}' "${body[@]}" "$url$2"
 }
 
 # Task 8.1 e and f: every channel names the administrator; a decoy that is gone
@@ -256,10 +263,14 @@ case_seed_recreates_decoys() {
   h sd1 seed --dir "$D" --out "$before"
   expect_rc 0 "seed before the delete" sd1
   [ "$CASE_FAIL" -eq 0 ] || return 0
-  for c in cats-ordinary cats-ordinary-decoy cats-acl cats-sub cats-tasks cats-memory; do
+  for c in cats-ordinary cats-ordinary-decoy cats-sub cats-tasks cats-memory; do
     body=$(admin_curl GET "/v1/channels/$c/acl")
     case "$body" in *cats-admin*) ;; *) fail "the ACL of $c does not name cats-admin" ;; esac
   done
+  # cats-acl names the agent alone (the agent's PUT could not succeed otherwise).
+  body=$(admin_curl GET "/v1/channels/cats-acl/acl")
+  case "$body" in *cats-agent*) ;; *) fail "the ACL of cats-acl does not name cats-agent" ;; esac
+  case "$body" in *cats-admin*) fail "the ACL of cats-acl names cats-admin" ;; esac
   local memd taskd
   memd=$(jq -r .memory_decoy "$before/seed.json")
   taskd=$(jq -r .task_decoy "$before/seed.json")
@@ -276,6 +287,18 @@ case_seed_recreates_decoys() {
   grep -q -x -F "  id: $(jq -r .memory_decoy "$after/seed.json")" "$after/refdata.yml" || fail "refdata lacks the new memory decoy id"
   code=$(admin_curl GET "/v1/memories/$(jq -r .memory_decoy "$after/seed.json")" | tail -n 1)
   [ "$code" = 200 ] || fail "the re-created memory decoy answers HTTP $code"
+  # Task 8.4: a seed puts an emptied ACL back (a fuzzed PUT of []), on a channel
+  # that names both identities and on cats-acl.
+  for c in cats-ordinary cats-acl; do
+    code=$(admin_curl PUT "/v1/channels/$c/acl" '[]' | tail -n 1)
+    [ "$code" = 204 ] || fail "PUT [] on the ACL of $c: HTTP $code"
+  done
+  h sd4 seed --dir "$D" --out "$TMP/seed6"
+  expect_rc 0 "seed after the ACLs were emptied" sd4
+  body=$(admin_curl GET "/v1/channels/cats-ordinary/acl")
+  case "$body" in *cats-agent*cats-admin* | *cats-admin*cats-agent*) ;; *) fail "seed did not restore both entries on cats-ordinary" ;; esac
+  body=$(admin_curl GET "/v1/channels/cats-acl/acl")
+  case "$body" in *cats-agent*) ;; *) fail "seed did not restore cats-agent on cats-acl" ;; esac
   # A removed channel is re-created too (the delete is the API's, as a fuzzer's).
   code=$(admin_curl DELETE "/v1/channels/cats-ordinary-decoy" | tail -n 1)
   case "$code" in 2??) ;; *) fail "DELETE channel: HTTP $code"; return 0 ;; esac
@@ -556,18 +579,33 @@ case_flag_checks() {
 
 case_leak_scan_detects() {
   local d=$TMP/lk spec mode want smoke
-  # MODE:WHERE the leak scan must name:CATS_SMOKE
-  for spec in jwt:cats.log:0 abe:report:0 bearer:server.log:0 smoke-dir:smoke:1 smoke-line:smoke.txt:1; do
+  # MODE:WHERE the leak scan must name:CATS_SMOKE. Every planted value is a real
+  # secret of that run (ruling 39), planted by the fake.
+  for spec in agent-bearer:cats.log:0 admin-bearer:report:0 server-log-bearer:server.log:0 \
+    credential:report:0 enrollment:report:0 smoke-dir:smoke:1 smoke-line:smoke.txt:1; do
     mode=${spec%%:*}
     want=${spec#*:}
     smoke=${want#*:}
     want=${want%%:*}
     CATS_SMOKE=$smoke CATS_FAKE_PLANT=$mode h "lk-$mode" run --dir "$d" --out "$TMP/out-lk-$mode" --paths /v1/discover
-    expect_rc 1 "a planted $mode string" "lk-$mode"
+    expect_rc 1 "a planted $mode value" "lk-$mode"
     contains "lk-$mode" out 'bearer leaked into'
     contains "lk-$mode" out "$want"
+    # Names only: the run never prints a value.
+    if grep -q -e 'eyJ' -e 'abe_' "$TMP/cap/lk-$mode.out" "$TMP/cap/lk-$mode.err"; then fail "the $mode run printed a secret-shaped value"; fi
     [ ! -e "$d" ] || fail "the failed run left $d"
   done
+}
+
+# Ruling 39: the spec's example tokens (a JWT, an abe_ token) are expected
+# content; only this run's own secrets count.
+case_leak_scan_ignores_spec_examples() {
+  local d=$TMP/lk2
+  CATS_FAKE_PLANT=spec-examples h lk-spec run --dir "$d" --out "$TMP/out-lk-spec" --paths /v1/discover
+  expect_rc 0 "spec-example tokens in the report" lk-spec
+  if grep -q -F 'bearer leaked' "$TMP/cap/lk-spec.out"; then fail "the scan fired on a spec-example token"; fi
+  grep -r -q -F 'eyJfake' "$TMP/out-lk-spec" || fail "the fake did not plant the spec-example JWT (the case proves nothing)"
+  [ ! -e "$d" ] || fail "$d remains"
 }
 
 case_smoke_runs() {
@@ -629,6 +667,7 @@ run_case overlapping-runs case_overlap
 run_case repo-checks case_repo_checks
 run_case flag-checks case_flag_checks
 run_case leak-scan-detects case_leak_scan_detects
+run_case leak-scan-ignores-spec-examples case_leak_scan_ignores_spec_examples
 run_case smoke-runs case_smoke_runs
 run_case fake-rejects-bad-headers case_fake_rejects_bad_headers
 if [ "$REAL" -eq 1 ]; then

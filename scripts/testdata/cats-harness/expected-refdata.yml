@@ -7,7 +7,7 @@
 /v1/channels/{channel}/acl:
   channel: cats-acl
   identity: cats-agent
-  permissions: [read, write, admin]
+  permissions[*]: admin
 /v1/channels/{channel}/subscription:
   channel: cats-sub
 /v1/channels/{channel}/messages:
@@ -16,6 +16,10 @@
   session: <SESSION>
 /v1/channels/{channel}/tasks:
   channel: cats-tasks
+  parent: cats_remove_field
+  blocked_by: cats_remove_field
+  before: cats_remove_field
+  after: cats_remove_field
 /v1/tasks/{id}:
   id: <DECOY_TASK>
 /v1/tasks/{id}/claim:

@@ -652,6 +652,7 @@ Open item 9 (Eric): SG7 as a `oneOf` in `TaskPatch` instead of rule. Default: th
 - Ruling 39's leak scan (the selftest's leak cases plant the real minted bearer's value, and a planted spec-example JWT must not fire).
 - `seed` re-applies `acl_both` to `cats-acl` on every run (an earlier pass may have emptied it), and the refData for `PUT /v1/channels/{channel}/acl` sends both entries (`acl[*]`), so the agent's PUT can succeed.
 - The refData for `POST /v1/channels/{channel}/tasks` removes `parent` (`cats_remove_field`) so its HappyPath can succeed.
+- Implementation findings (real cats 15.4.0): CATS cannot send two different entries in the root-array body of the ACL PUT (a refData key such as `identity` sets every entry alike; `acl[*]` applies only to a named field such as `POST /v1/channels`' `acl`), and an agent may not take a permission from `cats-admin`'s entry, so `cats-acl` is seeded with the agent's entry alone and the refData is `identity: cats-agent`, `permissions[*]: admin` (the happy path answers 204 and the agent keeps admin). The other seeded channels get `acl_both` re-applied on every seed. createTask's refData removes `parent`, `blocked_by`, `before` and `after` (random ids and the mutually exclusive pair both answer 400). The leak scan is `grep -F -f` over `$DIR/leak.secrets`.
 - Gates: both selftests twice, shellcheck, `make release-lint`, `make lint`. Commit `fix(cats): harness follows round 2 (issue #30)`.
 
 ### Task 8.5: SG6 (`api/openapi.yaml` `JWK.required: [kty]`, `make generate`)
