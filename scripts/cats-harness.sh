@@ -123,20 +123,46 @@ need_tool() {
 
 # Lock (finding 3): "$DIR.lock" is an atomic mkdir holding the owner pid, so two
 # overlapping `up`s or `run`s cannot both proceed. A lock whose owner is dead is
-# taken over. It is a sibling of $DIR, so `down` never removes it.
+# taken over, one taker at a time: "$DIR.lock.takeover" is a second atomic mkdir
+# (the gate) that the taker holds while it re-reads the owner and replaces the
+# lock, so a second taker that also saw the dead pid finds the first one's live
+# pid under the gate and backs off (final review, Finding 5). Both are siblings
+# of $DIR, so `down` never removes them. A taker killed inside the gate leaves
+# it behind; the refusal names the path to remove.
 LOCK_HELD=0
+GATE_HELD=0
+lock_owner() { # lock_owner LOCK: the live pid recorded in LOCK, empty when none or dead
+  local o
+  o=$(cat "$1/pid" 2>/dev/null || true)
+  case "$o" in '' | *[!0-9]*) return 0 ;; esac
+  if kill -0 "$o" 2>/dev/null; then echo "$o"; fi
+}
+release_gate() {
+  [ "$GATE_HELD" -eq 1 ] || return 0
+  GATE_HELD=0
+  rmdir "$DIR.lock.takeover" 2>/dev/null || true
+}
 acquire_lock() {
-  local lock=$DIR.lock owner
+  local lock=$DIR.lock gate=$DIR.lock.takeover owner
   mkdir -p "$(dirname "$DIR")"
   if ! mkdir -m 700 "$lock" 2>/dev/null; then
-    owner=$(cat "$lock/pid" 2>/dev/null || true)
-    case "$owner" in '' | *[!0-9]*) owner= ;; esac
-    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+    owner=$(lock_owner "$lock")
+    [ -z "$owner" ] || die 3 "another harness command is active (pid $owner, lock $lock)"
+    mkdir -m 700 "$gate" 2>/dev/null ||
+      die 3 "another harness command is taking over the stale lock $lock (a killed one leaves $gate behind; remove it)"
+    GATE_HELD=1
+    owner=$(lock_owner "$lock")
+    if [ -n "$owner" ]; then
+      release_gate
       die 3 "another harness command is active (pid $owner, lock $lock)"
     fi
     rm -f "$lock/pid"
-    rmdir "$lock" 2>/dev/null || die 3 "cannot take over the lock $lock"
-    mkdir -m 700 "$lock" 2>/dev/null || die 3 "another harness command holds the lock $lock"
+    rmdir "$lock" 2>/dev/null || { release_gate; die 3 "cannot take over the lock $lock"; }
+    mkdir -m 700 "$lock" 2>/dev/null || { release_gate; die 3 "another harness command holds the lock $lock"; }
+    echo "$$" >"$lock/pid"
+    LOCK_HELD=1
+    release_gate
+    return 0
   fi
   echo "$$" >"$lock/pid"
   LOCK_HELD=1
@@ -612,6 +638,7 @@ run_cleanup() {
 
 on_exit() {
   run_cleanup
+  release_gate
   release_lock
 }
 

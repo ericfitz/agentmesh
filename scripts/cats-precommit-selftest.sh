@@ -195,6 +195,7 @@ case_missing_cats_fails_closed() {
   HOOK_CATS_BIN=
   expect_rc 1 miss
   contains miss 'is not installed'
+  contains miss 'brew install endava/tap/cats'
   fake_not_run
 }
 
@@ -343,7 +344,24 @@ case_missing_curl_or_bash_guard() {
   RC=0
   (cd "$WT" && PATH=$bin CATS_BIN=$WT/scripts/testdata/cats-fake/cats TMPDIR=$HOOKTMP bash scripts/cats-precommit.sh) >"$TMP/cap/curl.out" 2>&1 || RC=$?
   expect_rc 1 curl
-  contains curl 'curl is not installed'
+  contains curl 'curl is not installed (brew install curl)'
+}
+
+# A refused commit keeps its reports, and only the newest 5 stamps stay (final
+# review, Finding 12).
+case_prunes_kept_reports() {
+  local base=$WT/.local/cats/precommit n
+  rm -rf "$base"
+  for n in 1 2 3 4 5 6 7; do mkdir -p "$base/2026010${n}T000000Z"; done
+  stage_with edit_subject
+  hook prune
+  expect_rc 1 prune
+  contains prune 'reports kept in'
+  n=$(find "$base" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+  [ "$n" -eq 5 ] || fail "$n stamp directories remain, want 5"
+  [ ! -d "$base/20260101T000000Z" ] && [ ! -d "$base/20260103T000000Z" ] || fail "an old stamp survived"
+  [ -d "$base/20260107T000000Z" ] || fail "a newer stamp was removed"
+  rm -rf "$base"
 }
 
 case_real_git_commit() {
@@ -407,6 +425,7 @@ run_case classify-exit-2 case_classify_exit_2
 run_case harness-nonzero case_harness_nonzero
 run_case spec-deleted case_spec_deleted
 run_case missing-curl case_missing_curl_or_bash_guard
+run_case prunes-kept-reports case_prunes_kept_reports
 run_case real-git-commit case_real_git_commit
 run_case sigterm-cleans-up case_sigterm_cleans_up
 run_case shellcheck case_shellcheck

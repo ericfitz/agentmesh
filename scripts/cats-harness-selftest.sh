@@ -534,6 +534,32 @@ case_overlap() {
   [ ! -e "$d.lock" ] || fail "the lock $d.lock remains"
 }
 
+# A lock whose owner died is taken over (up succeeds, nothing of it remains after
+# down), and a taker that finds the takeover gate held backs off instead of
+# racing it (final review, Finding 5).
+case_stale_lock() {
+  local d=$TMP/sl dead
+  sleep 0 &
+  dead=$!
+  wait "$dead" || true
+  mkdir -m 700 "$d.lock"
+  echo "$dead" >"$d.lock/pid"
+  h sk1 up --dir "$d"
+  expect_rc 0 "up over a stale lock" sk1
+  [ ! -e "$d.lock" ] || fail "the lock $d.lock remains after up over a stale lock"
+  [ ! -e "$d.lock.takeover" ] || fail "the takeover gate remains"
+  h sk2 down --dir "$d"
+  expect_rc 0 "down" sk2
+  mkdir -m 700 "$d.lock" "$d.lock.takeover"
+  echo "$dead" >"$d.lock/pid"
+  h sk3 up --dir "$d"
+  expect_rc 3 "up while another taker holds the gate" sk3
+  contains sk3 err 'taking over the stale lock'
+  [ ! -e "$d" ] || fail "up proceeded past a held takeover gate"
+  rm -f "$d.lock/pid"
+  rmdir "$d.lock" "$d.lock.takeover"
+}
+
 case_repo_checks() {
   local d=$TMP/rp
   : >"$CATS_FAKE_LOG"
@@ -669,6 +695,7 @@ run_case admin-paths-match-spec case_admin_paths_match_spec
 run_case dir-guard case_dir_guard
 run_case dir-symlink-and-dots case_dir_symlink_dots
 run_case overlapping-runs case_overlap
+run_case stale-lock-takeover case_stale_lock
 run_case repo-checks case_repo_checks
 run_case flag-checks case_flag_checks
 run_case leak-scan-detects case_leak_scan_detects

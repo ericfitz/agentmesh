@@ -53,7 +53,11 @@ CATS_BIN=${CATS_BIN:-cats}
 export CATS_BIN
 for tool in "$CATS_BIN" jq go curl; do
   if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "cats-precommit: ${tool##*/} is not installed (brew install endava/tap/cats); commit with --no-verify to bypass" >&2
+    case "${tool##*/}" in
+      jq | go | curl) install_hint="brew install ${tool##*/}" ;;
+      *) install_hint="brew install endava/tap/cats" ;; # the CATS binary, whatever CATS_BIN names it
+    esac
+    echo "cats-precommit: ${tool##*/} is not installed ($install_hint); commit with --no-verify to bypass" >&2
     exit 1
   fi
 done
@@ -203,6 +207,14 @@ if [ "$findings" -gt 0 ]; then
   keep=$ROOT/.local/cats/precommit/$(date -u +%Y%m%dT%H%M%SZ)
   mkdir -p "$keep"
   for out in "${OUTS[@]}"; do cp -R "$out" "$keep/$(basename "$out")"; done
+  # Keep the newest 5 stamps: the names sort by time (UTC, fixed width).
+  kept=()
+  for d in "$ROOT"/.local/cats/precommit/[0-9]*T[0-9]*Z; do
+    [ -d "$d" ] && kept+=("$d")
+  done
+  if [ "${#kept[@]}" -gt 5 ]; then
+    for d in "${kept[@]:0:${#kept[@]}-5}"; do rm -rf "${d:?}"; done
+  fi
   echo "cats-precommit: reports kept in $keep" >&2
   echo "cats-precommit: $findings finding(s) not covered by api/cats-false-positives.yaml; fix them or record false positives with /cats:fp (git commit --no-verify bypasses this hook)" >&2
   exit 1 # findings
