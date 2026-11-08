@@ -2315,7 +2315,7 @@ components:
             type: urn:agentmesh:problem:internal
             title: 'Internal Server Error'
             status: 500
-            detail: 'database is locked (5) (SQLITE_BUSY)'
+            detail: 'database disk image is malformed (11) (SQLITE_CORRUPT)'
             instance: /v1/channels
             code: internal
             retryable: true
