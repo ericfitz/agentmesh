@@ -64,7 +64,7 @@ release-check: ## Not part of verify (its own CI job). Release tooling: check-pi
 release-lint: ## actionlint over the workflows and shellcheck over release/, scripts/ and install.sh (not part of verify; its own CI job)
 	@for t in actionlint shellcheck; do command -v $$t >/dev/null || { echo "release-lint: $$t is not installed"; exit 1; }; done
 	actionlint .github/workflows/*.yml
-	shellcheck -x release/*.sh scripts/*.sh scripts/testdata/cats-fake/cats
+	shellcheck -x release/*.sh scripts/*.sh scripts/testdata/cats-fake/cats .githooks/pre-commit
 	shellcheck -s sh install.sh
 release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; its own CI job)
 	bash release/test-install.sh $(RELEASE_INSTALL_ARGS)
@@ -90,3 +90,4 @@ cats-run:    ## One CATS campaign against a throwaway server (needs cats and Jav
 	bash scripts/cats-harness.sh run
 cats-selftest: ## The harness selftest with the fake cats (no Java; block 40 of check-gates-selftest runs it once unmutated and under mutation)
 	bash scripts/cats-harness-selftest.sh
+	bash scripts/cats-precommit-selftest.sh
