@@ -1,0 +1,93 @@
+{
+  "testId": "Test 10",
+  "traceId": "18be5fa8-ea90-4151-8949-9199184d61ed",
+  "scenario": "Send a happy flow request with a [dummy] Content-Type header, value [application/cats]",
+  "expectedResult": "Should return 2XX or 4XX",
+  "result": "success",
+  "resultReason": null,
+  "resultDetails": "Response matches expected result. Response code [200] is documented and response body matches the corresponding schema.",
+  "resultIgnoreDetails": null,
+  "request": {
+    "headers": [
+      {
+        "key": "Content-Type",
+        "value": "application/cats"
+      },
+      {
+        "key": "Accept",
+        "value": "application/json"
+      },
+      {
+        "key": "User-Agent",
+        "value": "cats/15.4.0 (Test 10 - DummyContentTypeHeaders)"
+      },
+      {
+        "key": "X-Cats-Trace-Id",
+        "value": "18be5fa8-ea90-4151-8949-9199184d61ed"
+      },
+      {
+        "key": "Authorization",
+        "value": "$$Authorization"
+      }
+    ],
+    "payload": "{}",
+    "httpMethod": "GET",
+    "url": "http://127.0.0.1:57694/v1/channels",
+    "sendBody": false,
+    "preserveContentType": true,
+    "timestamp": "Sun, 8 Nov 2026 11:33:01 GMT"
+  },
+  "response": {
+    "responseCode": 200,
+    "httpMethod": "GET",
+    "responseTimeInMs": "1",
+    "numberOfWordsInResponse": "1",
+    "numberOfLinesInResponse": "1",
+    "contentLengthInBytes": "156",
+    "capturedBodyBytes": "156",
+    "declaredContentLength": "156",
+    "responseBodyLimit": "10485760",
+    "bodyTruncated": false,
+    "jsonBody": [
+      {
+        "capabilities": [],
+        "kind": "ordinary",
+        "name": "JYDHLITHPZVXPHQGZOXCYXRTLDZIUKREWJQADIMDPRJKQUNADNH"
+      },
+      {
+        "capabilities": [],
+        "kind": "ordinary",
+        "name": "general"
+      }
+    ],
+    "headers": [
+      {
+        "key": "content-length",
+        "value": "156"
+      },
+      {
+        "key": "content-type",
+        "value": "application/json"
+      },
+      {
+        "key": "date",
+        "value": "Sun, 08 Nov 2026 11:33:01 GMT"
+      }
+    ],
+    "responseContentType": "application/json"
+  },
+  "path": "/v1/channels",
+  "fuzzer": "DummyContentTypeHeaders",
+  "fullRequestPath": "http://127.0.0.1:57694/v1/channels",
+  "contractPath": "/v1/channels",
+  "server": "http://127.0.0.1:57694",
+  "requestProvenance": {
+    "mutationTargets": [
+      {
+        "location": "HEADER",
+        "name": "Content-Type"
+      }
+    ],
+    "runtimeCorrelations": []
+  }
+}

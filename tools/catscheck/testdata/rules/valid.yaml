@@ -1,0 +1,20 @@
+version: 1
+rules:
+  - id: BAD_REQUEST_PROBLEM_400
+    why: The server answers a malformed fuzz body with a problem+json 400.
+    tags: [validation]
+    when:
+      response_code: 400
+      response_content_type: {contains: problem+json}
+  - id: UNKNOWN_METHOD_404
+    why: Unknown methods answer 404, which the router pins.
+    any_of:
+      - {response_code: 404, method: {in: [CONNECT, TRACE]}}
+      - {response_code: 404, any_text: {matches: "^unexpected response code: 404"}}
+  - id: UNAUTHENTICATED_401
+    why: A request without an identity answers 401 as designed.
+    when: {response_code: 401, json_body.code: unauthenticated}
+  - id: DISABLED_RULE
+    why: Kept for the tests.
+    enabled: false
+    when: {response_code: 999}

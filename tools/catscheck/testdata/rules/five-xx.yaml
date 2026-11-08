@@ -1,0 +1,5 @@
+version: 1
+rules:
+  - id: FIVE_XX
+    why: A rule that tries to suppress an unavailable answer.
+    when: {response_code: 503}

@@ -1,0 +1,85 @@
+{
+  "testId": "Test 6",
+  "traceId": "15e8b730-87a8-4ea5-a374-5823b6cfdc2b",
+  "scenario": "Send a 'happy' flow request with all fields and all headers",
+  "expectedResult": "Should return 2XX",
+  "result": "error",
+  "resultReason": "Unexpected response code: 400",
+  "resultDetails": "Response does NOT match expected result. Response code is NOT from a list of expected codes for this FUZZER: expected [200, 201, 202, 204], actual [400] (response code is documented in the contract, but unexpected for this scenario)",
+  "resultIgnoreDetails": null,
+  "request": {
+    "headers": [
+      {
+        "key": "Accept",
+        "value": "application/json"
+      },
+      {
+        "key": "User-Agent",
+        "value": "cats/15.4.0 (Test 1 - HappyPath)"
+      },
+      {
+        "key": "X-Cats-Trace-Id",
+        "value": "15e8b730-87a8-4ea5-a374-5823b6cfdc2b"
+      },
+      {
+        "key": "Authorization",
+        "value": "$$Authorization"
+      },
+      {
+        "key": "Content-Type",
+        "value": "application/json"
+      }
+    ],
+    "payload": "{\"name\":\"JYDHLITHPZVXPHQGZOXCYXRTLDZIUKREWJQADIMDPRJKQUNADNH\",\"acl\":[{\"identity\":\"EXFXZCIGCOXBYEMLGCFONTONUPIYZFJFOYDWOFGFMPFNXQRHUQYUQSJXNLPLSA\",\"permissions\":[\"write\",\"admin\"]},{\"identity\":\"VMSTDMGYHVBKWSFGGAGTGXQRRTYJJJPHSZHBFGHYJKLWRBTJNCIYKWYLJRQBPCMHYPCXISRC\",\"permissions\":[\"read\",\"read\"]}],\"kind\":\"tasks\",\"scope\":\"N\"}",
+    "httpMethod": "POST",
+    "url": "http://127.0.0.1:57694/v1/channels",
+    "sendBody": false,
+    "preserveContentType": false,
+    "timestamp": "Sun, 8 Nov 2026 11:33:01 GMT"
+  },
+  "response": {
+    "responseCode": 503,
+    "httpMethod": "POST",
+    "responseTimeInMs": "1",
+    "numberOfWordsInResponse": "9",
+    "numberOfLinesInResponse": "1",
+    "contentLengthInBytes": "263",
+    "capturedBodyBytes": "263",
+    "declaredContentLength": "263",
+    "responseBodyLimit": "10485760",
+    "bodyTruncated": false,
+    "jsonBody": {
+      "code": "unavailable",
+      "detail": "ACL identity \"EXFXZCIGCOXBYEMLGCFONTONUPIYZFJFOYDWOFGFMPFNXQRHUQYUQSJXNLPLSA\" is not a registered identity",
+      "instance": "/v1/channels",
+      "retryable": false,
+      "status": 503,
+      "title": "Service Unavailable",
+      "type": "urn:agentmesh:problem:unavailable"
+    },
+    "headers": [
+      {
+        "key": "content-length",
+        "value": "263"
+      },
+      {
+        "key": "content-type",
+        "value": "application/problem+json"
+      },
+      {
+        "key": "date",
+        "value": "Sun, 08 Nov 2026 11:33:01 GMT"
+      }
+    ],
+    "responseContentType": "application/problem+json"
+  },
+  "path": "/v1/channels",
+  "fuzzer": "HappyPath",
+  "fullRequestPath": "http://127.0.0.1:57694/v1/channels",
+  "contractPath": "/v1/channels",
+  "server": "http://127.0.0.1:57694",
+  "requestProvenance": {
+    "mutationTargets": [],
+    "runtimeCorrelations": []
+  }
+}

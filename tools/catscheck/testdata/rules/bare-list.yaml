@@ -1,0 +1,5 @@
+version: 1
+rules:
+  - id: BARE_LIST
+    why: x
+    when: {response_code: [400, 401]}

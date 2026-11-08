@@ -1,0 +1,86 @@
+{
+  "testId": "Test 193",
+  "traceId": "cffb226e-0284-4ba8-8e0b-37a6f8cd07d7",
+  "scenario": "Send a happy flow bypassing authentication. Removed headers [Authorization]",
+  "expectedResult": "Should return 401, 403",
+  "result": "error",
+  "resultReason": "Error details leak",
+  "resultDetails": "The following keywords were detected in the response which might suggest an error details leak: [unauthorized]",
+  "resultIgnoreDetails": null,
+  "request": {
+    "headers": [
+      {
+        "key": "Accept",
+        "value": "application/json"
+      },
+      {
+        "key": "User-Agent",
+        "value": "cats/15.4.0 (Test 193 - BypassAuthentication)"
+      },
+      {
+        "key": "X-Cats-Trace-Id",
+        "value": "cffb226e-0284-4ba8-8e0b-37a6f8cd07d7"
+      },
+      {
+        "key": "Content-Type",
+        "value": "application/json"
+      }
+    ],
+    "payload": "{\"name\":\"JYDHLITHPZVXPHQGZOXCYXRTLDZIUKREWJQADIMDPRJKQUNADNH\",\"acl\":[{\"identity\":\"EXFXZCIGCOXBYEMLGCFONTONUPIYZFJFOYDWOFGFMPFNXQRHUQYUQSJXNLPLSA\",\"permissions\":[\"write\",\"admin\"]},{\"identity\":\"VMSTDMGYHVBKWSFGGAGTGXQRRTYJJJPHSZHBFGHYJKLWRBTJNCIYKWYLJRQBPCMHYPCXISRC\",\"permissions\":[\"read\",\"read\"]}],\"kind\":\"tasks\",\"scope\":\"N\"}",
+    "httpMethod": "POST",
+    "url": "http://127.0.0.1:57694/v1/channels",
+    "sendBody": false,
+    "preserveContentType": false,
+    "timestamp": "Sun, 8 Nov 2026 11:33:02 GMT"
+  },
+  "response": {
+    "responseCode": 401,
+    "httpMethod": "POST",
+    "responseTimeInMs": "0",
+    "numberOfWordsInResponse": "5",
+    "numberOfLinesInResponse": "1",
+    "contentLengthInBytes": "207",
+    "capturedBodyBytes": "207",
+    "declaredContentLength": "207",
+    "responseBodyLimit": "10485760",
+    "bodyTruncated": false,
+    "jsonBody": {
+      "code": "unauthenticated",
+      "detail": "security requirements failed: no identity",
+      "instance": "/v1/channels",
+      "retryable": false,
+      "status": 401,
+      "title": "Unauthorized",
+      "type": "urn:agentmesh:problem:unauthenticated"
+    },
+    "headers": [
+      {
+        "key": "content-length",
+        "value": "207"
+      },
+      {
+        "key": "content-type",
+        "value": "application/problem+json"
+      },
+      {
+        "key": "date",
+        "value": "Sun, 08 Nov 2026 11:33:02 GMT"
+      }
+    ],
+    "responseContentType": "application/problem+json"
+  },
+  "path": "/v1/channels",
+  "fuzzer": "BypassAuthentication",
+  "fullRequestPath": "http://127.0.0.1:57694/v1/channels",
+  "contractPath": "/v1/channels",
+  "server": "http://127.0.0.1:57694",
+  "requestProvenance": {
+    "mutationTargets": [
+      {
+        "location": "HEADER",
+        "name": "Authorization"
+      }
+    ],
+    "runtimeCorrelations": []
+  }
+}

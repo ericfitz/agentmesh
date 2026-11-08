@@ -1,0 +1,21 @@
+# CATS false-positive rules.
+#
+# Rules are evaluated in file order; the FIRST match wins and its id is recorded
+# on the test row. Only 'error' and 'warn' results are classified.
+#
+# Fields: result, response_code, fuzzer, path, contract_path, method, url, scenario,
+#         result_reason, result_details, any_text (reason + details), response_body,
+#         response_content_type, request_body, json_body.<dotted.path>,
+#         request_header.<name>
+# Operators: equals (bare scalar), in, not_equals, contains, contains_any,
+#            contains_all, starts_with, starts_with_any, ends_with, matches, exists
+# equals/in/not_equals are case-sensitive; the rest are case-insensitive.
+version: 1
+rules:
+  - id: RATE_LIMIT_429
+    why: Rate limiting is infrastructure protection, not API behavior under test.
+    when: {response_code: 429}
+
+  - id: CONNECTION_ERROR_999
+    why: CATS reports 999 for transport/connection failures, not API defects.
+    when: {response_code: 999}

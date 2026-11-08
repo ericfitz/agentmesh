@@ -1,0 +1,5 @@
+version: 1
+rules:
+  - id: BAD_FIELD
+    why: x
+    when: {status_code: 400}

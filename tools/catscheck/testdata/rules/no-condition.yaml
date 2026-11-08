@@ -1,0 +1,4 @@
+version: 1
+rules:
+  - id: NO_CONDITION
+    why: x

@@ -14,7 +14,7 @@ import (
 const usage = `usage:
   catscheck normalize FILE
   catscheck changed-paths OLD NEW
-  catscheck classify --rules FILE REPORT_DIR
+  catscheck classify --rules FILE [--max-lines N] REPORT_DIR
 `
 
 // say writes a message; a failed write to stdout or stderr has no remedy.
@@ -29,7 +29,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	for _, a := range args {
-		if strings.HasPrefix(a, "-") && a != "--rules" {
+		if strings.HasPrefix(a, "-") && a != "--rules" && a != "--max-lines" {
 			say(stderr, fmt.Sprintf("catscheck: unknown flag %q\n", a)+usage)
 			return 2
 		}
@@ -75,8 +75,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "classify":
-		say(stderr, "catscheck: classify: not implemented\n")
-		return 2
+		return classifyCmd(args[1:], stdout, stderr)
 	default:
 		say(stderr, usage)
 		return 2

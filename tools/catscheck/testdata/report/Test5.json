@@ -1,0 +1,84 @@
+{
+  "testId": "Test 335",
+  "traceId": "a300b603-cc4f-4b9a-bc80-55f3721058ca",
+  "scenario": "Send a happy flow request with a [dummy] Transfer-Encoding header, value [cats]",
+  "expectedResult": "Should return 400|501",
+  "result": "success",
+  "resultReason": null,
+  "resultDetails": "Response matches expected result. Response code [501] is documented and response body matches the corresponding schema.",
+  "resultIgnoreDetails": null,
+  "request": {
+    "headers": [
+      {
+        "key": "Transfer-Encoding",
+        "value": "cats"
+      },
+      {
+        "key": "Accept",
+        "value": "application/json"
+      },
+      {
+        "key": "User-Agent",
+        "value": "cats/15.4.0 (Test 335 - DummyTransferEncodingHeaders)"
+      },
+      {
+        "key": "X-Cats-Trace-Id",
+        "value": "a300b603-cc4f-4b9a-bc80-55f3721058ca"
+      },
+      {
+        "key": "Authorization",
+        "value": "$$Authorization"
+      },
+      {
+        "key": "Content-Type",
+        "value": "application/json"
+      }
+    ],
+    "payload": "{\"name\":\"JYDHLITHPZVXPHQGZOXCYXRTLDZIUKREWJQADIMDPRJKQUNADNH\",\"acl\":[{\"identity\":\"EXFXZCIGCOXBYEMLGCFONTONUPIYZFJFOYDWOFGFMPFNXQRHUQYUQSJXNLPLSA\",\"permissions\":[\"write\",\"admin\"]},{\"identity\":\"VMSTDMGYHVBKWSFGGAGTGXQRRTYJJJPHSZHBFGHYJKLWRBTJNCIYKWYLJRQBPCMHYPCXISRC\",\"permissions\":[\"read\",\"read\"]}],\"kind\":\"tasks\",\"scope\":\"N\"}",
+    "httpMethod": "POST",
+    "url": "http://127.0.0.1:57694/v1/channels",
+    "sendBody": false,
+    "preserveContentType": false,
+    "timestamp": "Sun, 8 Nov 2026 11:33:03 GMT"
+  },
+  "response": {
+    "responseCode": 501,
+    "httpMethod": "POST",
+    "responseTimeInMs": "1",
+    "numberOfWordsInResponse": "3",
+    "numberOfLinesInResponse": "1",
+    "contentLengthInBytes": "29",
+    "capturedBodyBytes": "29",
+    "declaredContentLength": "-1",
+    "responseBodyLimit": "10485760",
+    "bodyTruncated": false,
+    "jsonBody": {
+      "notAJson": "Unsupported transfer encoding"
+    },
+    "headers": [
+      {
+        "key": "connection",
+        "value": "close"
+      },
+      {
+        "key": "content-type",
+        "value": "text/plain; charset=utf-8"
+      }
+    ],
+    "responseContentType": "text/plain; charset=utf-8"
+  },
+  "path": "/v1/channels",
+  "fuzzer": "DummyTransferEncodingHeaders",
+  "fullRequestPath": "http://127.0.0.1:57694/v1/channels",
+  "contractPath": "/v1/channels",
+  "server": "http://127.0.0.1:57694",
+  "requestProvenance": {
+    "mutationTargets": [
+      {
+        "location": "HEADER",
+        "name": "Transfer-Encoding"
+      }
+    ],
+    "runtimeCorrelations": []
+  }
+}
