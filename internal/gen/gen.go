@@ -591,10 +591,17 @@ type ACLEntryPermissions string
 
 // AccessToken The answer of a successful token exchange: the bearer, its type and its lifetime in seconds.
 type AccessToken struct {
-	AccessToken     string  `json:"access_token"`
-	ExpiresIn       int64   `json:"expires_in"`
+	// AccessToken The bearer, a JWT of type at+jwt; send it as Authorization: Bearer.
+	AccessToken string `json:"access_token"`
+
+	// ExpiresIn Seconds until the bearer expires: token_lifetime_seconds (default 3600) for an agent, the issuer's human lifetime (default 900) for a human.
+	ExpiresIn int64 `json:"expires_in"`
+
+	// IssuedTokenType urn:ietf:params:oauth:token-type:access_token after a token exchange; absent for client_credentials.
 	IssuedTokenType *string `json:"issued_token_type,omitempty"`
-	TokenType       string  `json:"token_type"`
+
+	// TokenType Always Bearer.
+	TokenType string `json:"token_type"`
 }
 
 // AgentIdentity The result of creating an agent identity: the identity, its scope, whether this call created it and the one-time enrollment token bound to the name with its expiry.
@@ -640,20 +647,40 @@ type AgentStatusEntryKind string
 
 // AuthMethod One authentication method the server accepts, as advertised in the discovery document.
 type AuthMethod struct {
+	// BearerFormat The format of the bearer token; absent when the security scheme names none.
 	BearerFormat *string `json:"bearer_format,omitempty"`
-	Name         string  `json:"name"`
-	Scheme       *string `json:"scheme,omitempty"`
-	Type         string  `json:"type"`
+
+	// Name The name of the security scheme in this document.
+	Name string `json:"name"`
+
+	// Scheme The HTTP authentication scheme; absent when the security scheme names none.
+	Scheme *string `json:"scheme,omitempty"`
+
+	// Type The OpenAPI security scheme type of the scheme.
+	Type string `json:"type"`
 }
 
 // AuthorizationServerMetadata The RFC 8414 authorization server metadata of the server's token endpoint.
 type AuthorizationServerMetadata struct {
-	GrantTypesSupported                        []string `json:"grant_types_supported"`
-	Issuer                                     string   `json:"issuer"`
-	JwksUri                                    string   `json:"jwks_uri"`
-	ResponseTypesSupported                     []string `json:"response_types_supported"`
-	TokenEndpoint                              string   `json:"token_endpoint"`
-	TokenEndpointAuthMethodsSupported          []string `json:"token_endpoint_auth_methods_supported"`
+	// GrantTypesSupported The grants the token endpoint accepts: client_credentials and the RFC 8693 token exchange.
+	GrantTypesSupported []string `json:"grant_types_supported"`
+
+	// Issuer The issuer URL: the configured issuer, else the scheme and host of the request. It is the iss and aud of every bearer the server mints.
+	Issuer string `json:"issuer"`
+
+	// JwksUri The URL of the key set that verifies the server's bearers: the issuer followed by /v1/auth/jwks.
+	JwksUri string `json:"jwks_uri"`
+
+	// ResponseTypesSupported Always empty: the server has no authorization endpoint and issues tokens only at the token endpoint.
+	ResponseTypesSupported []string `json:"response_types_supported"`
+
+	// TokenEndpoint The URL of the token endpoint: the issuer followed by /v1/auth/token.
+	TokenEndpoint string `json:"token_endpoint"`
+
+	// TokenEndpointAuthMethodsSupported How a client authenticates: private_key_jwt for the client credentials grant, none for the token exchange, which presents no client credentials.
+	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported"`
+
+	// TokenEndpointAuthSigningAlgValuesSupported The algorithms a client assertion may be signed with: EdDSA and ES256.
 	TokenEndpointAuthSigningAlgValuesSupported []string `json:"token_endpoint_auth_signing_alg_values_supported"`
 }
 
@@ -773,20 +800,29 @@ type CredentialReset struct {
 
 // Discovery The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods and the issuer metadata locations.
 type Discovery struct {
-	ApiVersions []string     `json:"api_versions"`
+	// ApiVersions The API versions the server serves; v1 is the /v1 path prefix.
+	ApiVersions []string `json:"api_versions"`
+
+	// AuthMethods The authentication methods, computed from the security schemes of this document (Decision 65).
 	AuthMethods []AuthMethod `json:"auth_methods"`
 
 	// AuthorizationServer URL of the RFC 8414 authorization server metadata.
-	AuthorizationServer *string  `json:"authorization_server,omitempty"`
-	Capabilities        []string `json:"capabilities"`
-	Issuers             []string `json:"issuers"`
+	AuthorizationServer *string `json:"authorization_server,omitempty"`
+
+	// Capabilities What the server offers, sorted and computed from what is available: health and long_poll always, semantic_search when an embedder is configured.
+	Capabilities []string `json:"capabilities"`
+
+	// Issuers The issuer URLs of the configured external identity providers whose access tokens the token endpoint exchanges for a human bearer; empty when none is configured.
+	Issuers []string `json:"issuers"`
 
 	// OpenidConfiguration URL of the same document under /.well-known/openid-configuration, kept for existing clients.
 	OpenidConfiguration *string `json:"openid_configuration,omitempty"`
 
 	// ProtocolVersion The protocol version (this document's info.version): the major is the /v1 path, the minor is bumped on every addition, the patch on a documentation-only change. Independent of server_version.
 	ProtocolVersion string `json:"protocol_version"`
-	ServerVersion   string `json:"server_version"`
+
+	// ServerVersion The server's version string, the same value as version in the health document.
+	ServerVersion string `json:"server_version"`
 }
 
 // DoneScopeRequest Retires a scope; retire is with_bridge or normal.
@@ -840,72 +876,117 @@ type Health struct {
 
 	// Maintenance This process's view of the maintenance loop: its interval, the lock owner and the last tick's jobs.
 	Maintenance *HealthMaintenance `json:"maintenance,omitempty"`
-	Notices     *[]Notice          `json:"notices,omitempty"`
-	Now         int64              `json:"now"`
+
+	// Notices The operator notices (capacity, embedding, inspection); an empty list when none is set. Administrator tier only.
+	Notices *[]Notice `json:"notices,omitempty"`
+
+	// Now The server's clock, in Unix milliseconds.
+	Now int64 `json:"now"`
 
 	// ProtocolVersion The protocol version (this document's info.version): the major is the /v1 path, the minor is bumped on every addition, the patch on a documentation-only change. Independent of version.
-	ProtocolVersion string       `json:"protocol_version"`
-	StartedAt       *int64       `json:"started_at,omitempty"`
-	Status          HealthStatus `json:"status"`
+	ProtocolVersion string `json:"protocol_version"`
+
+	// StartedAt When this process started, in Unix milliseconds; identity tier and above.
+	StartedAt *int64 `json:"started_at,omitempty"`
+
+	// Status ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same status.
+	Status HealthStatus `json:"status"`
 
 	// Storage Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set.
 	Storage *Usage `json:"storage,omitempty"`
 
 	// Store The store engine and its schema version.
-	Store   *HealthStore `json:"store,omitempty"`
-	Tier    HealthTier   `json:"tier"`
-	Version string       `json:"version"`
+	Store *HealthStore `json:"store,omitempty"`
+
+	// Tier What the caller got: probe (no credential), identity (a registered identity) or admin (an administrator), so a probe-only view is never mistaken for health.
+	Tier HealthTier `json:"tier"`
+
+	// Version The server's version string, the same value as server_version in the discovery document.
+	Version string `json:"version"`
 }
 
-// HealthStatus defines model for Health.Status.
+// HealthStatus ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same status.
 type HealthStatus string
 
-// HealthTier defines model for Health.Tier.
+// HealthTier What the caller got: probe (no credential), identity (a registered identity) or admin (an administrator), so a probe-only view is never mistaken for health.
 type HealthTier string
 
 // HealthEmbeddings The embedding state and backlog; the model, last error and rejection details are set at the administrator tier only.
 type HealthEmbeddings struct {
 	// Backlog Memories waiting for an embedding, capped at 1000 (the search page maximum), so 1000 means "at least 1000".
-	Backlog      int                   `json:"backlog"`
-	LastError    *string               `json:"last_error,omitempty"`
-	LastErrorAt  *int64                `json:"last_error_at,omitempty"`
-	Model        *string               `json:"model,omitempty"`
-	Rejected     int                   `json:"rejected"`
-	RejectedLast *string               `json:"rejected_last,omitempty"`
-	State        HealthEmbeddingsState `json:"state"`
+	Backlog int `json:"backlog"`
+
+	// LastError The text of the embedding notice; administrator tier only, absent when none is set.
+	LastError *string `json:"last_error,omitempty"`
+
+	// LastErrorAt When the embedding notice was set, in Unix milliseconds; administrator tier only, absent when none is set.
+	LastErrorAt *int64 `json:"last_error_at,omitempty"`
+
+	// Model The embedding model; administrator tier only, absent when state is off.
+	Model *string `json:"model,omitempty"`
+
+	// Rejected The number of memories whose embedding the embedder rejected.
+	Rejected int `json:"rejected"`
+
+	// RejectedLast The latest rejection reason; administrator tier only, absent when there is none.
+	RejectedLast *string `json:"rejected_last,omitempty"`
+
+	// State off when no embedder is configured, failing while the embedding notice is set, else ok.
+	State HealthEmbeddingsState `json:"state"`
 }
 
-// HealthEmbeddingsState defines model for HealthEmbeddings.State.
+// HealthEmbeddingsState off when no embedder is configured, failing while the embedding notice is set, else ok.
 type HealthEmbeddingsState string
 
 // HealthJob One maintenance job's outcome in the last tick.
 type HealthJob struct {
-	Changed int     `json:"changed"`
-	Error   *string `json:"error,omitempty"`
-	Name    string  `json:"name"`
-	Skipped bool    `json:"skipped"`
+	// Changed The count the job reported changed in the last tick.
+	Changed int `json:"changed"`
+
+	// Error The job's error text, truncated; absent when the job succeeded.
+	Error *string `json:"error,omitempty"`
+
+	// Name The job's name, for example lapsed sessions.
+	Name string `json:"name"`
+
+	// Skipped True when the tick's deadline passed before the job ran.
+	Skipped bool `json:"skipped"`
 }
 
 // HealthMaintenance This process's view of the maintenance loop: its interval, the lock owner and the last tick's jobs.
 type HealthMaintenance struct {
-	IntervalSeconds int                   `json:"interval_seconds"`
-	Jobs            []HealthJob           `json:"jobs"`
-	LastTickAt      *int64                `json:"last_tick_at,omitempty"`
-	Lock            HealthMaintenanceLock `json:"lock"`
-	LockError       *string               `json:"lock_error,omitempty"`
-	Owner           string                `json:"owner"`
+	// IntervalSeconds The period of the maintenance tick in seconds.
+	IntervalSeconds int `json:"interval_seconds"`
+
+	// Jobs The jobs of the last tick; empty before the first tick.
+	Jobs []HealthJob `json:"jobs"`
+
+	// LastTickAt When this process last ticked, in Unix milliseconds; absent before its first tick.
+	LastTickAt *int64 `json:"last_tick_at,omitempty"`
+
+	// Lock The result of this process's last attempt to take the maintenance lock: held, held_elsewhere, or unknown before the first tick and after a lock error.
+	Lock HealthMaintenanceLock `json:"lock"`
+
+	// LockError The last lock error, truncated; absent when there is none.
+	LockError *string `json:"lock_error,omitempty"`
+
+	// Owner This process's own lock owner id, not the holder's.
+	Owner string `json:"owner"`
 }
 
-// HealthMaintenanceLock defines model for HealthMaintenance.Lock.
+// HealthMaintenanceLock The result of this process's last attempt to take the maintenance lock: held, held_elsewhere, or unknown before the first tick and after a lock error.
 type HealthMaintenanceLock string
 
 // HealthStore The store engine and its schema version.
 type HealthStore struct {
-	Engine        HealthStoreEngine `json:"engine"`
-	SchemaVersion int               `json:"schema_version"`
+	// Engine The store engine: sqlite or postgres.
+	Engine HealthStoreEngine `json:"engine"`
+
+	// SchemaVersion The schema version the database holds.
+	SchemaVersion int `json:"schema_version"`
 }
 
-// HealthStoreEngine defines model for HealthStore.Engine.
+// HealthStoreEngine The store engine: sqlite or postgres.
 type HealthStoreEngine string
 
 // HumanIdentity The normalized human identity name and whether this call created it.
@@ -928,11 +1009,12 @@ type Identity struct {
 // IdentityKind defines model for Identity.Kind.
 type IdentityKind string
 
-// JWK At most 16 keys.
+// JWK A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key.
 type JWK map[string]interface{}
 
-// JWKS A JSON Web Key Set.
+// JWKS A JSON Web Key Set: the active signing key and any retiring key that still verifies the bearers it signed.
 type JWKS struct {
+	// Keys The public keys, each with its kid.
 	Keys []JWK `json:"keys"`
 }
 
@@ -968,7 +1050,10 @@ type Notice struct {
 
 // OAuthError RFC 6749 section 5.2 error body.
 type OAuthError struct {
-	Error            string  `json:"error"`
+	// Error The RFC 6749 section 5.2 error code: invalid_request, invalid_client, invalid_target, unsupported_grant_type, temporarily_unavailable or server_error.
+	Error string `json:"error"`
+
+	// ErrorDescription A human-readable explanation; a server fault always says internal error and never carries the underlying text.
 	ErrorDescription *string `json:"error_description,omitempty"`
 }
 
@@ -1009,15 +1094,25 @@ type PendingChannel struct {
 // Problem The body of every error response (application/problem+json): the stable code, the HTTP status, whether a retry can succeed, and a human-readable title and detail.
 type Problem struct {
 	// Code agentmesh extension member (RFC 9457 section 3.2).
-	Code     ProblemCode `json:"code"`
-	Detail   *string     `json:"detail,omitempty"`
-	Instance *string     `json:"instance,omitempty"`
+	Code ProblemCode `json:"code"`
+
+	// Detail An explanation specific to this occurrence; absent when there is none. It never carries the text of a driver or store failure.
+	Detail *string `json:"detail,omitempty"`
+
+	// Instance The path of the request that failed, for example /v1/channels/release-train/acl; absent when the request is unknown.
+	Instance *string `json:"instance,omitempty"`
 
 	// Retryable agentmesh extension member (RFC 9457 section 3.2).
-	Retryable bool   `json:"retryable"`
-	Status    int    `json:"status"`
-	Title     string `json:"title"`
-	Type      string `json:"type"`
+	Retryable bool `json:"retryable"`
+
+	// Status The HTTP status code of the response, repeated in the body.
+	Status int `json:"status"`
+
+	// Title The HTTP status text of the status, for example Not Found.
+	Title string `json:"title"`
+
+	// Type A URN naming the code: the prefix urn:agentmesh:problem: followed by the code (RFC 9457 section 3.1.1).
+	Type string `json:"type"`
 }
 
 // ProblemCode agentmesh extension member (RFC 9457 section 3.2).
@@ -1049,25 +1144,32 @@ type ReceiveResult struct {
 
 // RegisterRequest Registers a public key for an identity, with an enrollment token where the server requires one.
 type RegisterRequest struct {
-	// EnrollmentToken At most 1024 bytes.
+	// EnrollmentToken The plaintext token a host administrator created with enrollment create; required when the server registers by enrollment, consumed on success. At most 1024 bytes.
 	EnrollmentToken *string `json:"enrollment_token,omitempty"`
 
-	// Identity At most 128 bytes (the server counts bytes).
+	// Identity The identity name to claim: it must have no credential yet. At most 128 bytes (the server counts bytes).
 	Identity string `json:"identity"`
 
-	// PublicKeyJwk At most 16 keys.
+	// PublicKeyJwk A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key.
 	PublicKeyJwk JWK `json:"public_key_jwk"`
 }
 
 // Registration The outcome of a registration: the identity, the key id and algorithm, and whether this call created the identity.
 type Registration struct {
+	// Algorithm The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key.
 	Algorithm RegistrationAlgorithm `json:"algorithm"`
-	Created   bool                  `json:"created"`
-	Identity  string                `json:"identity"`
-	Kid       string                `json:"kid"`
+
+	// Created True when this call created the identity, false when it already existed (a repeat of the same key included).
+	Created bool `json:"created"`
+
+	// Identity The identity the key is bound to.
+	Identity string `json:"identity"`
+
+	// Kid The key id: the RFC 7638 SHA-256 thumbprint of the public key, base64url.
+	Kid string `json:"kid"`
 }
 
-// RegistrationAlgorithm defines model for Registration.Algorithm.
+// RegistrationAlgorithm The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key.
 type RegistrationAlgorithm string
 
 // RejectedCursor An offered cursor that was not adopted, with the reason (before_retention, ahead, unreadable or unsubscribed).
@@ -1357,40 +1459,40 @@ type TaskUpdateResult struct {
 
 // TokenRequest RFC 6749 section 4.4.2 and RFC 8693 section 2.1 token request. The grant is a plain string so that an unsupported one answers unsupported_grant_type (RFC 6749 section 5.2) rather than failing validation; the handler checks which parameters each grant needs.
 type TokenRequest struct {
-	// ActorToken At most 16384 bytes.
+	// ActorToken Not supported: any value is invalid_request in a token exchange. At most 16384 bytes.
 	ActorToken *string `json:"actor_token,omitempty"`
 
-	// ActorTokenType At most 1024 bytes.
+	// ActorTokenType Not supported: any value is invalid_request in a token exchange. At most 1024 bytes.
 	ActorTokenType *string `json:"actor_token_type,omitempty"`
 
-	// Audience At most 1024 bytes.
+	// Audience Token exchange only, optional: when sent, the issuer URL of this server (else invalid_target). At most 1024 bytes.
 	Audience *string `json:"audience,omitempty"`
 
-	// ClientAssertion At most 16384 bytes.
+	// ClientAssertion client_credentials only: the signed client assertion JWT, whose iss and sub are the identity and whose aud is the issuer URL. At most 16384 bytes.
 	ClientAssertion *string `json:"client_assertion,omitempty"`
 
-	// ClientAssertionType At most 1024 bytes.
+	// ClientAssertionType client_credentials only: urn:ietf:params:oauth:client-assertion-type:jwt-bearer. At most 1024 bytes.
 	ClientAssertionType *string `json:"client_assertion_type,omitempty"`
 
-	// ClientId At most 128 bytes (the server counts bytes).
+	// ClientId client_credentials only, optional: when sent, it must equal the assertion's issuer. The token exchange does not use it. At most 128 bytes (the server counts bytes).
 	ClientId *string `json:"client_id,omitempty"`
 
-	// GrantType At most 1024 bytes.
+	// GrantType client_credentials, or urn:ietf:params:oauth:grant-type:token-exchange; any other value is unsupported_grant_type. At most 1024 bytes.
 	GrantType string `json:"grant_type"`
 
-	// RequestedTokenType At most 1024 bytes.
+	// RequestedTokenType Token exchange only, optional: when sent, urn:ietf:params:oauth:token-type:access_token. At most 1024 bytes.
 	RequestedTokenType *string `json:"requested_token_type,omitempty"`
 
-	// Resource At most 1024 bytes.
+	// Resource Token exchange only, optional: when sent, the issuer URL of this server (else invalid_target). At most 1024 bytes.
 	Resource *string `json:"resource,omitempty"`
 
-	// Scope At most 1024 bytes.
+	// Scope Ignored by the server. At most 1024 bytes.
 	Scope *string `json:"scope,omitempty"`
 
-	// SubjectToken At most 16384 bytes.
+	// SubjectToken Token exchange only: the access token a configured external issuer gave the human. At most 16384 bytes.
 	SubjectToken *string `json:"subject_token,omitempty"`
 
-	// SubjectTokenType At most 1024 bytes.
+	// SubjectTokenType Token exchange only: urn:ietf:params:oauth:token-type:access_token; an ID token type is refused. At most 1024 bytes.
 	SubjectTokenType *string `json:"subject_token_type,omitempty"`
 }
 
@@ -1425,6 +1527,7 @@ type Wake struct {
 
 // WellKnown The answer of the well-known document: the path of the discovery document.
 type WellKnown struct {
+	// Discover The path of the discovery document, always /v1/discover.
 	Discover string `json:"discover"`
 }
 
@@ -1478,13 +1581,13 @@ type UnprocessableEntity = Problem
 
 // CreateIdentityByEmailParams defines parameters for CreateIdentityByEmail.
 type CreateIdentityByEmailParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // ResetCredentialParams defines parameters for ResetCredential.
 type ResetCredentialParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1493,7 +1596,7 @@ type AdminResetParams struct {
 	// Scope data keeps identities and keys; everything removes them too; default: data
 	Scope *AdminResetParamsScope `form:"scope,omitempty" json:"scope,omitempty"`
 
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1502,13 +1605,13 @@ type AdminResetParamsScope string
 
 // CreateScopeParams defines parameters for CreateScope.
 type CreateScopeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // DoneScopeParams defines parameters for DoneScope.
 type DoneScopeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1517,25 +1620,25 @@ type RotateSigningKeyParams struct {
 	// RevokePrevious Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; default false
 	RevokePrevious *bool `form:"revoke_previous,omitempty" json:"revoke_previous,omitempty"`
 
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // CreateChannelParams defines parameters for CreateChannel.
 type CreateChannelParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // DeleteChannelParams defines parameters for DeleteChannel.
 type DeleteChannelParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // RenameChannelParams defines parameters for RenameChannel.
 type RenameChannelParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1544,7 +1647,7 @@ type SetACLJSONBody = []ACLEntry
 
 // SetACLParams defines parameters for SetACL.
 type SetACLParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1568,19 +1671,19 @@ type HistoryParams struct {
 
 // SendMessageParams defines parameters for SendMessage.
 type SendMessageParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // UnsubscribeParams defines parameters for Unsubscribe.
 type UnsubscribeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // SubscribeParams defines parameters for Subscribe.
 type SubscribeParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1595,19 +1698,19 @@ type ListTasksParams struct {
 
 // CreateTaskParams defines parameters for CreateTask.
 type CreateTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // DeleteMemoryParams defines parameters for DeleteMemory.
 type DeleteMemoryParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // EditMemoryParams defines parameters for EditMemory.
 type EditMemoryParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1649,7 +1752,7 @@ type SearchParamsMode string
 
 // CloseSessionParams defines parameters for CloseSession.
 type CloseSessionParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1661,7 +1764,7 @@ type PeekParams struct {
 
 // SetAgentStatusParams defines parameters for SetAgentStatus.
 type SetAgentStatusParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1682,31 +1785,31 @@ type UnsubscribeTagsParams struct {
 	// Pattern At most 10 items.
 	Pattern []string `form:"pattern" json:"pattern"`
 
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // SubscribeTagsParams defines parameters for SubscribeTags.
 type SubscribeTagsParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // UpdateTaskParams defines parameters for UpdateTask.
 type UpdateTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // ClaimTaskParams defines parameters for ClaimTask.
 type ClaimTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
 // ReleaseTaskParams defines parameters for ReleaseTask.
 type ReleaseTaskParams struct {
-	// IdempotencyKey Absent or empty means no receipt (Decision 66). At most 1024 bytes.
+	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
 
@@ -1846,15 +1949,21 @@ type ClientInterface interface {
 
 	// WellKnown The agentmesh well-known document: where to discover the API
 	//
+	// Returns the path of the versioned discovery document, /v1/discover, so a client that knows only the host can find the API. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 43.
+	//
 	// Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
 	WellKnown(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AuthorizationServerMetadata OAuth 2.0 authorization server metadata (RFC 8414)
 	//
+	// Returns the RFC 8414 metadata of this server's token endpoint: the issuer, the token endpoint and JWKS URLs, the grants, the client authentication methods and the signing algorithms a client assertion may use. The issuer is the configured one when set and is then never derived from the request Host; without a configured issuer it is the scheme and host of the request. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decisions 55, 70, 84, 91.
+	//
 	// Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
 	AuthorizationServerMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// OpenidConfiguration OpenID Connect discovery document for this server
+	//
+	// Returns the same document as authorizationServerMetadata for clients that predate the RFC 8414 path. The server is not an OpenID Provider and the document says nothing about OpenID Connect. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 91.
 	//
 	// Corresponds with GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId).
 	OpenidConfiguration(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2007,12 +2116,14 @@ type ClientInterface interface {
 
 	// Jwks The public keys that verify the bearers this server issues
 	//
+	// Returns the public keys that verify the bearers this server issues: the active signing key and any retiring key that still verifies bearers it signed, each as a JWK with its kid. A server without a token issuer answers 503 unavailable. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, Decision 70.
+	//
 	// Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
 	Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RegisterWithBody Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
-	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+	// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2021,7 +2132,7 @@ type ClientInterface interface {
 
 	// Register Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
-	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+	// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2030,7 +2141,7 @@ type ClientInterface interface {
 
 	// TokenWithBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
-	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+	// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2039,7 +2150,7 @@ type ClientInterface interface {
 
 	// TokenWithFormdataBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
-	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+	// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type.
 	//
@@ -2162,10 +2273,14 @@ type ClientInterface interface {
 
 	// Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
 	//
+	// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+	//
 	// Corresponds with GET /v1/discover (the `Discover` operationId).
 	Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Health The health document as the caller's tier sees it
+	//
+	// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 	//
 	// Corresponds with GET /v1/health (the `Health` operationId).
 	Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2344,6 +2459,8 @@ type ClientInterface interface {
 
 // WellKnown The agentmesh well-known document: where to discover the API
 //
+// Returns the path of the versioned discovery document, /v1/discover, so a client that knows only the host can find the API. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 43.
+//
 // Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
 func (c *Client) WellKnown(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewWellKnownRequest(c.Server)
@@ -2359,6 +2476,8 @@ func (c *Client) WellKnown(ctx context.Context, reqEditors ...RequestEditorFn) (
 
 // AuthorizationServerMetadata OAuth 2.0 authorization server metadata (RFC 8414)
 //
+// Returns the RFC 8414 metadata of this server's token endpoint: the issuer, the token endpoint and JWKS URLs, the grants, the client authentication methods and the signing algorithms a client assertion may use. The issuer is the configured one when set and is then never derived from the request Host; without a configured issuer it is the scheme and host of the request. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decisions 55, 70, 84, 91.
+//
 // Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
 func (c *Client) AuthorizationServerMetadata(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthorizationServerMetadataRequest(c.Server)
@@ -2373,6 +2492,8 @@ func (c *Client) AuthorizationServerMetadata(ctx context.Context, reqEditors ...
 }
 
 // OpenidConfiguration OpenID Connect discovery document for this server
+//
+// Returns the same document as authorizationServerMetadata for clients that predate the RFC 8414 path. The server is not an OpenID Provider and the document says nothing about OpenID Connect. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 91.
 //
 // Corresponds with GET /.well-known/openid-configuration (the `OpenidConfiguration` operationId).
 func (c *Client) OpenidConfiguration(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2755,6 +2876,8 @@ func (c *Client) ListAgentStatuses(ctx context.Context, reqEditors ...RequestEdi
 
 // Jwks The public keys that verify the bearers this server issues
 //
+// Returns the public keys that verify the bearers this server issues: the active signing key and any retiring key that still verifies bearers it signed, each as a JWK with its kid. A server without a token issuer answers 503 unavailable. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, Decision 70.
+//
 // Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
 func (c *Client) Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewJwksRequest(c.Server)
@@ -2770,7 +2893,7 @@ func (c *Client) Jwks(ctx context.Context, reqEditors ...RequestEditorFn) (*http
 
 // RegisterWithBody Register an identity's public key, with an enrollment token where registration is by enrollment
 //
-// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2789,7 +2912,7 @@ func (c *Client) RegisterWithBody(ctx context.Context, contentType string, body 
 
 // Register Register an identity's public key, with an enrollment token where registration is by enrollment
 //
-// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -2808,7 +2931,7 @@ func (c *Client) Register(ctx context.Context, body RegisterJSONRequestBody, req
 
 // TokenWithBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
-// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 //
 // Takes any type of body and a specified content type.
 //
@@ -2827,7 +2950,7 @@ func (c *Client) TokenWithBody(ctx context.Context, contentType string, body io.
 
 // TokenWithFormdataBody Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
-// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type.
 //
@@ -3140,6 +3263,8 @@ func (c *Client) CreateTask(ctx context.Context, channel ChannelParam, params *C
 
 // Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
 //
+// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+//
 // Corresponds with GET /v1/discover (the `Discover` operationId).
 func (c *Client) Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDiscoverRequest(c.Server)
@@ -3154,6 +3279,8 @@ func (c *Client) Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*
 }
 
 // Health The health document as the caller's tier sees it
+//
+// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 //
 // Corresponds with GET /v1/health (the `Health` operationId).
 func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6410,6 +6537,8 @@ type ClientWithResponsesInterface interface {
 
 	// WellKnownWithResponse The agentmesh well-known document: where to discover the API
 	//
+	// Returns the path of the versioned discovery document, /v1/discover, so a client that knows only the host can find the API. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 43.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
@@ -6417,12 +6546,16 @@ type ClientWithResponsesInterface interface {
 
 	// AuthorizationServerMetadataWithResponse OAuth 2.0 authorization server metadata (RFC 8414)
 	//
+	// Returns the RFC 8414 metadata of this server's token endpoint: the issuer, the token endpoint and JWKS URLs, the grants, the client authentication methods and the signing algorithms a client assertion may use. The issuer is the configured one when set and is then never derived from the request Host; without a configured issuer it is the scheme and host of the request. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decisions 55, 70, 84, 91.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
 	AuthorizationServerMetadataWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthorizationServerMetadataResponse, error)
 
 	// OpenidConfigurationWithResponse OpenID Connect discovery document for this server
+	//
+	// Returns the same document as authorizationServerMetadata for clients that predate the RFC 8414 path. The server is not an OpenID Provider and the document says nothing about OpenID Connect. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 91.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6601,6 +6734,8 @@ type ClientWithResponsesInterface interface {
 
 	// JwksWithResponse The public keys that verify the bearers this server issues
 	//
+	// Returns the public keys that verify the bearers this server issues: the active signing key and any retiring key that still verifies bearers it signed, each as a JWK with its kid. A server without a token issuer answers 503 unavailable. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, Decision 70.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
@@ -6608,7 +6743,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterWithBodyWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
-	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+	// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6617,7 +6752,7 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 	//
-	// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+	// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6626,7 +6761,7 @@ type ClientWithResponsesInterface interface {
 
 	// TokenWithBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
-	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+	// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6635,7 +6770,7 @@ type ClientWithResponsesInterface interface {
 
 	// TokenWithFormdataBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 	//
-	// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+	// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 	//
 	// Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -6770,12 +6905,16 @@ type ClientWithResponsesInterface interface {
 
 	// DiscoverWithResponse The liveness probe: API versions, server and protocol version, capabilities and auth methods
 	//
+	// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/discover (the `Discover` operationId).
 	DiscoverWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*DiscoverResponse, error)
 
 	// HealthWithResponse The health document as the caller's tier sees it
+	//
+	// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -11916,6 +12055,8 @@ func (r ReleaseTaskResponse) ContentType() string {
 
 // WellKnownWithResponse The agentmesh well-known document: where to discover the API
 //
+// Returns the path of the versioned discovery document, /v1/discover, so a client that knows only the host can find the API. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 43.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /.well-known/agentmesh (the `WellKnown` operationId).
@@ -11929,6 +12070,8 @@ func (c *ClientWithResponses) WellKnownWithResponse(ctx context.Context, reqEdit
 
 // AuthorizationServerMetadataWithResponse OAuth 2.0 authorization server metadata (RFC 8414)
 //
+// Returns the RFC 8414 metadata of this server's token endpoint: the issuer, the token endpoint and JWKS URLs, the grants, the client authentication methods and the signing algorithms a client assertion may use. The issuer is the configured one when set and is then never derived from the request Host; without a configured issuer it is the scheme and host of the request. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decisions 55, 70, 84, 91.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /.well-known/oauth-authorization-server (the `AuthorizationServerMetadata` operationId).
@@ -11941,6 +12084,8 @@ func (c *ClientWithResponses) AuthorizationServerMetadataWithResponse(ctx contex
 }
 
 // OpenidConfigurationWithResponse OpenID Connect discovery document for this server
+//
+// Returns the same document as authorizationServerMetadata for clients that predate the RFC 8414 path. The server is not an OpenID Provider and the document says nothing about OpenID Connect. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 91.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -12257,6 +12402,8 @@ func (c *ClientWithResponses) ListAgentStatusesWithResponse(ctx context.Context,
 
 // JwksWithResponse The public keys that verify the bearers this server issues
 //
+// Returns the public keys that verify the bearers this server issues: the active signing key and any retiring key that still verifies bearers it signed, each as a JWK with its kid. A server without a token issuer answers 503 unavailable. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, Decision 70.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/auth/jwks (the `Jwks` operationId).
@@ -12270,7 +12417,7 @@ func (c *ClientWithResponses) JwksWithResponse(ctx context.Context, reqEditors .
 
 // RegisterWithBodyWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 //
-// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12285,7 +12432,7 @@ func (c *ClientWithResponses) RegisterWithBodyWithResponse(ctx context.Context, 
 
 // RegisterWithResponse Register an identity's public key, with an enrollment token where registration is by enrollment
 //
-// Registers an identity's public key (trust on first use, or with an enrollment token; Decisions 20, 58, 72).
+// Binds a public key to an identity name and, when the name is new, creates the identity and subscribes it to the general channel at the current head. The server's registration setting decides, never the request: open (trust on first use, the default on a loopback or Unix-socket listener) lets anyone claim a name that has no credential, and enrollment (the default on any other listener) requires an enrollment token, which a host administrator creates. A name that already has a credential cannot take another key (409 conflict; a lost credential is recovered with the host command reset-credential), a scoped identity registers only with the enrollment token bound to it, and a human identity cannot register (403). Registering the same key again changes nothing, consumes no token and answers success with created false, so a client whose response was lost can retry. Open operation. The caller has no credential yet. Side effects: creates the identity and its key; consumes one use of the enrollment token when one is given. No idempotency key: receipts are per identity and the caller has none yet, and a repeat with the same key is safe by construction. Source: spec 4.2, Decisions 20, 58, 72.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12300,7 +12447,7 @@ func (c *ClientWithResponses) RegisterWithResponse(ctx context.Context, body Reg
 
 // TokenWithBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
-// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12315,7 +12462,7 @@ func (c *ClientWithResponses) TokenWithBodyWithResponse(ctx context.Context, con
 
 // TokenWithFormdataBodyWithResponse Exchange a client assertion or a subject token for a bearer (RFC 6749, RFC 8693)
 //
-// RFC 7523 private_key_jwt client credentials grant (Decisions 19, 70): the client assertion's iss and sub are the identity and its aud is this server's issuer URL (the token endpoint URL is still accepted); and the RFC 8693 token exchange of a configured issuer's access token for a human bearer. Errors are RFC 6749 section 5.2 bodies.
+// Exchanges a credential for a short-lived bearer; every refusal is an RFC 6749 section 5.2 body, not a problem document. The client_credentials grant is the RFC 7523 private_key_jwt flow: the client assertion's iss and sub are the identity, its aud is this server's issuer URL (the token endpoint URL is still accepted), its header carries a kid and an alg of EdDSA or ES256, and its exp is at most five minutes ahead (plus 60 seconds of clock skew). The bearer's lifetime is token_lifetime_seconds (default 3600). The assertion's jti is single-use per identity across replicas, so a replayed assertion is invalid_client. The token-exchange grant (RFC 8693) trades an access token of a configured external issuer, never an ID token, for a human bearer whose lifetime is the issuer's human lifetime (default 900 seconds); a first sign-in creates the human's identity. A server without a token issuer answers 503 temporarily_unavailable. Open operation. The caller has no bearer yet. Side effects: the client_credentials grant records the assertion's jti and nothing else; the exchange may create the human identity and its binding. No idempotency key: the call precedes an identity, and its replay protection is the single-use jti, so repeating a request needs a new assertion. Source: spec 4.1, Decisions 19, 70, 84.
 //
 // Takes a body of the `application/x-www-form-urlencoded` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12564,6 +12711,8 @@ func (c *ClientWithResponses) CreateTaskWithResponse(ctx context.Context, channe
 
 // DiscoverWithResponse The liveness probe: API versions, server and protocol version, capabilities and auth methods
 //
+// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/discover (the `Discover` operationId).
@@ -12576,6 +12725,8 @@ func (c *ClientWithResponses) DiscoverWithResponse(ctx context.Context, reqEdito
 }
 
 // HealthWithResponse The health document as the caller's tier sees it
+//
+// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 //
 // Returns a wrapper object for the known response body format(s).
 //

@@ -264,6 +264,17 @@ func unsupportedShapes(doc *openapi3.T) []string {
 	return out
 }
 
+// accessProblem is the access clause of ruling 4: the description names an
+// access rule, or the message lists every accepted phrase.
+func accessProblem(desc string) string {
+	for _, w := range accessWords {
+		if strings.Contains(desc, w) {
+			return ""
+		}
+	}
+	return `description states no access rule (one of "` + strings.Join(accessWords, `", "`) + `"; the word ACL alone also counts)`
+}
+
 func descWalk(doc *openapi3.T) (*elemSet, error) {
 	set := &elemSet{}
 	for _, tag := range doc.Tags {
@@ -305,14 +316,7 @@ func descWalk(doc *openapi3.T) (*elemSet, error) {
 			}
 			return ""
 		}())
-		set.add("operations", id, "access", func() string {
-			for _, w := range accessWords {
-				if strings.Contains(op.Description, w) {
-					return ""
-				}
-			}
-			return `description states no access rule (one of "` + strings.Join(accessWords, `", "`) + `"; the word ACL alone also counts)`
-		}())
+		set.add("operations", id, "access", accessProblem(op.Description))
 		set.add("operations", id, "request-body", func() string {
 			if op.RequestBody != nil && op.RequestBody.Value != nil {
 				return emptyMsg("request body description", op.RequestBody.Value.Description)
@@ -684,7 +688,7 @@ var (
 	hostAfterURL  = regexp.MustCompile(`://(?:[^/@\s"']*@)?([A-Za-z0-9.\-]+|\[[0-9a-fA-F:]+\])`)
 	hostAfterAt   = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)`)
 	slackToken    = regexp.MustCompile(`<[@#!][A-Za-z0-9._|\-]+>`)
-	jwtShape      = regexp.MustCompile(`^[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}$`)
+	jwtShape      = regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]*\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+`)
 	reservedHosts = []string{"example.com", "example.org", "example.net", "example.test"}
 	realValues    = []string{"trojanunicorn", "efitz", "ericfitz", "fitzgerald", "github.com"}
 	secretPrefix  = []string{"xox", "ghp_", "gho_", "AKIA", "sk-"}
@@ -750,13 +754,16 @@ func tokenProblem(s string) string {
 			return fmt.Sprintf("starts with the secret prefix %q", p)
 		}
 	}
-	if jwtShape.MatchString(s) {
-		for _, seg := range strings.Split(s, ".") {
+	for _, tok := range jwtShape.FindAllString(s, -1) {
+		ok := false
+		for _, seg := range strings.Split(tok, ".") {
 			if b, err := base64.RawURLEncoding.DecodeString(seg); err == nil && strings.Contains(strings.ToLower(string(b)), "example") {
-				return ""
+				ok = true
 			}
 		}
-		return "is JWT-shaped and no segment decodes to text containing \"example\""
+		if !ok {
+			return "is JWT-shaped (eyJ...) and no segment decodes to text containing \"example\""
+		}
 	}
 	return ""
 }
@@ -960,6 +967,46 @@ func TestSpecDocsHelpers(t *testing.T) {
 			if got := tokenProblem(s) != ""; got != want {
 				t.Errorf("tokenProblem(%q) = %v, want %v", s, got, want)
 			}
+		}
+	})
+	t.Run("jwt-search-within-strings", func(t *testing.T) {
+		seg := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+		bad := seg(`{"alg":"EdDSA"}`) + "." + seg(`{"sub":"real-user"}`) + "." + seg("sig-bytes")
+		good := seg(`{"alg":"EdDSA"}`) + "." + seg(`{"jti":"example-jti-1"}`) + "." + seg("sig-bytes")
+		for s, want := range map[string]bool{
+			"notes.release.json": false, "build.acme.example": false, "see notes.release.json for more": false,
+			"Bearer " + bad: true, "Bearer " + good: false, "Authorization: Bearer " + bad + " end": true,
+		} {
+			if got := tokenProblem(s) != ""; got != want {
+				t.Errorf("tokenProblem(%q) = %v, want %v", s, got, want)
+			}
+		}
+		if !strings.HasPrefix(bad, "eyJ") {
+			t.Fatalf("test token does not start with eyJ: %s", bad)
+		}
+	})
+	t.Run("cites-source-boundary", func(t *testing.T) {
+		for s, want := range map[string]bool{
+			"See spec 3.5.": true, "spec 3": true, "ADR 0012": true, "Decision 47": true,
+			"inspec 3": false, "respec 3.1": false, "ADR 12": false, "Decisions 47": false, "": false,
+		} {
+			if got := citesSource.MatchString(s); got != want {
+				t.Errorf("citesSource(%q) = %v, want %v", s, got, want)
+			}
+		}
+	})
+	t.Run("access-message-lists-phrases", func(t *testing.T) {
+		msg := accessProblem("Reads things.")
+		if msg == "" {
+			t.Fatal("a description with no access rule passed")
+		}
+		for _, w := range accessWords {
+			if !strings.Contains(msg, w) {
+				t.Errorf("the access failure message does not list %q: %s", w, msg)
+			}
+		}
+		if accessProblem("Administrator only.") != "" || accessProblem("The channel ACL's write action.") != "" {
+			t.Error("a stated access rule was refused")
 		}
 	})
 	t.Run("deny-words-in-descriptions", func(t *testing.T) {
