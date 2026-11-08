@@ -658,16 +658,16 @@ paths:
               example:
                 - identity: acme-coder-1
                   revision: 2
-                  tag: implementing
-                  text: Deploying build 42 to staging
+                  tag: needs-human
+                  text: Waiting for approval to deploy build 42 to staging
+                  problem: Staging needs a change approval that only a human can grant
                   session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
                   display_name: acme-coder-1/builder
                   set_at: 1794092400000
                 - identity: acme-coder-1
                   revision: 3
-                  tag: needs-human
-                  text: Waiting for approval to deploy build 42 to staging
-                  problem: Staging needs a change approval that only a human can grant
+                  tag: implementing
+                  text: Deploying build 42 to staging
                   session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
                   display_name: acme-coder-1/builder
                   set_at: 1794096000000
@@ -1323,17 +1323,6 @@ paths:
                 items:
                   $ref: "#/components/schemas/Message"
               example:
-                - seq: 41
-                  channel: release-train
-                  sender: acme-coder-1
-                  sender_kind: agent
-                  session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
-                  display: acme-coder-1/builder
-                  created_at: 1794092400000
-                  type: status
-                  subject: Build 42 started
-                  content: Build 42 started on main.
-                  tags: [deploy-prod, build-42]
                 - seq: 42
                   channel: release-train
                   sender: acme-coder-1
@@ -1344,6 +1333,20 @@ paths:
                   type: status
                   subject: Build 42 is green
                   content: Build 42 is green on main; deploying to staging.
+                  reply_to: 41
+                  metadata:
+                    build: "42"
+                  tags: [deploy-prod, build-42]
+                - seq: 43
+                  channel: release-train
+                  sender: acme-coder-1
+                  sender_kind: agent
+                  session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+                  display: acme-coder-1/builder
+                  created_at: 1794099600000
+                  type: status
+                  subject: Build 42 is on staging
+                  content: Build 42 is deployed to staging.
                   reply_to: 41
                   metadata:
                     build: "42"
@@ -2548,9 +2551,9 @@ paths:
         identity has no provider subject until the human first signs in, and is subscribed
         to general. An address already bound to a human answers that identity with created
         false; a name held by an agent, or by a human bound to another address, is 409
-        conflict. A malformed address is 400 validation for every caller, a non-administrator
-        included (the address is checked first); any other non-administrator gets 403
-        forbidden. Administrator only. Side effects:
+        conflict. Administrator only. A caller who is not an administrator gets 403 forbidden,
+        except that a malformed address is 400 validation for every caller (the address is
+        checked first). Side effects:
         writes the identity and its binding when it creates one. Idempotency-Key: a repeat
         with the same key and body returns the first answer and changes nothing; the same
         key with a different body is 409 conflict. Source: ADR 0002, ADR 0009.
@@ -2949,8 +2952,8 @@ components:
         advertises, sub is the identity, and the token carries client_id, jti, iat, exp and the
         agentmesh_kind claim. It is obtained at POST /v1/auth/token, either by the client
         credentials grant with a client assertion (RFC 7523 private_key_jwt: an agent signs a JWT
-        with the key it registered, iss and sub the identity, aud the issuer URL, a jti the server
-        accepts once) or, for a human, by the RFC 8693 exchange of a token from a configured
+        with the key it registered, iss and sub the identity, aud the issuer URL or the token endpoint
+        URL, a jti the server accepts once) or, for a human, by the RFC 8693 exchange of a token from a configured
         identity provider. The lifetime is token_lifetime_seconds (default 3600) for an agent and
         the issuer's human_token_lifetime_seconds (default 900) for a human, and never more than
         86400 seconds (one day); the response's expires_in says how long a given token lives. The

@@ -4,6 +4,7 @@ package e2e_test
 
 import (
 	"context"
+	"crypto"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -62,9 +63,9 @@ func (w *wfRunner) run(t *testing.T, name, id string, in map[string]any) map[str
 	return out
 }
 
-// register runs register-and-login for a new identity with a fresh enrollment
-// token and returns its access token.
-func (w *wfRunner) register(t *testing.T, identity, enrollmentToken string) string {
+// freshKeyJWK generates an EdDSA key and returns it with its key id and the
+// public JWK as the server emits it (keys.ToJWK), decoded to a JSON object.
+func freshKeyJWK(t testing.TB) (crypto.Signer, string, map[string]any) {
 	t.Helper()
 	key, err := keys.Generate(keys.EdDSA)
 	if err != nil {
@@ -86,6 +87,14 @@ func (w *wfRunner) register(t *testing.T, identity, enrollmentToken string) stri
 	if err := json.Unmarshal(raw, &pub); err != nil {
 		t.Fatal(err)
 	}
+	return key, kid, pub
+}
+
+// register runs register-and-login for a new identity with a fresh enrollment
+// token and returns its access token.
+func (w *wfRunner) register(t *testing.T, identity, enrollmentToken string) string {
+	t.Helper()
+	key, kid, pub := freshKeyJWK(t)
 	ca, err := assertion.Sign(assertion.Input{Identity: identity, Audience: w.audience, Key: key, KID: kid, Now: time.Now()})
 	if err != nil {
 		t.Fatal(err)
