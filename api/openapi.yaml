@@ -5135,21 +5135,21 @@ components:
       example:
         kty: OKP
         crv: Ed25519
-        x: ZXhhbXBsZS1wdWJsaWMta2V5LW5vdC1yZWFsLTMyYnk
-        kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+        x: sOdMZWLCddpuUshtE1kZytlM8SPVCfOKjiUO9WHLkVU
+        kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
         alg: EdDSA
         use: sig
       type: object
       additionalProperties: true
       maxProperties: 16
-      description: "A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key."
+      description: "A public JSON Web Key (RFC 7517): the members of the key and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own."
     JWKS:
       example:
         keys:
           - kty: OKP
             crv: Ed25519
-            x: ZXhhbXBsZS1wdWJsaWMta2V5LW5vdC1yZWFsLTMyYnk
-            kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+            x: sOdMZWLCddpuUshtE1kZytlM8SPVCfOKjiUO9WHLkVU
+            kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
             alg: EdDSA
             use: sig
       description: "A JSON Web Key Set: the active signing key and any retiring key that still verifies the bearers it signed."
@@ -5167,8 +5167,8 @@ components:
         public_key_jwk:
           kty: OKP
           crv: Ed25519
-          x: ZXhhbXBsZS1wdWJsaWMta2V5LW5vdC1yZWFsLTMyYnk
-          kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+          x: sOdMZWLCddpuUshtE1kZytlM8SPVCfOKjiUO9WHLkVU
+          kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
           alg: EdDSA
           use: sig
         enrollment_token: abe_ZXhhbXBsZS1lbnJvbGxtZW50LXRvay1ub3QtcmVhbDE
@@ -5190,7 +5190,7 @@ components:
     Registration:
       example:
         identity: acme-coder-1
-        kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+        kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
         algorithm: EdDSA
         created: true
       description: "The outcome of a registration: the identity, the key id and algorithm, and whether this call created the identity."
@@ -5252,7 +5252,7 @@ components:
           description: "How many registered keys were removed; for a human identity, 1 when a provider subject was cleared, else 0."
     SigningKey:
       example:
-        kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+        kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
         state: retiring
         provider: store
         provider_ref: ""
@@ -5305,7 +5305,7 @@ components:
             created_at: 1794182400000
             retired_at: 0
             remove_after: 0
-          - kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+          - kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
             state: retiring
             provider: store
             provider_ref: ""
@@ -5334,7 +5334,7 @@ components:
           retired_at: 0
           remove_after: 0
         previous:
-          kid: ZXhhbXBsZS1zaWduaW5nLWtleS1pZC1ub3QtcmVhbDE
+          kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
           state: retiring
           provider: store
           provider_ref: ""
