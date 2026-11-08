@@ -8,26 +8,44 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 : "${CATS_FAKE_LOG:?CATS_FAKE_LOG is required}"
 printf '%s\n' "$@" >>"$CATS_FAKE_LOG"
 
-# Test hooks: CATS_FAKE_SLEEP holds the run open (the overlap case);
-# CATS_FAKE_PLANT writes a fake JWT-shaped string to stdout (the leak-scan case).
+# Test hooks (the real cats ignores them):
+#   CATS_FAKE_SLEEP=N      hold the run open N seconds (the overlap case).
+#   CATS_FAKE_PLANT=MODE   plant a fake bearer-shaped string where the harness's
+#                          leak scan must find it: jwt (stdout, so cats.log),
+#                          abe (a file in the report directory), bearer (the
+#                          harness's server.log), smoke-dir (a file in the smoke
+#                          output directory), smoke-line (the smoke summary line).
+#   CATS_FAKE_WATCH=FILE   start a detached watcher that writes "present" or
+#                          "gone" to FILE when the headers file disappears,
+#                          by whether the harness directory still exists then
+#                          (so only the harness's own removal reads "present").
 sleep "${CATS_FAKE_SLEEP:-0}"
-if [ -n "${CATS_FAKE_PLANT:-}" ]; then
-  echo 'planted: eyJfake0000000000.eyJfake1111111111.fakesignature'
-fi
+PLANT=${CATS_FAKE_PLANT:-}
+JWT_LIKE='eyJfake0000000000.eyJfake1111111111.fakesignature'
+ABE_LIKE='abe_FAKEFAKEFAKEFAKEFAKEFAKE'
 
-if [ "${1:-}" = smoke ]; then
-  echo 'Summary: fake'
-  exit 0
-fi
-
-headers=
 out=
+headers=
 prev=
 for a in "$@"; do
   case "$a" in --headers=*) headers=${a#--headers=} ;; esac
   [ "$prev" = -o ] && out=$a
   prev=$a
 done
+
+if [ "${1:-}" = smoke ]; then
+  case "$PLANT" in
+    smoke-dir)
+      mkdir -p "$out"
+      echo "planted: $JWT_LIKE" >"$out/smoke-report.txt"
+      ;;
+  esac
+  case "$PLANT" in
+    smoke-line) echo "Summary: $ABE_LIKE" ;;
+    *) echo 'Summary: fake' ;;
+  esac
+  exit 0
+fi
 
 fail() {
   echo "fake-cats: FAIL $*"
@@ -41,7 +59,25 @@ mode=$(stat -c %a "$headers" 2>/dev/null || stat -f %Lp "$headers")
 grep -q -E '^all:$' "$headers" || fail "headers file has no all: key"
 grep -q -E '^/v1/admin/status:$' "$headers" || fail "headers file has no /v1/admin/status: key"
 
+if [ -n "${CATS_FAKE_WATCH:-}" ]; then
+  hdir=$(dirname "$headers")
+  (
+    for ((i = 0; i < 1200; i++)); do
+      if [ ! -e "$headers" ]; then
+        if [ -f "$hdir/.agentmesh-cats" ]; then echo present; else echo gone; fi >"$CATS_FAKE_WATCH"
+        exit 0
+      fi
+      sleep 0.1
+    done
+  ) >/dev/null 2>&1 </dev/null &
+fi
+case "$PLANT" in
+  jwt) echo "planted: $JWT_LIKE" ;;
+  bearer) echo "planted: Bearer eyfakefakefakefake" >>"$(dirname "$headers")/server.log" ;;
+esac
+
 mkdir -p "$out"
+[ "$PLANT" = abe ] && echo "planted: $ABE_LIKE" >"$out/leak.txt"
 echo '{"totalTests":"3","success":"1","warnings":"1","errors":"1","runStatus":"COMPLETED","qualityGatePassed":false}' \
   >"$out/cats-summary-report.json"
 for n in 1 2 3; do cp "$HERE/report/Test$n.json" "$out/Test$n.json"; done

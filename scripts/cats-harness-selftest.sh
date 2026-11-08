@@ -4,10 +4,11 @@
 # (scripts/testdata/cats-fake/cats) in its own temporary --dir, never the
 # default directory. Every case runs; the exit code is 1 when any failed.
 #
-#   scripts/cats-harness-selftest.sh [--real]
+#   scripts/cats-harness-selftest.sh [--real] [--record]
 #
-# CATS_HARNESS_RECORD=1 writes the expectation files in
-# scripts/testdata/cats-harness/ instead of comparing against them.
+# --record writes the expectation files in scripts/testdata/cats-harness/ instead
+# of comparing against them, and the run then exits 1 (a recording is not a
+# pass). Only the flag does it: the environment never rewrites expectations.
 # --real adds real-campaign (the installed cats; needs Java; never in CI).
 #
 # State (Definition of Done D): everything lives under one mktemp directory that
@@ -19,15 +20,20 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 HARNESS=$ROOT/scripts/cats-harness.sh
 FAKE=$ROOT/scripts/testdata/cats-fake/cats
 EXPECT=$ROOT/scripts/testdata/cats-harness
-RECORD=${CATS_HARNESS_RECORD:-0}
+RECORD=0
 REAL=0
-case "${1:-}" in
-  '') ;;
-  --real) REAL=1 ;;
-  *) echo "usage: $0 [--real]" >&2; exit 2 ;;
-esac
+for arg in "$@"; do
+  case "$arg" in
+    --real) REAL=1 ;;
+    --record) RECORD=1 ;;
+    *) echo "usage: $0 [--real] [--record]" >&2; exit 2 ;;
+  esac
+done
+if [ -n "${CATS_HARNESS_RECORD:-}" ]; then
+  echo "cats-harness-selftest: CATS_HARNESS_RECORD is ignored; use --record" >&2
+fi
 
-unset CATS_HARNESS_DIR CATS_SMOKE CATS_IDENTITY CATS_FAKE_SLEEP CATS_FAKE_PLANT \
+unset CATS_HARNESS_DIR CATS_SMOKE CATS_IDENTITY CATS_FAKE_SLEEP CATS_FAKE_PLANT CATS_FAKE_WATCH \
   AGENTMESH_PROFILE AGENTMESH_IDENTITY AGENTMESH_SERVER AGENTMESH_CREDENTIAL \
   AGENTMESH_CONFIG_DIR AGENTMESH_DATA_DIR
 
@@ -40,7 +46,7 @@ BG=
 D=$TMP/h # the main harness directory
 
 cleanup() {
-  local rc=$?
+  local rc=$? stray=0
   trap - EXIT INT TERM
   if [ -n "$BG" ]; then
     kill "$BG" 2>/dev/null || true
@@ -50,13 +56,18 @@ cleanup() {
     local d pid
     for d in "$TMP"/*/; do
       [ -f "${d}.agentmesh-cats" ] || continue
+      echo "cats-harness-selftest: FAIL cleanup: ${d%/} was left behind" >&2
+      stray=1
       bash "$HARNESS" down --dir "${d%/}" >/dev/null 2>&1 || true
     done
     for pid in $(pgrep -f "$TMP/[^ ]*/agentmesh server" 2>/dev/null || true); do
+      echo "cats-harness-selftest: FAIL cleanup: a stray server (pid $pid) had to be killed" >&2
+      stray=1
       kill -KILL "$pid" 2>/dev/null || true
     done
     rm -rf "$TMP"
   fi
+  if [ "$stray" -eq 1 ] && [ "$rc" -eq 0 ]; then rc=1; fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -69,6 +80,7 @@ CASE=
 CASE_FAIL=0
 FAILED=()
 RUNS=0
+RECORDED=0
 
 fail() { # fail WHY: records a failure of the current case
   echo "cats-harness-selftest: FAIL $CASE: $*"
@@ -117,6 +129,7 @@ compare() { # compare ACTUAL_FILE EXPECTED_NAME
   if [ "$RECORD" = 1 ]; then
     cp "$1" "$EXPECT/$2"
     echo "cats-harness-selftest: recorded $EXPECT/$2"
+    RECORDED=1
     return 0
   fi
   if ! diff -u "$EXPECT/$2" "$1" >"$TMP/diff.txt" 2>&1; then
@@ -140,11 +153,13 @@ wait_for() { # wait_for SECONDS CMD...: polls every 0.2 s
 OUT1=$TMP/out
 case_run_completes() {
   : >"$CATS_FAKE_LOG"
-  h run1 run --dir "$D" --out "$OUT1"
+  CATS_FAKE_WATCH=$TMP/watch1.txt h run1 run --dir "$D" --out "$OUT1"
   expect_rc 0 "run" run1
   contains run1 out 'tests=3 success=1 warnings=1 errors=1 status=COMPLETED'
   contains run1 out 'report='
   cp "$CATS_FAKE_LOG" "$TMP/argv-run1.txt"
+  # The server is dead after run (not merely its directory gone).
+  if pgrep -f "$D/agentmesh server" >/dev/null 2>&1; then fail "a server of $D still runs after run"; fi
 }
 
 case_argv_recorded() {
@@ -244,6 +259,10 @@ case_no_bearer_leaks() {
 }
 
 case_headers_file_removed() {
+  # The fake's watcher saw the file vanish while the harness directory still
+  # existed: only run's own removal explains that (a directory removal would read "gone").
+  wait_for 10 test -s "$TMP/watch1.txt" || { fail "the headers file was never seen to vanish"; return 0; }
+  [ "$(cat "$TMP/watch1.txt")" = present ] || fail "the headers file vanished only with its directory, not by run's own removal"
   [ ! -e "$D/headers.yml" ] || fail "$D/headers.yml exists after run"
   local found
   found=$(find "$TMP" -name headers.yml -not -path "$D/*" 2>/dev/null || true)
@@ -279,18 +298,22 @@ case_leftovers_cleaned() {
   expect_rc 0 "run over leftovers" run2
   contains run2 out "cleaned leftovers (pid $old dead)"
   cp "$CATS_FAKE_LOG" "$TMP/argv-run2.txt"
+  [ ! -e "$D" ] || fail "$D exists after run"
 }
 
 case_down_removes_dir() {
   local d=$TMP/h9
   h dn_up up --dir "$d"
   expect_rc 0 "up" dn_up
+  local pid
+  pid=$(cat "$d/server.pid")
+  alive "$pid" || fail "the server of $d is not alive before down"
   h dn1 down --dir "$d"
   expect_rc 0 "down" dn1
+  wait_for 10 sh -c "! kill -0 $pid 2>/dev/null" || fail "the server (pid $pid) is alive after down"
   [ ! -e "$d" ] || fail "$d exists after down"
   h dn2 down --dir "$d"
   expect_rc 0 "second down" dn2
-  [ ! -e "$D" ] || fail "$D exists after run"
 }
 
 SKIP_ARG='--skipPaths=/v1/admin/reset,/v1/admin/signing-keys/rotate,/v1/admin/identities/{identity}/reset-credential,/v1/admin/bridges,/v1/admin/bridges/{channel}'
@@ -326,7 +349,7 @@ case_cats_not_found() {
   contains nf1 err 'missing tool: /nonexistent'
   CATS_BIN=cats-not-installed-here h nf2 run --dir "$d" --out "$TMP/out-nf"
   expect_rc 2 "a missing cats" nf2
-  contains nf2 err 'cats'
+  contains nf2 err 'missing tool: cats-not-installed-here'
   [ ! -e "$d" ] && [ ! -e "$d/server.pid" ] || fail "a server directory appeared before the tool check"
 }
 
@@ -384,6 +407,7 @@ case_dir_symlink_dots() {
   [ -f "$m/.agentmesh-cats" ] || fail "a . or .. path removed a marked directory"
   h dd3 down --dir relative/path
   expect_rc 2 "down on a relative path" dd3
+  rm -rf "$t" "$m" "$link"
 }
 
 case_overlap() {
@@ -431,32 +455,57 @@ case_flag_checks() {
   local d=$TMP/fl
   h fl1 status --dir "$d" extra
   expect_rc 2 "status with an extra argument" fl1
+  contains fl1 err "unexpected argument for status: extra"
   h fl2 down --dir "$d" --paths /v1/discover
   expect_rc 2 "down --paths" fl2
+  contains fl2 err "--paths is not valid for down"
   h fl3 up --dir "$d" --out "$TMP/x"
   expect_rc 2 "up --out" fl3
+  contains fl3 err "--out is not valid for up"
   h fl4 run --dir "$d" --paths ""
   expect_rc 2 'run --paths ""' fl4
+  contains fl4 err "--paths: empty list"
   h fl5 run --dir "$d" extra
   expect_rc 2 "run with an extra argument" fl5
+  contains fl5 err "unexpected argument for run: extra"
   h fl6 admin-paths --dir "$d"
   expect_rc 2 "admin-paths --dir" fl6
+  contains fl6 err "--dir is not valid for admin-paths"
   h fl7 bogus
   expect_rc 2 "an unknown subcommand" fl7
+  contains fl7 err "unknown subcommand: bogus"
   h fl8 up --bogus
   expect_rc 2 "an unknown option" fl8
+  contains fl8 err "unknown option: --bogus"
   h fl9 up --dir "$d" --port abc
   expect_rc 2 "a non-numeric port" fl9
+  contains fl9 err "--port: want a number"
   [ ! -e "$d" ] || fail "a refused command created $d"
 }
 
 case_leak_scan_detects() {
-  local d=$TMP/lk
-  CATS_FAKE_PLANT=1 h lk1 run --dir "$d" --out "$TMP/out-lk" --paths /v1/discover
-  expect_rc 1 "a planted JWT-shaped string" lk1
-  contains lk1 out 'bearer leaked into'
-  contains lk1 out 'cats.log'
-  [ ! -e "$d" ] || fail "the failed run left $d"
+  local d=$TMP/lk spec mode want smoke
+  # MODE:WHERE the leak scan must name:CATS_SMOKE
+  for spec in jwt:cats.log:0 abe:report:0 bearer:server.log:0 smoke-dir:smoke:1 smoke-line:smoke.txt:1; do
+    mode=${spec%%:*}
+    want=${spec#*:}
+    smoke=${want#*:}
+    want=${want%%:*}
+    CATS_SMOKE=$smoke CATS_FAKE_PLANT=$mode h "lk-$mode" run --dir "$d" --out "$TMP/out-lk-$mode" --paths /v1/discover
+    expect_rc 1 "a planted $mode string" "lk-$mode"
+    contains "lk-$mode" out 'bearer leaked into'
+    contains "lk-$mode" out "$want"
+    [ ! -e "$d" ] || fail "the failed run left $d"
+  done
+}
+
+case_smoke_runs() {
+  local d=$TMP/sm
+  : >"$CATS_FAKE_LOG"
+  CATS_SMOKE=1 h sm1 run --dir "$d" --out "$TMP/out-sm" --paths /v1/discover
+  expect_rc 0 "run with CATS_SMOKE=1" sm1
+  [ "$(head -n 1 "$CATS_FAKE_LOG")" = smoke ] || fail "the first cats call was not smoke"
+  [ "$(cat "$TMP/out-sm/smoke.txt" 2>/dev/null)" = 'Summary: fake' ] || fail "smoke.txt does not hold the smoke summary line"
 }
 
 case_fake_rejects_bad_headers() {
@@ -507,11 +556,17 @@ run_case overlapping-runs case_overlap
 run_case repo-checks case_repo_checks
 run_case flag-checks case_flag_checks
 run_case leak-scan-detects case_leak_scan_detects
+run_case smoke-runs case_smoke_runs
 run_case fake-rejects-bad-headers case_fake_rejects_bad_headers
 if [ "$REAL" -eq 1 ]; then
   run_case real-campaign case_real_campaign
 fi
 
+if [ "$RECORDED" -eq 1 ]; then
+  echo "cats-harness-selftest: expectations were recorded, not compared; run again without --record"
+  [ "${#FAILED[@]}" -gt 0 ] && echo "cats-harness-selftest: failed: ${FAILED[*]}"
+  exit 1
+fi
 if [ "${#FAILED[@]}" -gt 0 ]; then
   echo "cats-harness-selftest: $RUNS cases, ${#FAILED[@]} failed: ${FAILED[*]}"
   exit 1
