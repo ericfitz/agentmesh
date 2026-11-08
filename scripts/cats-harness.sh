@@ -27,9 +27,11 @@
 #   `up` over a dead pid
 #     or a stale directory cleaned and restarted.
 #   `run` twice            each run tears down what the previous left.
-#   two overlapping `run`s on one machine: the second's `down` kills the
-#                          first's server (the directory is shared by design;
-#                          use --dir for a second campaign).
+#   two overlapping `run`s (or `up`s) on one directory: the second refuses,
+#                          exit 3, while the first holds the lock "$DIR.lock"
+#                          (an atomic mkdir holding the owner pid; a lock whose
+#                          owner is dead is taken over). Use --dir for a second
+#                          campaign.
 #   `seed` twice           the same fixtures, re-read (fixed idempotency keys,
 #                          conflicts accepted); sessions are reopened.
 #   `down` twice           the second is a no-op.
@@ -84,6 +86,10 @@ scripts/cats-harness.sh status [--dir DIR]
 scripts/cats-harness.sh admin-paths
 scripts/cats-harness.sh skip-paths
 
+Environment: CATS_BIN (the cats executable, default cats), CATS_HARNESS_DIR
+(default --dir), CATS_IDENTITY (default seed --identity), CATS_SMOKE=1 (run
+`cats smoke` before the campaign in run; off by default).
+
 Exit codes: 0 ok; 1 a check failed (a bearer in a log, a dead fixture);
 2 usage, a missing tool (cats, jq, go) or a refused directory; 3 the server did
 not start, a live server is recorded (up), or the seed failed; 4 CATS exited
@@ -100,6 +106,33 @@ die() { # die CODE MESSAGE...
 
 need_tool() {
   command -v "$1" >/dev/null 2>&1 || die 2 "missing tool: $1"
+}
+
+# Lock (finding 3): "$DIR.lock" is an atomic mkdir holding the owner pid, so two
+# overlapping `up`s or `run`s cannot both proceed. A lock whose owner is dead is
+# taken over. It is a sibling of $DIR, so `down` never removes it.
+LOCK_HELD=0
+acquire_lock() {
+  local lock=$DIR.lock owner
+  mkdir -p "$(dirname "$DIR")"
+  if ! mkdir -m 700 "$lock" 2>/dev/null; then
+    owner=$(cat "$lock/pid" 2>/dev/null || true)
+    case "$owner" in '' | *[!0-9]*) owner= ;; esac
+    if [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null; then
+      die 3 "another harness command is active (pid $owner, lock $lock)"
+    fi
+    rm -f "$lock/pid"
+    rmdir "$lock" 2>/dev/null || die 3 "cannot take over the lock $lock"
+    mkdir -m 700 "$lock" 2>/dev/null || die 3 "another harness command holds the lock $lock"
+  fi
+  echo "$$" >"$lock/pid"
+  LOCK_HELD=1
+}
+release_lock() {
+  [ "$LOCK_HELD" -eq 1 ] || return 0
+  LOCK_HELD=0
+  rm -f "$DIR.lock/pid"
+  rmdir "$DIR.lock" 2>/dev/null || true
 }
 
 # check_dir validates $DIR before anything is removed (ruling 31).
@@ -180,6 +213,7 @@ do_up() {
   need_tool go
   need_tool jq
   check_dir
+  [ "$LOCK_HELD" -eq 1 ] || acquire_lock
   if server_alive; then
     die 3 "a harness server is alive (pid $(cat "$DIR/server.pid")); run: scripts/cats-harness.sh down"
   fi
@@ -416,6 +450,7 @@ do_headers() {
   local file=${HEADERS_OUT:-$DIR/headers.yml} agent_b admin_b p
   agent_b=$(mint_token "$AGENT")
   admin_b=$(mint_token "$ADMIN")
+  rm -f "$file" # never write a bearer into a file that already exists under a wider mode
   {
     echo 'all:'
     echo "  Authorization: Bearer $agent_b"
@@ -458,17 +493,23 @@ join_comma() { local IFS=,; echo "$*"; }
 
 RUN_STARTED=0
 run_cleanup() {
-  [ -n "${DIR:-}" ] && rm -f "$DIR/headers.yml" 2>/dev/null || true
   if [ "$RUN_STARTED" -eq 1 ]; then
     RUN_STARTED=0
+    rm -f "$DIR/headers.yml" 2>/dev/null || true
     do_down >/dev/null 2>&1 || true
   fi
+}
+
+on_exit() {
+  run_cleanup
+  release_lock
 }
 
 do_run() {
   need_tool "$CATS_BIN"
   need_tool jq
   need_tool go
+  need_tool curl
   check_dir
   if [ -z "$OUT" ]; then
     OUT=$ROOT/.local/cats/results/run-$(date -u +%Y%m%dT%H%M%SZ)
@@ -497,10 +538,10 @@ do_run() {
     skip_args=("--skipPaths=$(join_comma "${SKIP_PATHS[@]}")")
   fi
 
-  trap run_cleanup EXIT
+  acquire_lock
+  RUN_STARTED=1 # before up: an interrupt during up still runs down
   do_down
   do_up >/dev/null
-  RUN_STARTED=1
   require_live
   mkdir -p "$OUT"
   local run_out=$OUT
@@ -540,7 +581,9 @@ do_run() {
   local agent_b key url code
   agent_b=$(mint_token "$AGENT")
   while IFS=$'\t' read -r key url; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $agent_b" "$url" || true)
+    # The bearer goes to curl on stdin (-K -), never on argv.
+    code=$(printf 'header = "Authorization: Bearer %s"\n' "$agent_b" |
+      curl -s -m 10 -K - -o /dev/null -w '%{http_code}' "$url" || true)
     case "$code" in
       2??) ;;
       *) echo "fixture $key died (HTTP $code)"; rc=1 ;;
@@ -549,11 +592,15 @@ do_run() {
   agent_b=
 
   # Bearer check.
-  local leaks
-  leaks=$(grep -l -E 'Bearer ey|abe_[A-Za-z0-9_-]{20,}' "$DIR/server.log" "$OUT/cats.log" 2>/dev/null || true)
-  leaks+=$(grep -rl -E 'Bearer ey' "$OUT/report" 2>/dev/null || true)
-  if [ -n "$leaks" ]; then
-    echo "bearer leaked into: $leaks"
+  local leaks=() hit scan
+  for scan in "$DIR/server.log" "$OUT/cats.log" "$OUT/report" "$OUT/smoke" "$OUT/smoke.txt"; do
+    [ -e "$scan" ] || continue
+    while IFS= read -r hit; do
+      [ -n "$hit" ] && leaks+=("$hit")
+    done < <(grep -rl -E 'Bearer ey|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|abe_[A-Za-z0-9_-]{20,}' "$scan" 2>/dev/null || true)
+  done
+  if [ "${#leaks[@]}" -gt 0 ]; then
+    echo "bearer leaked into: $(join_comma "${leaks[@]}")"
     rc=1
   fi
 
@@ -567,34 +614,94 @@ do_run() {
 [ $# -ge 1 ] || { usage >&2; exit 2; }
 CMD=$1
 shift
+case "$CMD" in -h | --help) usage; exit 0 ;; esac
 
 POS=()
+SEEN=" "
+PATHS_GIVEN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dir) [ $# -ge 2 ] || die 2 "--dir needs a value"; DIR=$2; shift 2 ;;
-    --port) [ $# -ge 2 ] || die 2 "--port needs a value"; PORT=$2; shift 2 ;;
-    --repo) [ $# -ge 2 ] || die 2 "--repo needs a value"; REPO=$2; shift 2 ;;
-    --out) [ $# -ge 2 ] || die 2 "--out needs a value"; OUT=$2; HEADERS_OUT=$2; shift 2 ;;
-    --identity) [ $# -ge 2 ] || die 2 "--identity needs a value"; WHO=$2; shift 2 ;;
-    --paths) [ $# -ge 2 ] || die 2 "--paths needs a value"; PATHS=$2; shift 2 ;;
-    --no-skip) NO_SKIP=1; shift ;;
+    --dir | --port | --repo | --out | --identity | --paths)
+      [ $# -ge 2 ] || die 2 "$1 needs a value"
+      SEEN+="$1 "
+      case "$1" in
+        --dir) DIR=$2 ;;
+        --port) PORT=$2 ;;
+        --repo) REPO=$2 ;;
+        --out) OUT=$2; HEADERS_OUT=$2 ;;
+        --identity) WHO=$2 ;;
+        --paths) PATHS=$2; PATHS_GIVEN=1 ;;
+      esac
+      shift 2 ;;
+    --no-skip) SEEN+="--no-skip "; NO_SKIP=1; shift ;;
     -h | --help) usage; exit 0 ;;
     -*) usage >&2; die 2 "unknown option: $1" ;;
     *) POS+=("$1"); shift ;;
   esac
 done
+
+# Each subcommand takes only its own flags and positionals.
+case "$CMD" in
+  up) ALLOWED=" --dir --port --repo " ;;
+  seed) ALLOWED=" --dir --out --identity " ;;
+  token) ALLOWED=" --dir " ;;
+  headers) ALLOWED=" --dir --out " ;;
+  run) ALLOWED=" --dir --port --repo --out --paths --no-skip " ;;
+  down | status) ALLOWED=" --dir " ;;
+  admin-paths | skip-paths | help) ALLOWED=" " ;;
+  *) usage >&2; die 2 "unknown subcommand: $CMD" ;;
+esac
+for f in $SEEN; do
+  case "$ALLOWED" in *" $f "*) ;; *) usage >&2; die 2 "$f is not valid for $CMD" ;; esac
+done
+if [ "$CMD" = token ]; then
+  [ "${#POS[@]}" -eq 1 ] || { usage >&2; die 2 "token takes one argument: admin or agent"; }
+elif [ "${#POS[@]}" -ne 0 ]; then
+  usage >&2
+  die 2 "unexpected argument for $CMD: ${POS[0]}"
+fi
+if [ "$PATHS_GIVEN" -eq 1 ] && [ -z "$PATHS" ]; then
+  die 2 "--paths: empty list"
+fi
 case "$PORT" in '' | *[!0-9]*) die 2 "--port: want a number" ;; esac
+
+case "$CMD" in
+  admin-paths | skip-paths | help) ;;
+  *)
+    # Finding 1: normalize before any -L, -d or rm: no trailing slashes (a
+    # trailing slash makes `[ -L ]` follow a symlink) and no . or .. component.
+    while [ "${#DIR}" -gt 1 ] && [ "${DIR%/}" != "$DIR" ]; do DIR=${DIR%/}; done
+    case "/$DIR/" in
+      */./* | */../*) die 2 "refusing $DIR: not a harness directory (no . or .. components)" ;;
+    esac
+    ;;
+esac
+case "$CMD" in
+  up | run)
+    # Finding 4: an existing repository with the spec, as an absolute path.
+    [ -d "$REPO" ] || die 2 "--repo $REPO: not a directory"
+    REPO=$(cd "$REPO" && pwd -P)
+    [ -f "$REPO/api/openapi.yaml" ] || die 2 "--repo $REPO: no api/openapi.yaml"
+    ;;
+esac
+case "$CMD" in
+  up | run)
+    trap on_exit EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+    ;;
+esac
 
 case "$CMD" in
   admin-paths) printf '%s\n' "${ADMIN_PATHS[@]}" ;;
   skip-paths) printf '%s\n' "${SKIP_PATHS[@]}" ;;
   up) do_up ;;
   seed) do_seed ;;
-  token) do_token "${POS[0]:-}" ;;
+  token) do_token "${POS[0]}" ;;
   headers) do_headers ;;
   run) do_run ;;
   down) do_down ;;
   status) do_status ;;
   help) usage ;;
-  *) usage >&2; exit 2 ;;
 esac
