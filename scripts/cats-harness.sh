@@ -577,19 +577,24 @@ do_run() {
     return 4
   fi
 
-  # Post-run fixture check, with the agent bearer.
-  local agent_b key url code
-  agent_b=$(mint_token "$AGENT")
-  while IFS=$'\t' read -r key url; do
-    # The bearer goes to curl on stdin (-K -), never on argv.
-    code=$(printf 'header = "Authorization: Bearer %s"\n' "$agent_b" |
-      curl -s -m 10 -K - -o /dev/null -w '%{http_code}' "$url" || true)
-    case "$code" in
-      2??) ;;
-      *) echo "fixture $key died (HTTP $code)"; rc=1 ;;
-    esac
-  done < <(jq -r '.fixtures[] | select(.key != "scope") | [.key, .verify_url] | @tsv' "$DIR/fixtures.json")
-  agent_b=
+  # Post-run fixture check, with the agent bearer. Not under --no-skip: a
+  # destructive run (reset, rotate, reset-credential) is expected to destroy the
+  # fixtures or the credential, so the check would fail and minting a bearer
+  # could die; the run is judged by its report alone.
+  if [ "$NO_SKIP" -eq 0 ]; then
+    local agent_b key url code
+    agent_b=$(mint_token "$AGENT")
+    while IFS=$'\t' read -r key url; do
+      # The bearer goes to curl on stdin (-K -), never on argv.
+      code=$(printf 'header = "Authorization: Bearer %s"\n' "$agent_b" |
+        curl -s -m 10 -K - -o /dev/null -w '%{http_code}' "$url" || true)
+      case "$code" in
+        2??) ;;
+        *) echo "fixture $key died (HTTP $code)"; rc=1 ;;
+      esac
+    done < <(jq -r '.fixtures[] | select(.key != "scope") | [.key, .verify_url] | @tsv' "$DIR/fixtures.json")
+    agent_b=
+  fi
 
   # Bearer check.
   local leaks=() hit scan

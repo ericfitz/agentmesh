@@ -342,6 +342,18 @@ case_skip_paths_vs_paths() {
   [ ! -e "$D" ] || fail "a skipped-only run started a server"
 }
 
+case_no_skip_skips_fixture_check() {
+  local k=$TMP/out-nsk
+  : >"$CATS_FAKE_LOG"
+  CATS_FAKE_KILL_FIXTURE=1 h nsk1 run --dir "$D" --out "$k-1" --paths /v1/discover
+  expect_rc 1 "a killed fixture without --no-skip" nsk1
+  contains nsk1 out 'died'
+  CATS_FAKE_KILL_FIXTURE=1 h nsk2 run --dir "$D" --out "$k-2" --paths /v1/admin/reset --no-skip
+  expect_rc 0 "a killed fixture under --no-skip" nsk2
+  contains nsk2 out 'tests=3'
+  if grep -q -F 'died' "$TMP/cap/nsk2.out"; then fail "--no-skip ran the fixture check"; fi
+}
+
 case_cats_not_found() {
   local d=$TMP/nf
   CATS_BIN=/nonexistent h nf1 run --dir "$d" --out "$TMP/out-nf"
@@ -547,6 +559,7 @@ run_case server-argv case_server_argv
 run_case leftovers-cleaned case_leftovers_cleaned
 run_case down-removes-dir case_down_removes_dir
 run_case skip-paths-vs-paths case_skip_paths_vs_paths
+run_case no-skip-skips-fixture-check case_no_skip_skips_fixture_check
 run_case cats-not-found case_cats_not_found
 run_case shellcheck case_shellcheck
 run_case admin-paths-match-spec case_admin_paths_match_spec

@@ -15,6 +15,8 @@ printf '%s\n' "$@" >>"$CATS_FAKE_LOG"
 #                          abe (a file in the report directory), bearer (the
 #                          harness's server.log), smoke-dir (a file in the smoke
 #                          output directory), smoke-line (the smoke summary line).
+#   CATS_FAKE_KILL_FIXTURE=1|destructive  (destructive: only when --paths names /v1/admin/...) point the first fixture's verify URL at a 404 (a
+#                          destructive run that destroyed it).
 #   CATS_FAKE_WATCH=FILE   start a detached watcher that writes "present" or
 #                          "gone" to FILE when the headers file disappears,
 #                          by whether the harness directory still exists then
@@ -75,6 +77,20 @@ case "$PLANT" in
   jwt) echo "planted: $JWT_LIKE" ;;
   bearer) echo "planted: Bearer eyfakefakefakefake" >>"$(dirname "$headers")/server.log" ;;
 esac
+
+kill_fixture=0
+case "${CATS_FAKE_KILL_FIXTURE:-}" in
+  1) kill_fixture=1 ;;
+  destructive) # only a run over the /v1/admin/ paths
+    for a in "$@"; do case "$a" in --paths=/v1/admin/*) kill_fixture=1 ;; esac; done
+    ;;
+esac
+if [ "$kill_fixture" = 1 ]; then
+  # Simulates a destructive run: the first fixture's verify URL now answers 404.
+  fx=$(dirname "$headers")/fixtures.json
+  jq '.fixtures |= (map(if .key == "channel" then .verify_url |= (sub("/v1/.*$"; "") + "/v1/channels/cats-killed-fixture/acl") else . end))' "$fx" >"$fx.new"
+  mv "$fx.new" "$fx"
+fi
 
 mkdir -p "$out"
 [ "$PLANT" = abe ] && echo "planted: $ABE_LIKE" >"$out/leak.txt"

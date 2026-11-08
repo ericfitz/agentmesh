@@ -10,18 +10,32 @@
 # git checkout-index into a temporary directory and everything runs from there
 # (rulings 15 and 29), never from the working tree. No git stash.
 #
+# Requires bash 4.4 or newer (empty-array expansions under set -u); it checks.
+#
 # Definition of Done D (state):
-#   second run             the hook owns a fresh --dir under mktemp -d, so a
-#                          second commit after a failed hook starts clean.
-#   overlapping runs       each run has its own temporary directory and its own
-#                          harness --dir (and lock), so two commits (two
-#                          worktrees) never collide with each other or with a
-#                          campaign in progress.
-#   leftovers              the EXIT trap (and INT, TERM, HUP) runs the harness
-#                          `down` for the hook's directory and removes it; a
-#                          killed hook (SIGKILL) leaves one mktemp directory,
-#                          which the next run does not read.
+#   second run             the hook owns a fresh `mktemp -d` and a harness
+#                          --dir "$tmp/harness" inside it, so a second commit
+#                          after a failed hook starts clean.
+#   overlapping runs       each run has its own temporary directory, harness
+#                          --dir and lock, so two commits (two worktrees) never
+#                          collide with each other or with a campaign in
+#                          progress.
+#   leftovers              on EXIT, INT, TERM and HUP the trap stops the running
+#                          harness child, runs `cats-harness.sh down --dir
+#                          "$tmp/harness"` (which stops the campaign server) and
+#                          removes $tmp. SIGKILL of the hook leaves the
+#                          temporary directory and, if a campaign was running,
+#                          its server: the next run uses a fresh --dir and its
+#                          `up` does not reap that server. Stop it with
+#                          `cats-harness.sh down --dir <that dir>` (while the
+#                          directory still exists) or kill the stray
+#                          `agentmesh server` by hand.
 set -euo pipefail
+
+if [ "${BASH_VERSINFO[0]}" -lt 4 ] || { [ "${BASH_VERSINFO[0]}" -eq 4 ] && [ "${BASH_VERSINFO[1]}" -lt 4 ]; }; then
+  echo "cats-precommit: bash 4.4 or newer is required (this is $BASH_VERSION); put a newer bash first on PATH, or commit with --no-verify to bypass" >&2
+  exit 1
+fi
 
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
@@ -30,9 +44,14 @@ if [ -z "$(git diff --cached --name-only -- api/openapi.yaml)" ]; then
   exit 0
 fi
 
+if git diff --cached --name-status -- api/openapi.yaml | grep -q -E '^D'; then
+  echo "cats-precommit: api/openapi.yaml is staged for deletion; the API spec cannot be deleted by a commit (git commit --no-verify bypasses this hook)" >&2
+  exit 1
+fi
+
 CATS_BIN=${CATS_BIN:-cats}
 export CATS_BIN
-for tool in "$CATS_BIN" jq go; do
+for tool in "$CATS_BIN" jq go curl; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "cats-precommit: ${tool##*/} is not installed (brew install endava/tap/cats); commit with --no-verify to bypass" >&2
     exit 1
@@ -41,10 +60,15 @@ done
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/cats-precommit.XXXXXX")
 tmp=$(cd "$tmp" && pwd -P)
+HPID=
 # shellcheck disable=SC2329 # invoked by the EXIT trap
 cleanup() {
   local rc=$?
   trap - EXIT INT TERM HUP
+  if [ -n "$HPID" ] && kill -0 "$HPID" 2>/dev/null; then
+    kill -TERM "$HPID" 2>/dev/null || true
+    wait "$HPID" 2>/dev/null || true
+  fi
   if [ -f "$tmp/tree/scripts/cats-harness.sh" ]; then
     bash "$tmp/tree/scripts/cats-harness.sh" down --dir "$tmp/harness" >/dev/null 2>&1 || true
   fi
@@ -115,6 +139,10 @@ while IFS= read -r p; do
 done <"$tmp/paths.txt"
 
 if [ "${#RUN_PATHS[@]}" -eq 0 ] && [ "${#DESTRUCTIVE[@]}" -eq 0 ]; then
+  if ! grep -q -E '^/v1/admin/bridges' "$tmp/paths.txt"; then
+    echo "cats-precommit: catscheck contract violated: changed-paths exited 10 with no path" >&2
+    exit 1
+  fi
   echo "cats-precommit: only bridges paths changed; nothing to fuzz"
   exit 0
 fi
@@ -125,8 +153,14 @@ OUTS=()
 run_harness() { # run_harness OUT PATHS [extra flags...]
   local out=$1 paths=$2 hrc=0
   shift 2
+  # In the background and waited for, so a signal reaches the trap at once.
   bash scripts/cats-harness.sh run --dir "$tmp/harness" --repo "$tmp/tree" --out "$out" \
-    --paths "$paths" "$@" || hrc=$?
+    --paths "$paths" "$@" >"$tmp/harness.out" 2>&1 &
+  HPID=$!
+  wait "$HPID" || hrc=$?
+  HPID=
+  # The report directory is removed on exit: do not print its path.
+  grep -v -E '^report=' "$tmp/harness.out" || true
   if [ "$hrc" -ne 0 ]; then
     echo "cats-precommit: the CATS harness failed (exit $hrc) for $paths" >&2
     exit 1
@@ -166,6 +200,10 @@ for out in "${OUTS[@]}"; do
   esac
 done
 if [ "$findings" -gt 0 ]; then
+  keep=$ROOT/.local/cats/precommit/$(date -u +%Y%m%dT%H%M%SZ)
+  mkdir -p "$keep"
+  for out in "${OUTS[@]}"; do cp -R "$out" "$keep/$(basename "$out")"; done
+  echo "cats-precommit: reports kept in $keep" >&2
   echo "cats-precommit: $findings finding(s) not covered by api/cats-false-positives.yaml; fix them or record false positives with /cats:fp (git commit --no-verify bypasses this hook)" >&2
   exit 1 # findings
 fi
