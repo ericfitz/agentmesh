@@ -16,12 +16,14 @@
   session: <SESSION>
 /v1/channels/{channel}/tasks:
   channel: cats-tasks
-  parent: cats_remove_field
+  parent: <PARENT_TASK>
   blocked_by: cats_remove_field
   before: cats_remove_field
   after: cats_remove_field
 /v1/tasks/{id}:
   id: <DECOY_TASK>
+  owner: cats-agent
+  parent: <PARENT_TASK>
 /v1/tasks/{id}/claim:
   id: <TASK>
 /v1/tasks/{id}/release:
@@ -36,6 +38,9 @@
   session: <SESSION>
 /v1/sessions/{session}/receive:
   session: <SESSION>
+  channels[*]: cats-ordinary
+/v1/search:
+  channel: cats-ordinary
 /v1/sessions/{session}/watch:
   session: <SESSION>
 /v1/sessions/{session}/status:

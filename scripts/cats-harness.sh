@@ -417,11 +417,15 @@ do_seed() {
   cli_seed scopes create "${a[@]}" cats-scope
   cli_seed scopes create "${a[@]}" cats-scope-decoy
 
-  local task_id task_decoy_id memory_id memory_decoy_id
+  local task_id task_decoy_id task_parent_id memory_id memory_decoy_id
   ensure_item task "$ADMIN" cats-seed-task-fixture cats-tasks 'Fixture task'
   task_id=$ITEM_ID
   ensure_item task "$ADMIN" cats-seed-task-decoy cats-tasks 'Decoy task'
   task_decoy_id=$ITEM_ID
+  # createTask's parent: a task no other path touches, so the happy path's
+  # parent still resolves after the fuzzers have patched the others.
+  ensure_item task "$ADMIN" cats-seed-task-parent cats-tasks 'Parent task'
+  task_parent_id=$ITEM_ID
   ensure_item memory "$ADMIN" cats-seed-memory-fixture cats-memory 'Fixture memory'
   memory_id=$ITEM_ID
   ensure_item memory "$ADMIN" cats-seed-memory-decoy cats-memory 'Decoy memory'
@@ -447,10 +451,10 @@ do_seed() {
   local scope_line='  scope: cats_remove_field'
   [ "$WHO" = admin ] && scope_line='  scope: cats-scope'
 
-  jq -n --arg task "$task_id" --arg taskd "$task_decoy_id" --arg mem "$memory_id" \
+  jq -n --arg task "$task_id" --arg taskd "$task_decoy_id" --arg taskp "$task_parent_id" --arg mem "$memory_id" \
     --arg memd "$memory_decoy_id" --arg ses "$session_id" --arg sesd "$session_decoy_id" \
     --arg who "$WHO" '{identity: $who, channels: ["cats-ordinary", "cats-ordinary-decoy", "cats-acl", "cats-sub", "cats-tasks", "cats-memory"],
-      scopes: ["cats-scope", "cats-scope-decoy"], task: $task, task_decoy: $taskd, memory: $mem,
+      scopes: ["cats-scope", "cats-scope-decoy"], task: $task, task_decoy: $taskd, task_parent: $taskp, memory: $mem,
       memory_decoy: $memd, session: $ses, session_decoy: $sesd}' >"$OUT/seed.json"
 
   cat >"$OUT/refdata.yml" <<EOF
@@ -472,12 +476,14 @@ $scope_line
   session: $session_id
 /v1/channels/{channel}/tasks:
   channel: cats-tasks
-  parent: cats_remove_field
+  parent: $task_parent_id
   blocked_by: cats_remove_field
   before: cats_remove_field
   after: cats_remove_field
 /v1/tasks/{id}:
   id: $task_decoy_id
+  owner: cats-agent
+  parent: $task_parent_id
 /v1/tasks/{id}/claim:
   id: $task_id
 /v1/tasks/{id}/release:
@@ -492,6 +498,9 @@ $scope_line
   session: $session_id
 /v1/sessions/{session}/receive:
   session: $session_id
+  channels[*]: cats-ordinary
+/v1/search:
+  channel: cats-ordinary
 /v1/sessions/{session}/watch:
   session: $session_id
 /v1/sessions/{session}/status:

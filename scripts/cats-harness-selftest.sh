@@ -179,7 +179,7 @@ case_argv_recorded() {
 tokenize_refdata() { # tokenize_refdata SEED_JSON REFDATA
   local sj=$1
   awk -v ses="$(jq -r .session "$sj")" -v sesd="$(jq -r .session_decoy "$sj")" \
-    -v task="$(jq -r .task "$sj")" -v taskd="$(jq -r .task_decoy "$sj")" \
+    -v task="$(jq -r .task "$sj")" -v taskd="$(jq -r .task_decoy "$sj")" -v taskp="$(jq -r .task_parent "$sj")" \
     -v mem="$(jq -r .memory "$sj")" -v memd="$(jq -r .memory_decoy "$sj")" '
     BEGIN {
       tok["/v1/channels/{channel}/messages"] = "SESSION"
@@ -194,9 +194,14 @@ tokenize_refdata() { # tokenize_refdata SEED_JSON REFDATA
       tok["/v1/sessions/{session}/watch"] = "SESSION"
       tok["/v1/sessions/{session}/status"] = "SESSION"
       val["SESSION"] = ses; val["DECOY_SESSION"] = sesd; val["TASK"] = task
-      val["DECOY_TASK"] = taskd; val["MEMORY"] = mem; val["DECOY_MEMORY"] = memd
+      val["DECOY_TASK"] = taskd; val["PARENT_TASK"] = taskp; val["MEMORY"] = mem; val["DECOY_MEMORY"] = memd
     }
     /^\// { sec = $0; sub(/:$/, "", sec); print; next }
+    /^  parent: / {
+      v = $0; sub(/^  parent: /, "", v)
+      if (val["PARENT_TASK"] == v) { sub(/: .*$/, ": <PARENT_TASK>"); }
+      print; next
+    }
     /^  (id|session): / {
       v = $0; sub(/^  (id|session): /, "", v)
       t = tok[sec]
@@ -218,13 +223,13 @@ case_refdata_recorded() {
   jq -r '.fixtures[].key' "$s/fixtures.json" >"$TMP/fixtures-keys.txt"
   compare "$TMP/fixtures-keys.txt" expected-fixtures-keys.txt
   local t
-  for t in SESSION DECOY_SESSION TASK DECOY_TASK MEMORY DECOY_MEMORY; do
+  for t in SESSION DECOY_SESSION TASK DECOY_TASK PARENT_TASK MEMORY DECOY_MEMORY; do
     grep -q -F "<$t>" "$TMP/refdata-tokenized.yml" || fail "refdata has no <$t> after tokenizing (an id changed shape?)"
   done
   # Task 8.4: the agent's PUT of an ACL keeps its own admin, and createTask drops
   # the members that name other objects (a random parent or blocked_by is a 400).
   grep -q -x -F '  permissions[*]: admin' "$s/refdata.yml" || fail "refdata lacks permissions[*]: admin for the ACL PUT"
-  for t in parent blocked_by before after; do
+  for t in blocked_by before after; do
     grep -q -x -F "  $t: cats_remove_field" "$s/refdata.yml" || fail "refdata does not remove $t from createTask"
   done
   # Task 8.1 g: the throwaway identity is registered and mapped in the refData.
@@ -239,7 +244,7 @@ case_refdata_recorded() {
   h seed2 seed --dir "$D" --out "$TMP/seed2"
   expect_rc 0 "second seed" seed2
   local k
-  for k in task task_decoy memory memory_decoy; do
+  for k in task task_decoy task_parent memory memory_decoy; do
     [ "$(jq -r ".$k" "$s/seed.json")" = "$(jq -r ".$k" "$TMP/seed2/seed.json")" ] || fail "second seed returned another $k id"
   done
 }
