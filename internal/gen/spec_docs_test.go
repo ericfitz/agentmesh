@@ -2,6 +2,7 @@ package gen_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -219,7 +220,7 @@ func paramKeys(opID string, op *openapi3.Operation, item *openapi3.PathItem, vis
 // ---- the description audit ----
 
 var (
-	citesSource = regexp.MustCompile(`(spec [0-9]+(\.[0-9]+)*|ADR 00[0-9]{2}|Decision [0-9]+)`)
+	citesSource = regexp.MustCompile(`\b(spec [0-9]+(\.[0-9]+)*|ADR 00[0-9]{2}|Decision [0-9]+)\b`)
 	accessWords = []string{"Open operation.", "Any registered identity.", "Administrator only.", "The channel ACL's", "Inside the caller's scope.", "ACL"}
 	typeOnly    = regexp.MustCompile(`(?i)^(string|integer|number|boolean|array|object|int64|int32)\.?$`)
 )
@@ -234,6 +235,33 @@ func emptyMsg(what, s string) string {
 		return what + " is empty"
 	}
 	return ""
+}
+
+// unsupportedShapes names every part of the document the audits do not walk
+// (default-deny): webhooks, operation callbacks and the component sections
+// other than parameters, responses, schemas and securitySchemes.
+func unsupportedShapes(doc *openapi3.T) []string {
+	var out []string
+	if len(doc.Webhooks) > 0 {
+		out = append(out, "the document has webhooks; the audits do not walk them")
+	}
+	c := doc.Components
+	if c != nil {
+		for name, n := range map[string]int{"requestBodies": len(c.RequestBodies), "headers": len(c.Headers), "examples": len(c.Examples), "links": len(c.Links), "callbacks": len(c.Callbacks)} {
+			if n > 0 {
+				out = append(out, fmt.Sprintf("components.%s is not empty; the audits do not walk it", name))
+			}
+		}
+	}
+	for path, item := range doc.Paths.Map() {
+		for method, op := range item.Operations() {
+			if len(op.Callbacks) > 0 {
+				out = append(out, fmt.Sprintf("%s %s has callbacks; the audits do not walk them", method, path))
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func descWalk(doc *openapi3.T) (*elemSet, error) {
@@ -283,7 +311,7 @@ func descWalk(doc *openapi3.T) (*elemSet, error) {
 					return ""
 				}
 			}
-			return "description states no access rule"
+			return `description states no access rule (one of "` + strings.Join(accessWords, `", "`) + `"; the word ACL alone also counts)`
 		}())
 		set.add("operations", id, "request-body", func() string {
 			if op.RequestBody != nil && op.RequestBody.Value != nil {
@@ -445,30 +473,53 @@ func exampleWalk(doc *openapi3.T) (*elemSet, error) {
 
 // ---- running an audit against the deny-list ----
 
-func runAudit(t *testing.T, set, other *elemSet, kinds map[string]bool) {
+// staleProblem is the stale rule: a listed element that passes both audits.
+func staleProblem(e *elem, otherFailing map[string]bool, list map[string]string) string {
+	key := e.key()
+	if _, listed := list[key]; listed && !e.failing() && !otherFailing[key] {
+		return fmt.Sprintf("stale: %s is documented; remove it from undocumented", key)
+	}
+	return ""
+}
+
+// checkProblem is the undocumented rule: a failing check of an unlisted element.
+func checkProblem(e *elem, c elemChk, list map[string]string) string {
+	if _, listed := list[e.key()]; c.msg != "" && !listed {
+		return fmt.Sprintf("undocumented: %s (%s)", e.key(), c.msg)
+	}
+	return ""
+}
+
+// unknownKeyProblems reports malformed keys, keys of an unknown kind, and keys
+// of this audit's kinds that name no element in seen.
+func unknownKeyProblems(list map[string]string, kinds, seen map[string]bool) []string {
+	out := denyKeyProblems(list, allKinds())
+	for _, k := range slices.Sorted(maps.Keys(list)) {
+		kind, _, _ := strings.Cut(k, "/")
+		if kinds[kind] && !seen[k] {
+			out = append(out, fmt.Sprintf("stale: %s names no element of the document", k))
+		}
+	}
+	return out
+}
+
+func runAudit(t *testing.T, set, other *elemSet, kinds map[string]bool, list map[string]string) {
 	t.Helper()
 	otherFailing := other.failingKeys()
-	var order []string
-	for k := range kinds {
-		order = append(order, k)
-	}
-	slices.Sort(order)
-	for _, kind := range order {
+	for _, kind := range slices.Sorted(maps.Keys(kinds)) {
 		t.Run(kind, func(t *testing.T) {
 			for _, e := range set.elems {
 				if e.kind != kind {
 					continue
 				}
 				t.Run(e.name, func(t *testing.T) {
-					key := e.key()
-					_, listed := undocumented[key]
-					if !e.failing() && listed && !otherFailing[key] {
-						t.Errorf("stale: %s is documented; remove it from undocumented", key)
+					if p := staleProblem(e, otherFailing, list); p != "" {
+						t.Error(p)
 					}
 					for _, c := range e.checks {
 						body := func(t *testing.T) {
-							if c.msg != "" && !listed {
-								t.Errorf("undocumented: %s (%s)", key, c.msg)
+							if p := checkProblem(e, c, list); p != "" {
+								t.Error(p)
 							}
 						}
 						if c.name == "" {
@@ -484,14 +535,8 @@ func runAudit(t *testing.T, set, other *elemSet, kinds map[string]bool) {
 	t.Run("deny-list", func(t *testing.T) {
 		seen := set.keys()
 		maps.Copy(seen, other.keys())
-		for _, p := range denyKeyProblems(undocumented, allKinds()) {
+		for _, p := range unknownKeyProblems(list, kinds, seen) {
 			t.Error(p)
-		}
-		for _, k := range slices.Sorted(maps.Keys(undocumented)) {
-			kind, _, _ := strings.Cut(k, "/")
-			if kinds[kind] && !seen[k] {
-				t.Errorf("stale: %s names no element of the document", k)
-			}
 		}
 	})
 }
@@ -506,7 +551,7 @@ func TestSpecDescriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runAudit(t, desc, ex, descriptionKinds)
+	runAudit(t, desc, ex, descriptionKinds, undocumented)
 	t.Run("not-a-type", func(t *testing.T) {
 		raw := marshalDoc(t, doc)
 		walkJSON(raw, false, nil, func(path, s string) {
@@ -514,6 +559,18 @@ func TestSpecDescriptions(t *testing.T) {
 				t.Errorf("%s: description %q only restates the generator's type", path, s)
 			}
 		})
+	})
+	t.Run("no-real-values", func(t *testing.T) {
+		walkJSON(marshalDoc(t, doc), false, nil, func(path, s string) {
+			if p := denyWordProblem(s); p != "" {
+				t.Errorf("%s: description %s", path, p)
+			}
+		})
+	})
+	t.Run("unsupported-shapes", func(t *testing.T) {
+		for _, p := range unsupportedShapes(doc) {
+			t.Error(p)
+		}
 	})
 	t.Run("counts", func(t *testing.T) {
 		_, byID, _ := opIDs(doc)
@@ -625,9 +682,12 @@ func walkStrings(v any, path string, fn func(path, s string)) {
 var (
 	placeholderRe = regexp.MustCompile(`<[^<>]*>|\{\{|(?i:changeme)|\b(?:TODO|TBD)\b|(?i:\bx{3,}\b)`)
 	hostAfterURL  = regexp.MustCompile(`://(?:[^/@\s"']*@)?([A-Za-z0-9.\-]+|\[[0-9a-fA-F:]+\])`)
-	hostAfterAt   = regexp.MustCompile(`@([A-Za-z0-9][A-Za-z0-9.\-]*)`)
+	hostAfterAt   = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)`)
+	slackToken    = regexp.MustCompile(`<[@#!][A-Za-z0-9._|\-]+>`)
+	jwtShape      = regexp.MustCompile(`^[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{4,}$`)
 	reservedHosts = []string{"example.com", "example.org", "example.net", "example.test"}
-	realValues    = []string{"trojanunicorn", "efitz", "fitzgerald", "github.com"}
+	realValues    = []string{"trojanunicorn", "efitz", "ericfitz", "fitzgerald", "github.com"}
+	secretPrefix  = []string{"xox", "ghp_", "gho_", "AKIA", "sk-"}
 )
 
 // placeholderProblem returns why s is a placeholder, or "".
@@ -636,7 +696,7 @@ func placeholderProblem(s string) string {
 	case "string", "example":
 		return fmt.Sprintf("%q is a placeholder", s)
 	}
-	if m := placeholderRe.FindString(s); m != "" {
+	if m := placeholderRe.FindString(slackToken.ReplaceAllString(s, "")); m != "" {
 		return fmt.Sprintf("contains the placeholder %q", m)
 	}
 	return ""
@@ -664,11 +724,39 @@ func realValueProblem(s string) string {
 			}
 		}
 	}
+	return denyWordProblem(s)
+}
+
+// denyWordProblem applies the literal denylist words (not the host rule).
+func denyWordProblem(s string) string {
 	low := strings.ToLower(s)
 	for _, w := range realValues {
 		if strings.Contains(low, w) {
 			return fmt.Sprintf("contains %q", w)
 		}
+	}
+	return ""
+}
+
+// tokenProblem is the cheap token guard: a PEM block, a well-known secret
+// prefix, or a JWT-shaped string none of whose decoded segments says "example".
+func tokenProblem(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.Contains(s, "-----BEGIN") {
+		return "contains a PEM block"
+	}
+	for _, p := range secretPrefix {
+		if strings.HasPrefix(s, p) {
+			return fmt.Sprintf("starts with the secret prefix %q", p)
+		}
+	}
+	if jwtShape.MatchString(s) {
+		for _, seg := range strings.Split(s, ".") {
+			if b, err := base64.RawURLEncoding.DecodeString(seg); err == nil && strings.Contains(strings.ToLower(string(b)), "example") {
+				return ""
+			}
+		}
+		return "is JWT-shaped and no segment decodes to text containing \"example\""
 	}
 	return ""
 }
@@ -690,7 +778,12 @@ func TestSpecExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runAudit(t, ex, desc, exampleKinds)
+	runAudit(t, ex, desc, exampleKinds, undocumented)
+	t.Run("unsupported-shapes", func(t *testing.T) {
+		for _, p := range unsupportedShapes(doc) {
+			t.Error(p)
+		}
+	})
 	t.Run("no-placeholders", func(t *testing.T) {
 		eachExampleString(t, doc, func(path, s string) {
 			if p := placeholderProblem(s); p != "" {
@@ -700,7 +793,7 @@ func TestSpecExamples(t *testing.T) {
 	})
 	t.Run("no-real-values", func(t *testing.T) {
 		eachExampleString(t, doc, func(path, s string) {
-			if p := realValueProblem(s); p != "" {
+			if p := firstMsg(realValueProblem(s), tokenProblem(s)); p != "" {
 				t.Errorf("%s: %s", path, p)
 			}
 		})
@@ -709,34 +802,44 @@ func TestSpecExamples(t *testing.T) {
 		if err := doc.Validate(context.Background()); err != nil {
 			t.Fatalf("Validate: %v", err)
 		}
-		ids, byID, _ := opIDs(doc)
-		for _, id := range ids {
-			op := byID[id]
-			if op.RequestBody == nil || op.RequestBody.Value == nil {
+		for _, p := range invalidRequestExamples(doc) {
+			t.Error(p)
+		}
+	})
+}
+
+// invalidRequestExamples validates every request body example (the effective
+// one and each named one) against its media type schema as a request.
+func invalidRequestExamples(doc *openapi3.T) []string {
+	var out []string
+	ids, byID, _ := opIDs(doc)
+	for _, id := range ids {
+		op := byID[id]
+		if op.RequestBody == nil || op.RequestBody.Value == nil {
+			continue
+		}
+		content := op.RequestBody.Value.Content
+		for _, ct := range slices.Sorted(maps.Keys(content)) {
+			mt := content[ct]
+			if mt.Schema == nil || mt.Schema.Value == nil {
 				continue
 			}
-			content := op.RequestBody.Value.Content
-			for _, ct := range slices.Sorted(maps.Keys(content)) {
-				mt := content[ct]
-				if mt.Schema == nil || mt.Schema.Value == nil {
-					continue
+			check := func(name string, v any) {
+				if err := mt.Schema.Value.VisitJSON(v, openapi3.VisitAsRequest()); err != nil {
+					out = append(out, fmt.Sprintf("%s %s example %q is not a valid request: %v", id, ct, name, err))
 				}
-				check := func(name string, v any) {
-					if err := mt.Schema.Value.VisitJSON(v, openapi3.VisitAsRequest()); err != nil {
-						t.Errorf("%s %s example %q is not a valid request: %v", id, ct, name, err)
-					}
-				}
-				if v, ok := effectiveExample(mt); ok {
-					check("default", v)
-				}
-				for _, name := range slices.Sorted(maps.Keys(mt.Examples)) {
-					if e := mt.Examples[name]; e != nil && e.Value != nil && e.Value.Value != nil {
-						check(name, e.Value.Value)
-					}
+			}
+			if v, ok := effectiveExample(mt); ok {
+				check("default", v)
+			}
+			for _, name := range slices.Sorted(maps.Keys(mt.Examples)) {
+				if e := mt.Examples[name]; e != nil && e.Value != nil && e.Value.Value != nil {
+					check(name, e.Value.Value)
 				}
 			}
 		}
-	})
+	}
+	return out
 }
 
 // ---- the tests' own tests (Definition of Done C) ----
@@ -756,6 +859,7 @@ func TestSpecDocsHelpers(t *testing.T) {
 		for s, want := range map[string]bool{
 			"<channel>": true, "{{name}}": true, "TODO": true, "ship it TBD": true, "xxx": true, "changeme": true,
 			"string": true, "Example": true, "example-resume-token": false, "Build 42 is green": false, "boxxxed-in": false,
+			"<@U0EXAMPLE1> please look": false, "<#C0EXAMPLE01> and <!here>": false,
 		} {
 			if got := placeholderProblem(s) != ""; got != want {
 				t.Errorf("placeholderProblem(%q) = %v, want %v", s, got, want)
@@ -767,6 +871,7 @@ func TestSpecDocsHelpers(t *testing.T) {
 			"http://localhost:8420/v1": false, "dana@example.com": false, "https://api.example.org/x": false,
 			"https://user@host.example.net/p": false, "https://real.io/x": true, "bob@corp.io": true,
 			"http://127.0.0.1:8420": true, "see github.com/x": true, "Trojanunicorn": true, "someone@example.com.evil.io": true,
+			"<@U0EXAMPLE1> please look": false, "cc @acme-coder-1": false, "see @here": false, "git@host.io": true, "ericfitz": true,
 		} {
 			if got := realValueProblem(s) != ""; got != want {
 				t.Errorf("realValueProblem(%q) = %v, want %v", s, got, want)
@@ -842,6 +947,112 @@ func TestSpecDocsHelpers(t *testing.T) {
 		}
 		if _, err := descWalk(doc); err == nil || !strings.Contains(err.Error(), "two inline parameters") {
 			t.Errorf("descWalk with duplicate inline parameters: %v", err)
+		}
+	})
+	t.Run("tokens", func(t *testing.T) {
+		seg := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
+		for s, want := range map[string]bool{
+			seg(`{"alg":"EdDSA"}`) + "." + seg(`{"jti":"example-jti-1"}`) + "." + seg("sig-bytes"): false,
+			seg(`{"alg":"EdDSA"}`) + "." + seg(`{"sub":"real-user"}`) + "." + seg("sig-bytes"):     true,
+			"-----BEGIN PRIVATE KEY-----\nabc":                                                     true, "xoxb-123": true, "ghp_abcdef": true, "gho_abcdef": true,
+			"AKIAIOSFODNN7": true, "sk-abc": true, "release-train": false, "a.b.c": false, "1.0.0": false,
+		} {
+			if got := tokenProblem(s) != ""; got != want {
+				t.Errorf("tokenProblem(%q) = %v, want %v", s, got, want)
+			}
+		}
+	})
+	t.Run("deny-words-in-descriptions", func(t *testing.T) {
+		if denyWordProblem("RFC 8725 at https://datatracker.ietf.org/doc/html/rfc8725") != "" {
+			t.Error("an RFC URL must pass the denylist words")
+		}
+		for _, s := range []string{"owned by ericfitz", "Trojanunicorn LLC", "see github.com/x"} {
+			if denyWordProblem(s) == "" {
+				t.Errorf("denyWordProblem(%q) passed", s)
+			}
+		}
+	})
+	t.Run("unsupported-shapes", func(t *testing.T) {
+		clean := &openapi3.T{OpenAPI: "3.1.0", Paths: openapi3.NewPaths(), Components: &openapi3.Components{}}
+		if got := unsupportedShapes(clean); len(got) != 0 {
+			t.Fatalf("clean document: %v", got)
+		}
+		bad := &openapi3.T{OpenAPI: "3.1.0", Paths: openapi3.NewPaths(), Components: &openapi3.Components{
+			RequestBodies: openapi3.RequestBodies{"B": {Value: &openapi3.RequestBody{}}},
+			Headers:       openapi3.Headers{"H": {Value: &openapi3.Header{}}},
+			Examples:      openapi3.Examples{"E": {Value: &openapi3.Example{}}},
+			Links:         openapi3.Links{"L": {Value: &openapi3.Link{}}},
+			Callbacks:     openapi3.Callbacks{"C": {Value: &openapi3.Callback{}}},
+		}, Webhooks: map[string]*openapi3.PathItem{"w": {}}}
+		bad.Paths.Set("/x", &openapi3.PathItem{Get: &openapi3.Operation{OperationID: "x", Callbacks: openapi3.Callbacks{"cb": {Value: &openapi3.Callback{}}}}})
+		if got := unsupportedShapes(bad); len(got) != 7 {
+			t.Errorf("unsupportedShapes = %d problems, want 7: %v", len(got), got)
+		}
+	})
+	t.Run("validates-refuses-a-wrong-typed-example", func(t *testing.T) {
+		const src = `openapi: 3.1.0
+info: {title: t, version: "1"}
+paths:
+  /x:
+    post:
+      operationId: x
+      requestBody:
+        content:
+          application/json:
+            schema: {type: object, properties: {n: {type: integer}}}
+            example: {n: "seven"}
+      responses:
+        "200": {description: ok}
+`
+		doc, err := openapi3.NewLoader().LoadFromData([]byte(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := doc.Validate(context.Background()); err == nil {
+			t.Error("doc.Validate accepted a wrong-typed example")
+		}
+		if got := invalidRequestExamples(doc); len(got) != 1 {
+			t.Errorf("invalidRequestExamples = %v, want 1", got)
+		}
+		doc.Paths.Value("/x").Post.RequestBody.Value.Content["application/json"].Example = map[string]any{"n": 7}
+		if got := invalidRequestExamples(doc); len(got) != 0 {
+			t.Errorf("a valid example was refused: %v", got)
+		}
+	})
+	t.Run("audit-rules", func(t *testing.T) {
+		pass := &elem{kind: "schemas", name: "A", checks: []elemChk{{}}}
+		fail := &elem{kind: "schemas", name: "B", checks: []elemChk{{msg: "no example"}}}
+		list := map[string]string{"schemas/A": "Task 2", "schemas/B": "Task 2"}
+		if staleProblem(pass, nil, list) == "" {
+			t.Error("a listed element that passes must be stale")
+		}
+		if staleProblem(pass, map[string]bool{"schemas/A": true}, list) != "" {
+			t.Error("a listed element still failing the other audit is not stale (shared key)")
+		}
+		if staleProblem(pass, nil, nil) != "" || staleProblem(fail, nil, list) != "" {
+			t.Error("unlisted passing and listed failing elements are not stale")
+		}
+		if checkProblem(fail, fail.checks[0], nil) == "" {
+			t.Error("an unlisted failing check must be undocumented")
+		}
+		if checkProblem(fail, fail.checks[0], list) != "" || checkProblem(pass, pass.checks[0], nil) != "" {
+			t.Error("a listed failing check and a passing check are silent")
+		}
+		got := unknownKeyProblems(map[string]string{"schemas/Gone": "x", "widgets/y": "x", "schemas/A": "x"}, exampleKinds, map[string]bool{"schemas/A": true})
+		if len(got) != 2 {
+			t.Errorf("unknownKeyProblems = %v, want the unknown kind and the missing element", got)
+		}
+	})
+	t.Run("walk-members-keys", func(t *testing.T) {
+		item := &openapi3.SchemaRef{Value: &openapi3.Schema{Properties: openapi3.Schemas{"sub": {Value: &openapi3.Schema{}}}}}
+		s := &openapi3.Schema{Properties: openapi3.Schemas{
+			"list": {Value: &openapi3.Schema{Items: item}},
+			"ref":  {Ref: "#/components/schemas/Other", Value: &openapi3.Schema{Properties: openapi3.Schemas{"hidden": {Value: &openapi3.Schema{}}}}},
+		}, AllOf: openapi3.SchemaRefs{{Value: &openapi3.Schema{Properties: openapi3.Schemas{"extra": {Value: &openapi3.Schema{}}}}}}}
+		var got []string
+		walkMembers("N", s, func(path string, _ *openapi3.SchemaRef) { got = append(got, path) })
+		if strings.Join(got, ",") != "N.list,N.list.sub,N.ref,N.extra" {
+			t.Errorf("keys = %v", got)
 		}
 	})
 	t.Run("walk-json-skips-names-and-examples", func(t *testing.T) {
