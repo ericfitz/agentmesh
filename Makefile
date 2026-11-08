@@ -1,4 +1,4 @@
-.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint
+.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run
 export CGO_ENABLED=0
 PKGS_UNIT = $$(go list ./... | grep -v '^github.com/ericfitz/agentmesh/internal/conformance')
 
@@ -85,3 +85,6 @@ verify:      ## Done gate (CLAUDE.md): build, the m4, m6 and m10 dependency rule
 	$(MAKE) test-conformance
 	$(MAKE) check-gates
 	@echo "verify: OK"
+
+cats-run:    ## One CATS campaign against a throwaway server (needs cats and Java; not part of verify)
+	bash scripts/cats-harness.sh run
