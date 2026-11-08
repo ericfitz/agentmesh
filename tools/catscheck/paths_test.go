@@ -46,8 +46,8 @@ func TestChangedPaths(t *testing.T) {
 		{"servers_change_is_every_path", spec, edit(t, spec, "localhost:8420", "localhost:1"), []string{"/v1/things", "/v1/things/{id}"}, false, false},
 		{"security_change_is_every_path", spec, edit(t, spec, "- bearerAuth: []", "- other: []"), []string{"/v1/things", "/v1/things/{id}"}, false, false},
 		{"openapi_change_is_every_path", spec, edit(t, spec, "openapi: 3.1.0", "openapi: 3.1.1"), []string{"/v1/things", "/v1/things/{id}"}, false, false},
-		{"info_change_is_documentation", spec, edit(t, spec, "title: min", "title: other"), nil, false, false},
-		{"tags_change_is_documentation", spec, edit(t, spec, "- name: things\n", "- name: stuff\n"), nil, false, false},
+		{"info_change_is_documentation", spec, edit(t, spec, "title: min", "title: other"), nil, true, false},
+		{"tags_change_is_documentation", spec, edit(t, spec, "- name: things\n", "- name: stuff\n"), nil, true, false},
 		{"unreferenced_component_is_no_path", spec, edit(t, spec, "type: integer", "type: integer\n        maximum: 5"), nil, false, false},
 		{"property_named_description_change", spec, edit(t, spec, "                description:\n                  type: string", "                description:\n                  type: integer"), []string{"/v1/things"}, false, false},
 	}
@@ -68,14 +68,13 @@ func TestChangedPaths(t *testing.T) {
 		}
 	})
 	t.Run("missing_file_is_empty", func(t *testing.T) {
-		_, _, code, out, _ := runChanged(t, "", spec, true)
-		_ = code
+		code, out, _ := runChanged(t, "", spec, true)
 		if code != 10 || out != "/v1/things\n/v1/things/{id}\n" {
 			t.Errorf("code %d, stdout %q", code, out)
 		}
 	})
 	t.Run("empty_file_is_empty", func(t *testing.T) {
-		_, _, code, out, _ := runChanged(t, "", spec, false)
+		code, out, _ := runChanged(t, "", spec, false)
 		if code != 10 || out != "/v1/things\n/v1/things/{id}\n" {
 			t.Errorf("code %d, stdout %q", code, out)
 		}
@@ -90,7 +89,7 @@ func TestChangedPaths(t *testing.T) {
 
 // runChanged writes old and new into a temp dir (old absent when missing) and
 // runs the dispatcher on them.
-func runChanged(t *testing.T, old, new string, missing bool) (string, string, int, string, string) {
+func runChanged(t *testing.T, old, new string, missing bool) (int, string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	o, n := filepath.Join(dir, "old.yaml"), filepath.Join(dir, "new.yaml")
@@ -104,7 +103,7 @@ func runChanged(t *testing.T, old, new string, missing bool) (string, string, in
 	}
 	var out, errb bytes.Buffer
 	code := run([]string{"changed-paths", o, n}, &out, &errb)
-	return o, n, code, out.String(), errb.String()
+	return code, out.String(), errb.String()
 }
 
 func TestMainChangedPaths(t *testing.T) {
@@ -125,17 +124,16 @@ func TestMainChangedPaths(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			o, n, code, out, errs := runChanged(t, c.old, c.new, false)
+			code, out, errs := runChanged(t, c.old, c.new, false)
 			if code != c.code || out != c.stdout {
 				t.Errorf("code %d stdout %q, want %d %q (stderr %q)", code, out, c.code, c.stdout, errs)
 			}
-			if c.code == 2 && !strings.HasPrefix(errs, "catscheck: "+n+": ") {
+			if c.code == 2 && !strings.HasPrefix(errs, "catscheck: ") {
 				t.Errorf("stderr %q lacks the file prefix", errs)
 			}
 			if c.code != 2 && errs != c.stderr {
 				t.Errorf("stderr %q, want %q", errs, c.stderr)
 			}
-			_ = o
 		})
 	}
 }
@@ -159,6 +157,7 @@ func TestMainDispatch(t *testing.T) {
 		{"normalize_missing_file", []string{"normalize", filepath.Join(dir, "none.yaml")}, 2},
 		{"normalize_arity", []string{"normalize"}, 2},
 		{"changed_paths_arity", []string{"changed-paths", good}, 2},
+		{"flag_as_file", []string{"changed-paths", "--foo", good}, 2},
 		{"classify_stub", []string{"classify", "--rules", good, dir}, 2},
 	}
 	for _, c := range cases {

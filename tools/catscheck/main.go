@@ -28,6 +28,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		say(stderr, usage)
 		return 2
 	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") && a != "--rules" {
+			say(stderr, fmt.Sprintf("catscheck: unknown flag %q\n", a)+usage)
+			return 2
+		}
+	}
 	switch args[0] {
 	case "normalize":
 		if len(args) != 2 {
@@ -57,7 +63,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		paths, docOnly, err := ChangedPaths(docs[0], docs[1])
 		if err != nil {
-			say(stderr, fmt.Sprintf("catscheck: %s: %v\n", args[2], err))
+			say(stderr, fmt.Sprintf("catscheck: changed-paths: %v\n", err))
 			return 2
 		}
 		if len(paths) > 0 {

@@ -89,3 +89,30 @@ func TestNormalize(t *testing.T) {
 		}
 	})
 }
+
+func TestNormalizeRealSpec(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "api", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]struct {
+					Type string `yaml:"type"`
+				} `yaml:"properties"`
+			} `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal([]byte(normalized(t, string(b))), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"Task", "TaskCreateRequest", "TaskPatch"} {
+		t.Run(name, func(t *testing.T) {
+			p, ok := doc.Components.Schemas[name].Properties["description"]
+			if !ok || p.Type == "" {
+				t.Errorf("%s.properties.description was stripped or lost its type", name)
+			}
+		})
+	}
+}

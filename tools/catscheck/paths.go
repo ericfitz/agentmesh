@@ -10,14 +10,14 @@ import (
 
 // ChangedPaths lists the API paths (template spelling, sorted) affected by the
 // change from old to new. docOnly is true when the normalized documents are
-// equal (a documentation-only change, or none). Both inputs must be mappings
+// equal or differ only in info and tags (a documentation-only change, or none). Both inputs must be mappings
 // (a nil document is the empty mapping). Task 2 adds the $ref widening of
 // component changes; here a component change affects no path.
 func ChangedPaths(old, new *yaml.Node) (paths []string, docOnly bool, err error) {
 	o, n := Normalize(old), Normalize(new)
-	for _, d := range []*yaml.Node{o, n} {
+	for i, d := range []*yaml.Node{o, n} {
 		if d.Kind != yaml.MappingNode {
-			return nil, false, fmt.Errorf("the document is not a mapping")
+			return nil, false, fmt.Errorf("the %s document is not a mapping", []string{"old", "new"}[i])
 		}
 	}
 	if bytes.Equal(canonical(o), canonical(n)) {
@@ -25,6 +25,7 @@ func ChangedPaths(old, new *yaml.Node) (paths []string, docOnly bool, err error)
 	}
 	op, np := section(o, "paths"), section(n, "paths")
 	set := map[string]bool{}
+	otherDiff := false
 	// A top-level difference with no path of its own (openapi, servers,
 	// security, webhooks, anything unknown) affects every request. info and
 	// tags are documentation; paths and components are handled separately.
@@ -34,6 +35,7 @@ func ChangedPaths(old, new *yaml.Node) (paths []string, docOnly bool, err error)
 			continue
 		}
 		if !bytes.Equal(canonical(member(o, k)), canonical(member(n, k))) {
+			otherDiff = true
 			all := pathNames(np)
 			if len(all) == 0 {
 				all = pathNames(op)
@@ -53,7 +55,10 @@ func ChangedPaths(old, new *yaml.Node) (paths []string, docOnly bool, err error)
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
-	return paths, false, nil
+	// Only info and tags differ: documentation (ruling 3).
+	docOnly = len(paths) == 0 && !otherDiff &&
+		bytes.Equal(canonical(member(o, "components")), canonical(member(n, "components")))
+	return paths, docOnly, nil
 }
 
 // member returns the value of a top-level key, or nil when absent (nil
