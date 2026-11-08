@@ -141,3 +141,6 @@ rules:
   - id: LARGE_STRING_WITHIN_BOUNDS_2XX
     why: "The value is within the field's bound (internal/core/rules/bounds.go, TestSpecBounds), so 200 or 201 is right; CATS expects 4xx for any very large string."
     when: {response_code: {in: [200, 201]}, fuzzer: VeryLargeStringsInFields}
+  - id: AGENT_CANNOT_STRIP_PROTECTED_ACL_ENTRY_403
+    why: "In the standalone flow the ACL PUT runs as cats-agent (plan ruling 12: all: is the agent bearer) against cats-acl, whose seeded ACL names cats-admin too (acl_both, scripts/cats-harness.sh); every fuzzed body omits or shrinks the administrator's entry, and an agent that is not an administrator never removes a permission from a protected entry (CLAUDE.md Design, set_acl; internal/core/access/decide.go decideACLChange; ADR 0011), so 403 'an agent cannot remove ... from ACL entry \"cats-admin\"' is the documented answer (Step 8 run-20261108T170214Z Tests 79 to 11376, 23 rows)."
+    when: {response_code: 403, path: "/v1/channels/{channel}/acl", method: PUT, json_body.code: forbidden, json_body.detail: {contains: "an agent cannot remove"}}
