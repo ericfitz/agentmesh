@@ -114,3 +114,30 @@ rules:
   - id: RESET_CREDENTIAL_UNKNOWN_IDENTITY_403
     why: "RandomResources and InvalidReferencesFields mangle the identity path variable (cats-victim.json, a UUID, a random word); an identity that was never registered answers the documented 403 not_registered (components/responses/Forbidden code enum; internal/core/identities/admin.go:33). The real target cats-victim answered 200 (Step 2b HappyPath Test 1)."
     when: {response_code: 403, path: "/v1/admin/identities/{identity}/reset-credential", json_body.code: not_registered}
+  - id: VALIDATED_FIELD_400
+    why: "Identifier, enum, cursor and typed fields are validated literally and never sanitized (internal/core/rules/bounds.go, TestSpecBounds, the spec's maxLength, enum and format); null is refused because no field is nullable. CATS's sanitize-then-validate expectation is 2xx. The fuzzer list is explicit and leaves out the happy-path family (HappyPath, OnlyRequiredFields, ExamplesFields, RemoveFields, EmptyJsonBody, BypassAuthentication) so an over-strict 400 on a plain request stays visible."
+    when:
+      response_code: 400
+      json_body.code: validation
+      fuzzer: {in: [ZeroWidthCharsInValuesFields, ControlCharsInStringFields, HangulFillerFields, ZalgoTextInFields, EmojisInStringFields, AbugidasInStringFields, FullwidthBracketsFields, EmptyStringsInFields, MaxLengthExactValuesInStringFields, EnumCaseVariantFields, NullValuesInFields, MaximumExactNumbersInNumericFields, MinimumExactNumbersInNumericFields]}
+  - id: UNKNOWN_ID_404
+    why: "Zero-width, control or combining characters inserted into a path or query identifier make an unknown id; 404 is the documented answer and the server does not strip them (no sanitization in internal/core/rules)."
+    when: {response_code: 404, result_reason: "Not found", fuzzer: {in: [ZeroWidthCharsInValuesFields, ControlCharsInStringFields, HangulFillerFields, EmojisInStringFields, AbugidasInStringFields, FullwidthBracketsFields, ZalgoTextInFields, MaxLengthExactValuesInStringFields, IterateThroughEnumValuesFields]}}
+  - id: RANDOM_REFERENCE_UNKNOWN
+    why: "CATS fills reference fields (parent, a channel name in a filter, an identity) with random values; 'does not exist' or 'is not registered' at the documented 400 or 404 is the right answer (the HappyPath of createTask also lands here because TaskCreateRequest.parent carries no property example, a refData improvement noted in the round 2 report)."
+    when: {response_code: {in: [400, 404]}, response_body: {contains_any: ["does not exist", "is not registered"]}}
+  - id: XSS_OPAQUE_TEXT
+    why: "Text fields (content, subject, description, text) are opaque to the server, never rendered as HTML, and encoding/json escapes <, > and & by default; a stored payload returned inside JSON is not a reflection."
+    when: {response_code: {in: [200, 201, 204]}, fuzzer: XssInjectionInStringFields, result_reason: {starts_with: "XSS payload"}}
+  - id: XXE_OPAQUE_TEXT_ECHO_200
+    why: "The status text is opaque and the status document echoes it (admin Test 13582: the stored text contains the payload's own 'xxe_test_success' and 'DOCTYPE' strings); no package of this module imports encoding/xml, so nothing parses it. CATS's heuristic reads the echo as entity expansion."
+    when: {response_code: 200, path: "/v1/sessions/{session}/status", fuzzer: XxeInjectionInStringFields, result_reason: {contains: "XXE"}}
+  - id: NOSQL_HEURISTIC_200
+    why: "The store is SQL with bound parameters (internal/store/sqlstore); CATS matched its own stored payload echoed in the task document."
+    when: {response_code: 200, fuzzer: NoSqlInjectionInStringFields, result_reason: "NoSQL injection vulnerability detected"}
+  - id: LEADING_ZEROS_QUERY_2XX
+    why: "A query parameter is a string the server parses as the declared integer (strconv); 007 is 7, and watch answers 204 when nothing arrives within watch_max_seconds. CATS expects 4xx."
+    when: {response_code: {in: [200, 204]}, fuzzer: LeadingZerosInNumericFields, method: GET}
+  - id: LARGE_STRING_WITHIN_BOUNDS_2XX
+    why: "The value is within the field's bound (internal/core/rules/bounds.go, TestSpecBounds), so 200 or 201 is right; CATS expects 4xx for any very large string."
+    when: {response_code: {in: [200, 201]}, fuzzer: VeryLargeStringsInFields}
