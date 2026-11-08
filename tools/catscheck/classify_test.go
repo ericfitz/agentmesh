@@ -226,7 +226,7 @@ func TestClassify(t *testing.T) {
 func TestMainClassify(t *testing.T) {
 	rep := filepath.Join("testdata", "report")
 	valid := filepath.Join("testdata", "rules", "valid.yaml")
-	starter := filepath.Join("..", "..", "api", "cats-false-positives.yaml")
+	starter := filepath.Join("testdata", "rules", "starter.yaml") // the two starter rules (1433416); the real file grows each round
 	// A copy of the report without the 503 record: the rules file covers the rest.
 	covered := t.TempDir()
 	for _, n := range []string{"Test1.json", "Test2.json", "Test3.json", "Test4.json", "Test5.json"} {
