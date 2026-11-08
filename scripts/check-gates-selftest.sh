@@ -1178,8 +1178,8 @@ block_wire_roundtrip_fires() {
 		'ReplyTo: m.ReplyTo, Revision: m.Revision,' \
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/Message
 	mutate_unit_block wire-gen-type-unpaired internal/gen/gen.go \
-		'// BridgeState defines model for Bridge.State.' \
-		$'// Extra defines model for Extra.\ntype Extra struct {\n\tA string\n}\n\n// BridgeState defines model for Bridge.State.' \
+		'// BridgeState creating: the bridge is reserved' \
+		$'// Extra defines model for Extra.\ntype Extra struct {\n\tA string\n}\n\n// BridgeState creating: the bridge is reserved' \
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/coverage \
 		'generated type Extra is neither paired nor excepted'
 	mutate_unit_block wire-exception-stale internal/server/wire_roundtrip_test.go \
@@ -1384,7 +1384,7 @@ block_spec_bounds_fire() {
 		'ReceiveCountCeiling = 10000' 'ReceiveCountCeiling = 10001' \
 		./internal/server/ '^TestSpecBounds$' TestSpecBounds/schemas/ReceiveRequest.count
 	mutate_spec_block description-unit-missing '    SendRequest:' \
-		'description: At most 200 code points.' 'description: At most 200.' \
+		'a line break is 400 validation. At most 200 code points.' 'a line break is 400 validation. At most 200.' \
 		./internal/server/ '^TestSpecBounds$' "$sub" 'description lacks the unit'
 	AGENTMESH_BUS_TRANSPORT=local mutate_block core-check-removed internal/core/rules/status.go \
 		'if utf8.RuneCountInString(s) > MaxLineRunes {' 'if utf8.RuneCountInString(s) > MaxLineRunes*4 {' \
