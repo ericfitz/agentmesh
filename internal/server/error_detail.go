@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/getkin/kin-openapi/routers"
 	"net/http"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -55,18 +59,13 @@ func collectDetail(err error, where string, parts *[]string) {
 			*parts = append(*parts, prefixed(where, requestErrorReason(e)))
 		}
 	case *openapi3.SchemaError:
-		reason := plainReason(e.Reason, e.Value)
-		switch {
-		case e.SchemaField == "additionalProperties" || strings.HasSuffix(reason, "is unsupported"):
-			// The reason names the submitted member.
-			reason = "has a member the schema does not declare"
-		case reason == "":
-			reason = fmt.Sprintf("does not match the schema's %q", e.SchemaField)
-		}
+		var own string
 		if p := e.JSONPointer(); len(p) > 0 {
-			reason = "/" + strings.Join(p, "/") + ": " + reason
+			own = "/" + strings.Join(p, "/")
 		}
-		*parts = append(*parts, prefixed(where, reason))
+		for _, c := range schemaCauses(e, own) {
+			*parts = append(*parts, prefixed(where, c))
+		}
 	case *openapi3filter.ParseError:
 		reason := e.Reason
 		if reason == "" {
@@ -80,22 +79,126 @@ func collectDetail(err error, where string, parts *[]string) {
 	}
 }
 
-// jsonschemaPreamble is the wrapper kin-openapi puts around a message of the
-// JSON Schema 2020-12 validator, with the pointer it repeats.
-var jsonschemaPreamble = regexp.MustCompile(`(?s)^jsonschema validation failed with '[^']*'\n- at '[^']*': `)
+// A quoted literal as the validator prints it: single quotes, with \' \\ \n
+// and the like inside.
+const quoted = `'(?:[^'\\]|\\.)*'`
 
-// plainReason strips the validator's wrapper from reason and replaces the
-// submitted string, which the validator's messages quote ('bad tag' does not
-// match pattern ...), with "the value".
-func plainReason(reason string, value any) string {
-	reason = jsonschemaPreamble.ReplaceAllString(reason, "")
-	reason = strings.ReplaceAll(reason, "\n- at '", "; at '")
-	if v, ok := value.(string); ok && v != "" {
-		for _, q := range []string{"'", `"`} {
-			reason = strings.ReplaceAll(reason, q+v+q, "the value")
+var (
+	// causeLine is one cause of a jsonschema failure: "- at '<pointer>': <message>".
+	causeLine = regexp.MustCompile(`(?m)^- at '((?:[^'\\]|\\.)*)': (.*)$`)
+	// patternMessage is "'<submitted value>' does not match pattern '<pattern>'".
+	patternMessage = regexp.MustCompile(`^` + quoted + ` does not match pattern (` + quoted + `)$`)
+	// memberMessage is the validator's refusal of a member the schema does not
+	// declare; it names the caller's member.
+	memberMessage = regexp.MustCompile(`^additional propert(?:y|ies) .* not allowed$`)
+)
+
+// schemaCauses words a SchemaError one line per cause: the pointer (with every
+// segment that is not a declared member name or an index masked) and a message
+// from a fixed set of shapes. Nothing the caller chose survives: not a value
+// (the validator quotes it, escaped), not a member name, not a map key. The
+// reason of a failure of the JSON Schema 2020-12 validator is a wrapper holding
+// one "- at" line per cause; any other reason is one cause at the error's own
+// pointer.
+func schemaCauses(e *openapi3.SchemaError, own string) []string {
+	type cause struct{ ptr, msg string }
+	var causes []cause
+	if rest, ok := strings.CutPrefix(e.Reason, "jsonschema validation failed with "); ok {
+		for _, m := range causeLine.FindAllStringSubmatch(rest, -1) {
+			causes = append(causes, cause{m[1], m[2]})
 		}
 	}
-	return reason
+	if len(causes) == 0 {
+		msg := e.Reason
+		if msg == "" {
+			msg = fmt.Sprintf("does not match the schema's %q", e.SchemaField)
+		}
+		if e.SchemaField == "additionalProperties" {
+			msg = "additional properties not allowed"
+		}
+		causes = []cause{{own, msg}}
+	}
+	var out []string
+	for _, c := range causes {
+		line := plainMessage(c.msg)
+		if ptr := maskPointer(c.ptr); ptr != "" {
+			line = ptr + ": " + line
+		}
+		if !slices.Contains(out, line) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// plainMessage keeps a validator message only in a shape known not to carry a
+// submitted value or member name.
+func plainMessage(msg string) string {
+	switch {
+	case patternMessage.MatchString(msg):
+		return "does not match pattern " + patternMessage.FindStringSubmatch(msg)[1]
+	case memberMessage.MatchString(msg), strings.HasSuffix(msg, "is unsupported"):
+		return "has a member the schema does not declare"
+	case !strings.ContainsAny(msg, `'"`),
+		strings.HasPrefix(msg, "missing propert"), // names come from the schema
+		strings.HasPrefix(msg, "value must be one of "), strings.HasPrefix(msg, "value must be '"):
+		return msg
+	}
+	return "is not valid"
+}
+
+// maskPointer masks every segment of a JSON pointer that is neither an array
+// index nor a member name some schema of the document declares: such a segment
+// is a key the caller chose (a metadata key).
+func maskPointer(ptr string) string {
+	if ptr == "" {
+		return ""
+	}
+	names := declaredNames()
+	segs := strings.Split(strings.TrimPrefix(ptr, "/"), "/")
+	for i, seg := range segs {
+		if _, err := strconv.Atoi(seg); err != nil && !names[seg] {
+			segs[i] = "<key>"
+		}
+	}
+	return "/" + strings.Join(segs, "/")
+}
+
+var (
+	namesOnce sync.Once
+	namesSet  map[string]bool
+)
+
+// declaredNames is every property name any schema of the embedded document
+// declares.
+func declaredNames() map[string]bool {
+	namesOnce.Do(func() {
+		namesSet = map[string]bool{}
+		seen := map[*openapi3.Schema]bool{}
+		var walk func(r *openapi3.SchemaRef)
+		walk = func(r *openapi3.SchemaRef) {
+			if r == nil || r.Value == nil || seen[r.Value] {
+				return
+			}
+			sc := r.Value
+			seen[sc] = true
+			for name, prop := range sc.Properties {
+				namesSet[name] = true
+				walk(prop)
+			}
+			walk(sc.Items)
+			walk(sc.AdditionalProperties.Schema)
+			for _, group := range []openapi3.SchemaRefs{sc.AllOf, sc.OneOf, sc.AnyOf} {
+				for _, one := range group {
+					walk(one)
+				}
+			}
+		}
+		for _, sc := range Spec().Components.Schemas {
+			walk(sc)
+		}
+	})
+	return namesSet
 }
 
 // requestErrorReason is the fixed wording of a request error that carries no
@@ -161,5 +264,13 @@ func requestDetail(ctx context.Context, err error, status int) string {
 	if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
 		return validationDetail(err)
 	}
-	return err.Error()
+	// Any other status carries a fixed text: the framework's own wording can
+	// quote the request.
+	if status == http.StatusNotFound {
+		if errors.Is(err, routers.ErrMethodNotAllowed) {
+			return "method not allowed"
+		}
+		return "no matching operation was found"
+	}
+	return "the request could not be validated"
 }

@@ -3,7 +3,10 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -129,5 +132,72 @@ func TestPatternDetailIsPlain(t *testing.T) {
 	}
 	if strings.Contains(d, "SECRETVALUE") || strings.Contains(d, "jsonschema validation failed") || strings.Contains(d, "\n") {
 		t.Errorf("detail %q", d)
+	}
+}
+
+// TestDetailDropsEscapedLiteralsAndNames: no refusal quotes a submitted value
+// however the validator escapes it, and none names a member or map key the
+// caller chose (issue #30, RB2, review finding 1 and 3).
+func TestDetailDropsEscapedLiteralsAndNames(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.identity("pat", false)
+	jwt := "eyJhbGciOiJFZERTQSJ9.eyJzdWIiOiJwYXQifQ.c2lnbmF0dXJlLWJ5dGVz"
+	values := []string{"'", "it's SECRETVALUE", `a\b SECRETVALUE`, "line\nSECRETVALUE", "tab\tSECRETVALUE", "nul\x00SECRETVALUE", "", "!", jwt}
+	forms := []struct {
+		name  string
+		build func(v string) *http.Request
+	}{
+		{"body tags", func(v string) *http.Request {
+			b, _ := json.Marshal(map[string]any{"content": "x", "tags": []string{v}})
+			return newReq(t, "POST", "/v1/channels/dev/messages", strings.NewReader(string(b)))
+		}},
+		{"query tags", func(v string) *http.Request {
+			return newReq(t, "GET", "/v1/channels/dev/messages?tags="+url.QueryEscape(v), nil)
+		}},
+		{"query pattern", func(v string) *http.Request {
+			return newReq(t, "DELETE", "/v1/tag-subscriptions?pattern="+url.QueryEscape(v), nil)
+		}},
+	}
+	check := func(t *testing.T, resp *http.Response, parts ...string) {
+		t.Helper()
+		p := readProblem(t, resp)
+		d := detailText(p)
+		if resp.StatusCode != 400 {
+			t.Fatalf("got %d %q", resp.StatusCode, d)
+		}
+		if strings.Contains(d, "jsonschema") || strings.Contains(d, "\n") || strings.Contains(d, "' does not match") {
+			t.Errorf("detail carries the validator's wrapper or a quoted literal: %q", d)
+		}
+		for _, part := range parts {
+			if len(part) >= 3 && strings.Contains(d, part) {
+				t.Errorf("detail %q contains %q", d, part)
+			}
+		}
+	}
+	for _, f := range forms {
+		for _, v := range values {
+			t.Run(fmt.Sprintf("%s %q", f.name, v), func(t *testing.T) {
+				parts := []string{v, strings.Trim(strconv.Quote(v), `"`), "SECRETVALUE"}
+				if v == jwt {
+					parts = append(parts, strings.Split(jwt, ".")...)
+				}
+				if v == "" || v == "!" || v == "'" {
+					parts = nil
+				}
+				check(t, e.rawAllowUnrouted("pat", f.build(v)), parts...)
+			})
+		}
+	}
+	names := []struct{ name, path, body string }{
+		{"unknown member with a missing one", "/v1/channels", `{"SECRETVALUE":1}`},
+		{"unknown member with an apostrophe", "/v1/channels", `{"it's SECRETVALUE":1}`},
+		{"map key", "/v1/channels/dev/messages", `{"content":"x","metadata":{"SECRETKEY":1}}`},
+		{"map key with an apostrophe", "/v1/channels/dev/messages", `{"content":"x","metadata":{"it's SECRETKEY":1}}`},
+		{"map key with a backslash", "/v1/channels/dev/messages", `{"content":"x","metadata":{"a\\SECRETKEY":1}}`},
+	}
+	for _, c := range names {
+		t.Run(c.name, func(t *testing.T) {
+			check(t, e.rawAllowUnrouted("pat", newReq(t, "POST", c.path, strings.NewReader(c.body))), "SECRET")
+		})
 	}
 }
