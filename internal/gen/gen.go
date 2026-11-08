@@ -2052,8 +2052,8 @@ type EditMemoryParams struct {
 
 // SearchParams defines parameters for Search.
 type SearchParams struct {
-	// Q The query, required in practice (an absent or blank q is 400 validation): words that must all match, word* for a prefix and a double-quoted phrase. At most 1024 code points.
-	Q *string `form:"q,omitempty" json:"q,omitempty"`
+	// Q The query, required (an absent q is 400 validation, and so is a blank one): words that must all match, word* for a prefix and a double-quoted phrase. At most 1024 code points.
+	Q string `form:"q" json:"q"`
 
 	// Mode text matches the subject and content, semantic ranks the embedded memories by similarity, both merges the two; default: both where the server has an embedding provider, else text
 	Mode *SearchParamsMode `form:"mode,omitempty" json:"mode,omitempty"`
@@ -6211,16 +6211,12 @@ func NewSearchRequest(server string, params *SearchParams) (*http.Request, error
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if params.Q != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
 			}
-
 		}
 
 		if params.Mode != nil {
@@ -19606,9 +19602,9 @@ func (siw *ServerInterfaceWrapper) Search(w http.ResponseWriter, r *http.Request
 	// Parameter object where we will unmarshal all parameters from the context
 	var params SearchParams
 
-	// ------------- Optional query parameter "q" -------------
+	// ------------- Required query parameter "q" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
 	if err != nil {
 		var requiredError *runtime.RequiredParameterError
 		if errors.As(err, &requiredError) {

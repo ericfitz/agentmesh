@@ -103,7 +103,7 @@ func (b *Bus) Search(ctx context.Context, in ab2bus.SearchInput) (ab2bus.SearchR
 // count are absent (the query is always sent).
 func SearchRequest(in ab2bus.SearchInput) gen.SearchRequestObject {
 	p := gen.SearchParams{
-		Q: ptr(in.Query), Channel: strPtr(in.Channel), Sender: strPtr(in.Sender),
+		Q: in.Query, Channel: strPtr(in.Channel), Sender: strPtr(in.Sender),
 		Since: in.Since, Until: in.Until, Thread: in.Thread, Tags: queryTags(in.Tags),
 		Cursor: strPtr(in.Cursor),
 	}

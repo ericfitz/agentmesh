@@ -178,7 +178,7 @@ func TestSearchWire(t *testing.T) {
 	}
 
 	q, n := "alpha", 2
-	r, err := c.SearchWithResponse(context.Background(), &gen.SearchParams{Q: &q, Count: &n})
+	r, err := c.SearchWithResponse(context.Background(), &gen.SearchParams{Q: q, Count: &n})
 	if err != nil || r.JSON200 == nil {
 		t.Fatalf("search: %v %d %s", err, r.StatusCode(), r.Body)
 	}
@@ -192,7 +192,7 @@ func TestSearchWire(t *testing.T) {
 	if r.JSON200.Next == nil || *r.JSON200.Next == "" {
 		t.Fatalf("next absent with more remaining: %s", r.Body)
 	}
-	r2, err := c.SearchWithResponse(context.Background(), &gen.SearchParams{Q: &q, Count: &n, Cursor: r.JSON200.Next})
+	r2, err := c.SearchWithResponse(context.Background(), &gen.SearchParams{Q: q, Count: &n, Cursor: r.JSON200.Next})
 	if err != nil || r2.JSON200 == nil || len(r2.JSON200.Hits) != 1 {
 		t.Fatalf("page 2: %v %s", err, r2.Body)
 	}

@@ -1390,12 +1390,12 @@ paths:
         - name: q
           example: build 42
           in: query
-          required: false
+          required: true
           schema:
             type: string
             maxLength: 1024
           description: >-
-            The query, required in practice (an absent or blank q is 400 validation): words that must all match, word* for a prefix and a double-quoted phrase. At most 1024 code points.
+            The query, required (an absent q is 400 validation, and so is a blank one): words that must all match, word* for a prefix and a double-quoted phrase. At most 1024 code points.
         - name: mode
           description: "text matches the subject and content, semantic ranks the embedded memories by similarity, both merges the two; default: both where the server has an embedding provider, else text"
           example: text

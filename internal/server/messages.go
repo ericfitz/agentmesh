@@ -80,7 +80,7 @@ func (a *api) Search(ctx context.Context, req gen.SearchRequestObject) (gen.Sear
 func searchInput(req gen.SearchRequestObject) bus.SearchInput {
 	p := req.Params
 	in := bus.SearchInput{
-		Query: derefOr(p.Q), Channel: derefOr(p.Channel), Sender: derefOr(p.Sender),
+		Query: p.Q, Channel: derefOr(p.Channel), Sender: derefOr(p.Sender),
 		Since: p.Since, Until: p.Until, Thread: p.Thread, Tags: derefOr(p.Tags),
 		Count: derefOr(p.Count), Cursor: derefOr(p.Cursor),
 	}
