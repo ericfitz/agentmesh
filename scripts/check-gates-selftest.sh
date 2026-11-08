@@ -1586,6 +1586,93 @@ block_spec_examples_fire() {
 		'contains the placeholder "<channel>"'
 }
 
+# --- 40. cats-gates-fire ---------------------------------------------------------------
+# issue #30 (ADR 0018): the CATS campaign's gates. tools/catscheck holds the normalizer (what a
+# documentation-only diff is), the $ref widener (which paths a change reaches) and the rule
+# classifier (which findings block a commit); scripts/cats-precommit.sh is the hook body and
+# scripts/cats-harness.sh the harness. Docker-free and Java-free: the two selftests set CATS_BIN to
+# the fake (scripts/testdata/cats-fake/cats) themselves. The baseline (ruling 28) runs both
+# selftests once unmutated in the worktree, so the fake, the harness and the hook are exercised
+# even when no mutation fires (about 1 min each: each builds the server). Mutations 1 to 5 run
+# tools/catscheck's unit tests; 6 and 7 mutate the hook and run its selftest (the selftest copies
+# $wt's mutated script into its own nested worktree, ruling 27, so the mutation is what runs); 8
+# removes the no-500 guard of internal/respcheck (Eric 2026-11-08, ADR 0001), whose failure text
+# is `respcheck: no-500 rule (Eric 2026-11-08, ADR 0001): ...`: TestNoFiveHundred asserts that text
+# and fails with `lacks "no-500 rule"` without the guard.
+# cats_selftest_run LABEL SCRIPT WANT: run scripts/SCRIPT of the worktree. WANT empty is the
+# baseline (exit 0 and no FAIL line); otherwise the exit must be non-zero and the log must carry
+# the line WANT.
+cats_selftest_run() {
+	local label="$1" script="$2" want="${3:-}" log="$tmp/$1.log" rc=0
+	begin
+	bash "$wt/scripts/$script" >"$log" 2>&1 || rc=$?
+	if [ -z "$want" ]; then
+		if [ "$rc" -ne 0 ]; then problem "$label" "$script exited $rc, expected 0: $(tail -n 3 "$log" | tr '\n' ' ')"; fi
+		if grep -q -E 'selftest: FAIL ' "$log"; then problem "$label" "$script logged a FAIL line: $(grep -E 'selftest: FAIL ' "$log" | head -n 1 | cut -c 1-300)"; fi
+	else
+		if [ "$rc" -eq 0 ]; then problem "$label" "$script exited 0 under the mutation, expected non-zero"; fi
+		grep -qF -- "$want" "$log" || problem "$label" "log lacks '$want': $(tail -n 3 "$log" | tr '\n' ' ')"
+	fi
+	finish "$label"
+}
+
+block_cats_gates_fire() {
+	cats_selftest_run cats-harness-selftest-baseline cats-harness-selftest.sh
+	cats_selftest_run cats-precommit-selftest-baseline cats-precommit-selftest.sh
+	revert
+	# 1. summary is no longer stripped: a documentation-only edit reads as a change
+	mutate_unit_block catscheck-summary-not-stripped tools/catscheck/normalize.go \
+		'"summary",' '"summaryX",' \
+		./tools/catscheck/ '^TestChangedPaths$' TestChangedPaths/documentation_only \
+		'got [/v1/things] docOnly=false, want [] docOnly=true'
+	# 2. properties is no longer a name-map key: a property named description is stripped
+	mutate_unit_block catscheck-property-named-description-stripped tools/catscheck/normalize.go \
+		'"properties":' '"propertiesX":' \
+		./tools/catscheck/ '^TestNormalize$' TestNormalize/property_named_description_kept
+	# 3. a changed shared schema no longer reaches the paths that reference it
+	mutate_unit_block catscheck-ref-widening-off tools/catscheck/paths.go \
+		'var widen = true' 'var widen = false' \
+		./tools/catscheck/ '^TestChangedPaths$' TestChangedPaths/schema_change_widens
+	# 4. a rule may suppress a 5xx (`code < 0` keeps `code` used, so the file compiles)
+	mutate_unit_block catscheck-5xx-rule-accepted tools/catscheck/rules.go \
+		'if code >= 500 && code < 600 {' 'if code < 0 {' \
+		./tools/catscheck/ '^TestClassify$' TestClassify/rule_never_suppresses_5xx \
+		'code 500: fp true violation'
+	# 5. a rule may name an unknown operator
+	mutate_unit_block catscheck-unknown-operator-accepted tools/catscheck/rules.go \
+		'if _, ok := operators[op]; !ok {' 'if false {' \
+		./tools/catscheck/ '^TestLoadRules$' TestLoadRules/unknown_operator_rejected
+	# 6. the documentation-only fast path of the hook is gone
+	begin
+	if mutate_file precommit-doc-only-fast-path-gone scripts/cats-precommit.sh \
+		'exit 0 # documentation-only' ': # documentation-only'; then
+		local log6="$tmp/precommit-doc-only.log" rc6=0
+		bash "$wt/scripts/cats-precommit-selftest.sh" >"$log6" 2>&1 || rc6=$?
+		if [ "$rc6" -eq 0 ]; then problem precommit-doc-only-fast-path-gone "selftest exited 0 under the mutation"; fi
+		grep -qF -- 'cats-precommit-selftest: FAIL doc-only-skips' "$log6" ||
+			problem precommit-doc-only-fast-path-gone "log lacks 'cats-precommit-selftest: FAIL doc-only-skips': $(tail -n 3 "$log6" | tr '\n' ' ')"
+	fi
+	finish precommit-doc-only-fast-path-gone
+	revert
+	# 7. a finding no longer blocks the commit
+	begin
+	if mutate_file precommit-findings-not-blocking scripts/cats-precommit.sh \
+		'exit 1 # findings' 'exit 0 # findings'; then
+		local log7="$tmp/precommit-findings.log" rc7=0
+		bash "$wt/scripts/cats-precommit-selftest.sh" >"$log7" 2>&1 || rc7=$?
+		if [ "$rc7" -eq 0 ]; then problem precommit-findings-not-blocking "selftest exited 0 under the mutation"; fi
+		grep -qF -- 'cats-precommit-selftest: FAIL change-runs-widened-paths' "$log7" ||
+			problem precommit-findings-not-blocking "log lacks 'cats-precommit-selftest: FAIL change-runs-widened-paths': $(tail -n 3 "$log7" | tr '\n' ' ')"
+	fi
+	finish precommit-findings-not-blocking
+	revert
+	# 8. the no-500 guard of respcheck is gone (Task 8.6; Eric 2026-11-08)
+	mutate_unit_block respcheck-no-500-guard-removed internal/respcheck/respcheck.go \
+		'if status == http.StatusInternalServerError {' 'if false {' \
+		./internal/respcheck/ '^TestNoFiveHundred$' TestNoFiveHundred \
+		'lacks "no-500 rule"'
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1625,6 +1712,7 @@ block_error_responses_fire
 block_spec_bounds_fire
 block_spec_validation_fires
 block_spec_examples_fire
+block_cats_gates_fire
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"
