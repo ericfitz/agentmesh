@@ -19,3 +19,62 @@ rules:
   - id: CONNECTION_ERROR_999
     why: CATS reports 999 for transport/connection failures, not API defects.
     when: {response_code: 999}
+  - id: PROBLEM_TITLE_KEYWORD_401
+    why: "CATS's leak keyword [unauthorized] is the RFC 9457 title of the 401 problem body (components/responses/Unauthorized; ADR 0001 addendum); since RB3 (Task 8.2) the detail is the fixed text 'a bearer token is required', so the keyword is the only finding."
+    when: {response_code: 401, fuzzer: BypassAuthentication, result_reason: "Error details leak", result_details: {contains: "[unauthorized]"}}
+  - id: PROBLEM_TITLE_KEYWORD_403
+    why: "CATS's leak keyword [forbidden] is the RFC 9457 title and the code of the 403 problem body (components/responses/Forbidden; ADR 0001 addendum), not an error detail; the rule is limited to the 403 causes the rules below document plus one of its own, so a 403 with a new detail stays visible. The own cause, 'cats-admin needs read on channel ...': the campaign's createChannel tests created channels named with the injection payloads under the refData ACL that names cats-agent only (refdata.yml acl[*]#identity, admin Test 3155), and administrators are subject to channel Read rows by design (internal/core/access/decide.go decideChannel; ADR 0011)."
+    when:
+      response_code: 403
+      result_reason: "Error details leak"
+      result_details: {contains: "[forbidden]"}
+      json_body.detail: {contains_any: ["enrollment token is invalid", "is scoped; it registers only", "is a human; humans sign in", "needs admin on channel \"cats-acl\"", "cats-admin needs read on channel", "is not registered; register it first"]}
+  - id: NOTICES_KEYWORD_200
+    why: "CATS's leak keyword [notice] matches the documented notices member of the health and administrator status documents (docs/ops/health.md, ADR 0010)."
+    when: {response_code: 200, result_reason: "Error details leak", result_details: {contains: "[notice]"}, path: {in: [/v1/health, /v1/admin/status]}}
+  - id: HARNESS_REPLY_TO_REMOVED_201
+    why: "The seed's refData removes reply_to from POST /v1/channels/{channel}/messages (cats_remove_field, scripts/cats-harness.sh), so the reply_to fuzzers send no reply_to at all and the 201 is the normal answer (round 1 raw report Test 1513; round 2 admin Tests 11563 to 11565)."
+    when: {response_code: 201, path: "/v1/channels/{channel}/messages", scenario: {contains: "[reply_to]"}}
+  - id: AGENT_LOST_ACL_ADMIN_403
+    why: "The fuzzed PUT /v1/channels/{channel}/acl replaces cats-acl's ACL with bodies that omit cats-agent (EmptyJsonArrayBody [] answered 204 in the admin pass, Test 11228), and the seed re-creates decoys but does not restore an existing channel's ACL (scripts/cats-harness.sh seed comment: 'that leftover is a recorded rule, not a harness change'); an agent without an admin row gets the documented 403 (internal/core/access/decide.go decideChannel, ADR 0011)."
+    when: {response_code: 403, path: "/v1/channels/{channel}/acl", json_body.code: forbidden, json_body.detail: {contains: "needs admin on channel \"cats-acl\""}}
+  - id: DECOY_CONSUMED_404
+    why: "Campaign design (plan ruling 13): the anchor path's decoy is consumed by the first successful DELETE or retire, and cats-sub is garbage-collected after the first unsubscribe (ADR 0009 decision 20); every later test on the anchor path is 404 by construction, and CATS's own hint text ('provide business context using --refData') marks these rows."
+    when:
+      response_code: 404
+      result_reason: "Not found"
+      path: {in: ["/v1/channels/{channel}", "/v1/memories/{id}", "/v1/sessions/{session}", "/v1/admin/scopes/{scope}/done", "/v1/channels/{channel}/subscription", /v1/tag-subscriptions]}
+      result_details: {contains: "provide business context"}
+  - id: CREATE_NAME_CONFLICT_409
+    why: "CATS reuses one generated name across the tests of a create operation, so the first test creates and the rest get the documented 409 (components/responses/Conflict on createChannel, createScope and createAgentIdentity; an identity that exists in another scope is the same conflict)."
+    when: {response_code: 409, path: {in: [/v1/channels, /v1/admin/scopes, /v1/admin/identities]}, json_body.code: conflict}
+  - id: IF_REVISION_MISMATCH_409
+    why: "CATS fills if_revision with a generated value; the edit fails with the documented 409 when the live revision differs (EditMemoryRequest.if_revision description in api/openapi.yaml; internal/core/memories/memories.go:118)."
+    when: {response_code: 409, path: "/v1/memories/{id}/revisions", json_body.code: conflict, json_body.detail: {contains: "is at revision"}}
+  - id: REGISTER_EXAMPLE_TOKEN_INVALID_403
+    why: "Every register test sends the spec's example enrollment_token (abe_ZXhhbXBsZS1lbnJvbGxtZW50LXRvay1ub3QtcmVhbDE, 'example-enrollment-tok-not-real1'), which the server never issued; 403 is the documented refusal (operation register declares Forbidden; internal/core/identities/register.go:32)."
+    when: {response_code: 403, path: /v1/auth/register, json_body.code: forbidden, json_body.detail: "enrollment token is invalid"}
+  - id: REGISTER_TAKEN_IDENTITY_403
+    why: "The identity names the register fuzzers reuse were created earlier in the same campaign by createAgentIdentity (scope cats-scope, the same payload strings) and createHumanIdentity (the generated email); the register description says a scoped identity registers only with the enrollment token bound to it and a human identity cannot register (403) (api/openapi.yaml operation register; internal/core/identities/register.go:102 and :121)."
+    when: {response_code: 403, path: /v1/auth/register, json_body.code: forbidden, json_body.detail: {contains_any: ["is scoped; it registers only", "is a human; humans sign in"]}}
+  - id: REGISTER_EXISTING_CREDENTIAL_409
+    why: "The request names an identity that already holds a key (the campaign's own cats-admin or cats-agent; admin pass RemoveFields and EmptyStringsInFields on enrollment_token); the documented 409 (operation register declares Conflict; internal/core/identities/register.go:162)."
+    when: {response_code: 409, path: /v1/auth/register, json_body.code: conflict, json_body.detail: {contains: "already has a credential"}}
+  - id: EDIT_MEMORY_EMPTY_BODY_400
+    why: "EditMemoryRequest declares minProperties 1 and no required member (SG3, commit ebddff5), so the fuzzers that strip every optional member (EmptyJsonBody, OnlyRequiredFields, RemoveFields) send {} and get the documented 400 validation."
+    when: {response_code: 400, path: "/v1/memories/{id}/revisions", method: POST, json_body.code: validation, json_body.detail: {contains: "minProperties"}}
+  - id: EXAMPLES_FIELDS_OBJECT_FOR_ARRAY_BODY_400
+    why: "ExamplesFields sends the ACLEntry item example as the whole body of PUT /v1/channels/{channel}/acl, whose schema is an array (request body {identity, permissions}, admin pass); the validator's 400 'value must be an array' is the documented BadRequest."
+    when: {response_code: 400, path: "/v1/channels/{channel}/acl", method: PUT, fuzzer: ExamplesFields, json_body.code: validation, json_body.detail: {contains: "value must be an array"}}
+  - id: EMPTY_ACL_ARRAY_204
+    why: "The ACL PUT body is an array with maxItems 256 and no minItems (api/openapi.yaml /v1/channels/{channel}/acl put); [] is a valid empty ACL and 204 is right."
+    when: {response_code: 204, path: "/v1/channels/{channel}/acl", fuzzer: EmptyJsonArrayBody}
+  - id: RANDOM_RESOURCES_EXISTING_TASK_200
+    why: "RandomResources put a small integer in the task id (admin Test 5845 /v1/tasks/7/claim; agent Test 5170 /v1/tasks/1/release, the refData id) that names an existing task; claiming or releasing an existing task is the documented 200 (no task owner guard, CLAUDE.md Design; ADR 0011)."
+    when: {response_code: 200, fuzzer: RandomResources, path: {in: ["/v1/tasks/{id}/claim", "/v1/tasks/{id}/release"]}}
+  - id: CHECK_DELETED_COLLECTION_200
+    why: "CheckDeletedResourcesNotAvailable re-GETs /v1/tag-subscriptions after a DELETE on it; the path is a collection (one DELETE removes one entry, api/openapi.yaml deleteTagSubscription), so the collection still answers 200. CATS files the re-GET under another path's bucket, so the rule matches the request URL."
+    when: {response_code: 200, fuzzer: CheckDeletedResourcesNotAvailable, url: {ends_with: /v1/tag-subscriptions}}
+  - id: OPEN_OPERATION
+    why: "The 8 open operations declare security [] (api/openapi.yaml: GET /v1/health, /v1/discover, /v1/auth/jwks, the three /.well-known/*, POST /v1/auth/token and /v1/auth/register), so a request without a bearer is answered: 200, or the body's 400. CATS's BypassAuthentication expects 401 or 403."
+    when: {response_code: {in: [200, 400]}, fuzzer: BypassAuthentication, path: {in: [/v1/health, /v1/discover, /v1/auth/jwks, /.well-known/agentmesh, /.well-known/oauth-authorization-server, /.well-known/openid-configuration, /v1/auth/token, /v1/auth/register]}}
