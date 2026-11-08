@@ -5141,33 +5141,37 @@ components:
         use: sig
       type: object
       x-go-type: map[string]interface{}
-      required: [kty]
+      required: [kty, crv, x]
       properties:
         kty:
           type: string
           enum: [OKP, EC]
+          example: OKP
           maxLength: 16
           description: "The key type (RFC 7517 section 4.1). The server accepts OKP (with crv Ed25519, algorithm EdDSA) and EC (with crv P-256, algorithm ES256); any other key type is refused. At most 16 bytes."
         crv:
           type: string
           enum: [Ed25519, P-256]
+          example: Ed25519
           maxLength: 64
           description: "The curve (RFC 7518 section 6.2.1.1, RFC 8037): Ed25519 for kty OKP, P-256 for kty EC. Required with both key types. At most 64 bytes."
         x:
           type: string
+          example: sOdMZWLCddpuUshtE1kZytlM8SPVCfOKjiUO9WHLkVU
           maxLength: 64
           description: "The public key (RFC 7518 section 6.2.1.2, RFC 8037 section 2), base64url without padding: the 32-byte Ed25519 key for OKP, the 32-byte x coordinate for EC. Required with both key types. At most 64 bytes."
         y:
           type: string
           maxLength: 64
-          description: "The y coordinate (RFC 7518 section 6.2.1.3), base64url without padding. Required for kty EC and absent for OKP. At most 64 bytes."
+          description: "The y coordinate (RFC 7518 section 6.2.1.3), base64url without padding. Required for kty EC; ignored for OKP. At most 64 bytes."
         kid:
           type: string
+          example: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
           maxLength: 64
           description: "The key id: the key's RFC 7638 SHA-256 thumbprint. Optional at register (a kid that is not the thumbprint is 400 validation). At most 64 bytes."
       additionalProperties: true
       maxProperties: 16
-      description: "A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own."
+      description: "A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own."
     JWKS:
       example:
         keys:

@@ -60,6 +60,12 @@ rules:
   - id: REGISTER_EXISTING_CREDENTIAL_409
     why: "The request names an identity that already holds a key (the campaign's own cats-admin or cats-agent; admin pass RemoveFields and EmptyStringsInFields on enrollment_token); the documented 409 (operation register declares Conflict; internal/core/identities/register.go:162)."
     when: {response_code: 409, path: /v1/auth/register, json_body.code: conflict, json_body.detail: {contains: "already has a credential"}}
+  - id: REGISTER_JWK_ENUM_MISMATCH_400
+    why: "IterateThroughEnumValuesFields sets kty and crv to each enum value independently, so it sends combinations the server refuses (kty OKP with crv P-256, kty EC with an Ed25519 x): the documented 400 validation naming public_key_jwk (api/openapi.yaml JWK description: OKP goes with Ed25519 and EC with P-256; internal/auth/keys FromJWK). The schema cannot say which pairs are valid without a oneOf, which would turn the generated map type into a union."
+    when: {response_code: 400, path: /v1/auth/register, fuzzer: IterateThroughEnumValuesFields, json_body.code: validation, json_body.detail: {starts_with: "public_key_jwk: go-jose"}}
+  - id: REGISTER_JWK_UNKNOWN_MEMBER_201
+    why: "JWK keeps additionalProperties true (RFC 7517 allows members the server does not know, which it ignores), so a member name mangled by the name fuzzers (zero-width characters, whitespace) is one more unknown member and the otherwise valid key registers: 201 (api/openapi.yaml JWK description)."
+    when: {response_code: 201, path: /v1/auth/register, fuzzer: {in: [ZeroWidthCharsInNamesFields, InsertWhitespacesInFieldNamesField]}}
   - id: EDIT_MEMORY_EMPTY_BODY_400
     why: "EditMemoryRequest declares minProperties 1 and no required member (SG3, commit ebddff5), so the fuzzers that strip every optional member (EmptyJsonBody, OnlyRequiredFields, RemoveFields) send {} and get the documented 400 validation."
     when: {response_code: 400, path: "/v1/memories/{id}/revisions", method: POST, json_body.code: validation, json_body.detail: {contains: "minProperties"}}
@@ -76,8 +82,8 @@ rules:
     why: "CheckDeletedResourcesNotAvailable re-GETs /v1/tag-subscriptions after a DELETE on it; the path is a collection (one DELETE removes one entry, api/openapi.yaml deleteTagSubscription), so the collection still answers 200. CATS files the re-GET under another path's bucket, so the rule matches the request URL."
     when: {response_code: 200, fuzzer: CheckDeletedResourcesNotAvailable, url: {ends_with: /v1/tag-subscriptions}}
   - id: OPEN_OPERATION
-    why: "The 8 open operations declare security [] (api/openapi.yaml: GET /v1/health, /v1/discover, /v1/auth/jwks, the three /.well-known/*, POST /v1/auth/token and /v1/auth/register), so a request without a bearer is answered: 200, or the body's 400. CATS's BypassAuthentication expects 401 or 403."
-    when: {response_code: {in: [200, 400]}, fuzzer: BypassAuthentication, path: {in: [/v1/health, /v1/discover, /v1/auth/jwks, /.well-known/agentmesh, /.well-known/oauth-authorization-server, /.well-known/openid-configuration, /v1/auth/token, /v1/auth/register]}}
+    why: "The 8 open operations declare security [] (api/openapi.yaml: GET /v1/health, /v1/discover, /v1/auth/jwks, the three /.well-known/*, POST /v1/auth/token and /v1/auth/register), so a request without a bearer is answered: 200, 201 (a valid register), or the body's 400. CATS's BypassAuthentication expects 401 or 403."
+    when: {response_code: {in: [200, 201, 400]}, fuzzer: BypassAuthentication, path: {in: [/v1/health, /v1/discover, /v1/auth/jwks, /.well-known/agentmesh, /.well-known/oauth-authorization-server, /.well-known/openid-configuration, /v1/auth/token, /v1/auth/register]}}
   - id: TOKEN_ENDPOINT_OAUTH_400
     why: "POST /v1/auth/token answers every malformed request with the RFC 6749 section 5.2 body (spec section 8.1; tokenRequestError and rejectRepeatedTokenParams in internal/server/oauth.go), not problem+json; CATS cannot sign a client assertion, so its field fuzzers never reach 200."
     when: {response_code: 400, path: /v1/auth/token}
