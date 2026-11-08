@@ -45,3 +45,5 @@
   retire: normal
 /v1/admin/identities:
   scope: cats-scope
+/v1/admin/identities/{identity}/reset-credential:
+  identity: cats-victim

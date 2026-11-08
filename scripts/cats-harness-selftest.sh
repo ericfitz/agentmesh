@@ -221,10 +221,68 @@ case_refdata_recorded() {
   for t in SESSION DECOY_SESSION TASK DECOY_TASK MEMORY DECOY_MEMORY; do
     grep -q -F "<$t>" "$TMP/refdata-tokenized.yml" || fail "refdata has no <$t> after tokenizing (an id changed shape?)"
   done
+  # Task 8.1 g: the throwaway identity is registered and mapped in the refData.
+  grep -q -x -F '/v1/admin/identities/{identity}/reset-credential:' "$s/refdata.yml" || fail "refdata lacks the reset-credential section"
+  grep -q -x -F '  identity: cats-victim' "$s/refdata.yml" || fail "refdata does not map reset-credential's identity to cats-victim"
+  [ -f "$D/config/credentials/cats/cats-victim" ] || fail "cats-victim has no credential in the harness directory"
+  # Task 8.1 a: every verify_url is a path (the plugin joins it onto the server).
+  if jq -e '.fixtures[] | select(.verify_url | startswith("/") | not)' "$s/fixtures.json" >/dev/null; then
+    fail "a fixtures.json verify_url is not a path"
+  fi
   # A second seed re-reads the same fixtures (state, Definition of Done D).
   h seed2 seed --dir "$D" --out "$TMP/seed2"
   expect_rc 0 "second seed" seed2
-  [ "$(jq -S .task "$s/seed.json")" = "$(jq -S .task "$TMP/seed2/seed.json")" ] || fail "second seed returned another task id"
+  local k
+  for k in task task_decoy memory memory_decoy; do
+    [ "$(jq -r ".$k" "$s/seed.json")" = "$(jq -r ".$k" "$TMP/seed2/seed.json")" ] || fail "second seed returned another $k id"
+  done
+}
+
+# admin_curl METHOD PATH: an API call as cats-admin; the bearer goes to curl on
+# stdin (-K -), never on argv or into a capture. Prints the HTTP code and, for a
+# GET, the body after it.
+admin_curl() {
+  local t url
+  url=$(cat "$D/server.url")
+  t=$(bash "$HARNESS" token --dir "$D" admin)
+  printf 'header = "Authorization: Bearer %s"\n' "$t" |
+    curl -s -m 10 -K - -X "$1" -w '\n%{http_code}' "$url$2"
+}
+
+# Task 8.1 e and f: every channel names the administrator; a decoy that is gone
+# is re-created with a new id, one that is alive keeps its id.
+case_seed_recreates_decoys() {
+  local before=$TMP/seed3 after=$TMP/seed4 c body code
+  h sd1 seed --dir "$D" --out "$before"
+  expect_rc 0 "seed before the delete" sd1
+  [ "$CASE_FAIL" -eq 0 ] || return 0
+  for c in cats-ordinary cats-ordinary-decoy cats-acl cats-sub cats-tasks cats-memory; do
+    body=$(admin_curl GET "/v1/channels/$c/acl")
+    case "$body" in *cats-admin*) ;; *) fail "the ACL of $c does not name cats-admin" ;; esac
+  done
+  local memd taskd
+  memd=$(jq -r .memory_decoy "$before/seed.json")
+  taskd=$(jq -r .task_decoy "$before/seed.json")
+  code=$(admin_curl DELETE "/v1/memories/$memd" | tail -n 1)
+  [ "$code" = 204 ] || { fail "DELETE memory $memd: HTTP $code"; return 0; }
+  h sd2 seed --dir "$D" --out "$after"
+  expect_rc 0 "seed after the delete" sd2
+  [ "$CASE_FAIL" -eq 0 ] || return 0
+  [ "$(jq -r .memory_decoy "$after/seed.json")" != "$memd" ] || fail "the deleted memory decoy $memd was not re-created"
+  contains sd2 err 're-created memory'
+  [ "$(jq -r .memory "$before/seed.json")" = "$(jq -r .memory "$after/seed.json")" ] || fail "the live memory fixture changed id"
+  [ "$(jq -r .task_decoy "$after/seed.json")" = "$taskd" ] || fail "the live task decoy changed id"
+  # The new id is the one in the refData and it is live.
+  grep -q -x -F "  id: $(jq -r .memory_decoy "$after/seed.json")" "$after/refdata.yml" || fail "refdata lacks the new memory decoy id"
+  code=$(admin_curl GET "/v1/memories/$(jq -r .memory_decoy "$after/seed.json")" | tail -n 1)
+  [ "$code" = 200 ] || fail "the re-created memory decoy answers HTTP $code"
+  # A removed channel is re-created too (the delete is the API's, as a fuzzer's).
+  code=$(admin_curl DELETE "/v1/channels/cats-ordinary-decoy" | tail -n 1)
+  case "$code" in 2??) ;; *) fail "DELETE channel: HTTP $code"; return 0 ;; esac
+  h sd3 seed --dir "$D" --out "$TMP/seed5"
+  expect_rc 0 "seed after the channel delete" sd3
+  code=$(admin_curl GET "/v1/channels/cats-ordinary-decoy/acl" | tail -n 1)
+  [ "$code" = 200 ] || fail "the removed channel was not re-created (HTTP $code)"
 }
 
 JWT_RE='^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$'
@@ -281,7 +339,8 @@ case_server_argv() {
   cmd=$(ps -o command= -p "$(cat "$D/server.pid")")
   for pair in 'send_messages_per_second=10000' 'send_kib_per_second=65536' \
     'token_lifetime_seconds=86400' 'session_lease_seconds=86400' \
-    'watch_max_seconds=1' 'maintenance_interval_seconds=3600'; do
+    'watch_max_seconds=1' 'maintenance_interval_seconds=3600' \
+    'signing_key_rotation_cooldown_seconds=1'; do
     case "$cmd" in *"-set $pair"*) ;; *) fail "server argv lacks '-set $pair'" ;; esac
   done
   case "$cmd" in *'-listen 127.0.0.1:'*) ;; *) fail "server argv lacks '-listen 127.0.0.1:'" ;; esac
@@ -552,6 +611,7 @@ run_case run-completes case_run_completes
 run_case argv-recorded case_argv_recorded
 run_case headers-file-removed case_headers_file_removed
 run_case refdata-recorded case_refdata_recorded
+run_case seed-recreates-decoys case_seed_recreates_decoys
 run_case token-prints-one-line case_token_prints_one_line
 run_case no-bearer-leaks case_no_bearer_leaks
 run_case second-up-refused case_second_up_refused

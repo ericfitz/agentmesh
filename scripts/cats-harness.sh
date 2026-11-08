@@ -33,7 +33,10 @@
 #                          owner is dead is taken over). Use --dir for a second
 #                          campaign.
 #   `seed` twice           the same fixtures, re-read (fixed idempotency keys,
-#                          conflicts accepted); sessions are reopened.
+#                          conflicts accepted); sessions are reopened. A task or
+#                          memory that is gone (a fuzzed DELETE) is re-created
+#                          under a fresh key with a new id, and a removed channel
+#                          is re-created; the live ids go into the refData.
 #   `down` twice           the second is a no-op.
 #
 # Exit codes: 0 ok; 1 a check failed (a bearer in a log, a dead fixture);
@@ -49,9 +52,11 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 PROFILE=cats
 ADMIN=cats-admin
 AGENT=cats-agent
+VICTIM=cats-victim
 SERVER_SETS=(-set send_messages_per_second=10000 -set send_kib_per_second=65536
   -set token_lifetime_seconds=86400 -set session_lease_seconds=86400
-  -set watch_max_seconds=1 -set maintenance_interval_seconds=3600)
+  -set watch_max_seconds=1 -set maintenance_interval_seconds=3600
+  -set signing_key_rotation_cooldown_seconds=1)
 SKIP_PATHS=(/v1/admin/reset /v1/admin/signing-keys/rotate
   '/v1/admin/identities/{identity}/reset-credential'
   /v1/admin/bridges '/v1/admin/bridges/{channel}')
@@ -296,48 +301,95 @@ cli_seed() {
   rm -f "$err"
 }
 
+# ensure_item KIND IDENTITY KEY CHANNEL CONTENT: sets ITEM_ID to the id of a
+# live task or memory. The fixed key makes a second seed return the same id; when
+# that item is gone (a fuzzed DELETE removed it) the key still replays the dead
+# id, so the item is created again under a fresh key and gets a new id.
+ensure_item() {
+  local kind=$1 who=$2 key=$3 channel=$4 content=$5
+  local c=(-profile "$PROFILE" -identity "$who") field=memory_id
+  [ "$kind" = task ] && field=id
+  item_create() { # item_create KEY
+    if [ "$kind" = task ]; then
+      cli_seed tasks create "${c[@]}" -key "$1" "$channel" "$content"
+    else
+      cli_seed send "${c[@]}" -key "$1" "$channel" "$content"
+    fi
+    ITEM_ID=$(jq -r ".$field // empty" <<<"$SEED_OUT")
+  }
+  item_create "$key"
+  [ -n "$ITEM_ID" ] || die 3 "seed: no $kind id in the CLI output for key $key"
+  if ! item_live "$kind" "${c[@]}"; then
+    item_create "$key-r$(date +%s)-$$"
+    [ -n "$ITEM_ID" ] || die 3 "seed: no $kind id in the CLI output for the re-created $key"
+    item_live "$kind" "${c[@]}" || die 3 "seed: the re-created $kind $ITEM_ID is not live"
+    echo "seed: re-created $kind $key as $ITEM_ID" >&2
+  fi
+}
+
+# item_live KIND CLI-FLAGS...: 0 when ITEM_ID names a live task or memory, 1 on
+# not_found; any other failure exits 3.
+item_live() {
+  local kind=$1 err rc=0
+  shift
+  err=$(mktemp "$DIR/err.XXXXXX")
+  if [ "$kind" = task ]; then
+    am tasks get "$@" "$ITEM_ID" >/dev/null 2>"$err" || rc=$?
+  else
+    am memories get "$@" "$ITEM_ID" >/dev/null 2>"$err" || rc=$?
+  fi
+  if [ "$rc" -ne 0 ] && ! grep -q -E '^agentmesh: not_found:' "$err"; then
+    tail -n 5 "$err" >&2
+    rm -f "$err"
+    die 3 "seed: checking $kind $ITEM_ID failed (exit $rc)"
+  fi
+  rm -f "$err"
+  return "$rc"
+}
+
 do_seed() {
   need_tool jq
   case "$WHO" in admin | agent) ;; *) die 2 "--identity: want admin or agent, got $WHO" ;; esac
   require_live
   [ -n "$OUT" ] || OUT=$DIR
   mkdir -p "$OUT"
-  # An ACL replaces the default one. The two ordinary channels carry the agent
-  # only: the fuzzed PUT of an ACL must not drop an administrator's entry (a 403,
-  # "humans and administrators keep their access"). The tasks and memory channels
-  # also name the seeding administrator, which needs write there.
-  local acl='[{"identity":"cats-agent","permissions":["read","write","admin"]}]'
+  # An ACL replaces the default one. Every channel names both identities, so the
+  # administrator pass reaches messages and subscription too (a channel with the
+  # agent alone answered 403 to the administrator). The fuzzed PUT of an ACL in the agent pass may still
+  # drop the agent's own admin entry on cats-acl: that leftover is a recorded
+  # rule, not a harness change.
   local acl_both='[{"identity":"cats-agent","permissions":["read","write","admin"]},{"identity":"cats-admin","permissions":["read","write","admin"]}]'
   local a=(-profile "$PROFILE" -identity "$ADMIN")
 
-  cli_seed channels create "${a[@]}" -acl "$acl" cats-ordinary
-  cli_seed channels create "${a[@]}" -acl "$acl" cats-ordinary-decoy
+  cli_seed channels create "${a[@]}" -acl "$acl_both" cats-ordinary
+  cli_seed channels create "${a[@]}" -acl "$acl_both" cats-ordinary-decoy
   # The fuzzed PUT of an ACL rewrites it (and may drop the agent's own admin), so
   # it gets a channel of its own: cats-ordinary stays usable for the nested paths.
-  cli_seed channels create "${a[@]}" -acl "$acl" cats-acl
+  cli_seed channels create "${a[@]}" -acl "$acl_both" cats-acl
   # CATS mangles a path parameter with "?" and "#", so a request for
   # DELETE /v1/channels/cats-sub?/subscription reaches DELETE /v1/channels/cats-sub:
   # the one nested operation with a DELETE prefix gets a channel of its own too.
-  cli_seed channels create "${a[@]}" -acl "$acl" cats-sub
+  cli_seed channels create "${a[@]}" -acl "$acl_both" cats-sub
   cli_seed channels create "${a[@]}" -acl "$acl_both" -kind tasks cats-tasks
   cli_seed channels create "${a[@]}" -acl "$acl_both" -kind memory cats-memory
   cli_seed scopes create "${a[@]}" cats-scope
   cli_seed scopes create "${a[@]}" cats-scope-decoy
 
-  cli_seed tasks create "${a[@]}" -key cats-seed-task-fixture cats-tasks 'Fixture task'
-  local task_id
-  task_id=$(jq -r '.id // empty' <<<"$SEED_OUT")
-  cli_seed tasks create "${a[@]}" -key cats-seed-task-decoy cats-tasks 'Decoy task'
-  local task_decoy_id
-  task_decoy_id=$(jq -r '.id // empty' <<<"$SEED_OUT")
-  cli_seed send "${a[@]}" -key cats-seed-memory-fixture cats-memory 'Fixture memory'
-  local memory_id
-  memory_id=$(jq -r '.memory_id // empty' <<<"$SEED_OUT")
-  cli_seed send "${a[@]}" -key cats-seed-memory-decoy cats-memory 'Decoy memory'
-  local memory_decoy_id
-  memory_decoy_id=$(jq -r '.memory_id // empty' <<<"$SEED_OUT")
-  [ -n "$task_id" ] && [ -n "$task_decoy_id" ] && [ -n "$memory_id" ] && [ -n "$memory_decoy_id" ] ||
-    die 3 "seed: a task or memory id is missing from the CLI output"
+  local task_id task_decoy_id memory_id memory_decoy_id
+  ensure_item task "$ADMIN" cats-seed-task-fixture cats-tasks 'Fixture task'
+  task_id=$ITEM_ID
+  ensure_item task "$ADMIN" cats-seed-task-decoy cats-tasks 'Decoy task'
+  task_decoy_id=$ITEM_ID
+  ensure_item memory "$ADMIN" cats-seed-memory-fixture cats-memory 'Fixture memory'
+  memory_id=$ITEM_ID
+  ensure_item memory "$ADMIN" cats-seed-memory-decoy cats-memory 'Decoy memory'
+  memory_decoy_id=$ITEM_ID
+
+  # The throwaway identity for reset-credential: registered (its key lives in
+  # the harness directory), and never used to authenticate. A second register
+  # answers "existing key".
+  am register -profile "$PROFILE" -identity "$VICTIM" -server "$URL" >>"$DIR/harness.log" 2>&1 ||
+    die 3 "seed: register $VICTIM failed (see $DIR/harness.log)"
 
   local who_name=$AGENT
   [ "$WHO" = admin ] && who_name=$ADMIN
@@ -407,17 +459,19 @@ $scope_line
   retire: normal
 /v1/admin/identities:
   scope: cats-scope
+/v1/admin/identities/{identity}/reset-credential:
+  identity: $VICTIM
 EOF
 
-  jq -n --arg u "$URL" --arg task "$task_id" --arg mem "$memory_id" --arg ses "$session_id" --arg who "$WHO" '
+  jq -n --arg task "$task_id" --arg mem "$memory_id" --arg ses "$session_id" --arg who "$WHO" '
     {fixtures: ([
-      {key: "channel", id: "cats-ordinary", verify_url: ($u + "/v1/channels/cats-ordinary/acl"), anchor_path: "/v1/channels/{channel}", decoyed: true},
-      {key: "tasks-channel", id: "cats-tasks", verify_url: ($u + "/v1/channels/cats-tasks/tasks"), anchor_path: "/v1/channels/{channel}", decoyed: true},
-      {key: "task", id: $task, verify_url: ($u + "/v1/tasks/" + $task), anchor_path: "/v1/tasks/{id}", decoyed: true},
-      {key: "memory", id: $mem, verify_url: ($u + "/v1/memories/" + $mem), anchor_path: "/v1/memories/{id}", decoyed: true},
-      {key: "session", id: $ses, verify_url: ($u + "/v1/sessions/" + $ses + "/peek"), anchor_path: "/v1/sessions/{session}", decoyed: true}
+      {key: "channel", id: "cats-ordinary", verify_url: "/v1/channels/cats-ordinary/acl", anchor_path: "/v1/channels/{channel}", decoyed: true},
+      {key: "tasks-channel", id: "cats-tasks", verify_url: "/v1/channels/cats-tasks/tasks", anchor_path: "/v1/channels/{channel}", decoyed: true},
+      {key: "task", id: $task, verify_url: ("/v1/tasks/" + $task), anchor_path: "/v1/tasks/{id}", decoyed: true},
+      {key: "memory", id: $mem, verify_url: ("/v1/memories/" + $mem), anchor_path: "/v1/memories/{id}", decoyed: true},
+      {key: "session", id: $ses, verify_url: ("/v1/sessions/" + $ses + "/peek"), anchor_path: "/v1/sessions/{session}", decoyed: true}
     ] + (if $who == "admin" then [
-      {key: "scope", id: "cats-scope", verify_url: ($u + "/v1/admin/scopes/cats-scope"), anchor_path: "/v1/admin/scopes/{scope}/done", decoyed: true}
+      {key: "scope", id: "cats-scope", verify_url: "/v1/admin/scopes/cats-scope", anchor_path: "/v1/admin/scopes/{scope}/done", decoyed: true}
     ] else [] end))}' >"$OUT/fixtures.json"
   echo "seeded: $OUT"
 }
@@ -587,7 +641,7 @@ do_run() {
     while IFS=$'\t' read -r key url; do
       # The bearer goes to curl on stdin (-K -), never on argv.
       code=$(printf 'header = "Authorization: Bearer %s"\n' "$agent_b" |
-        curl -s -m 10 -K - -o /dev/null -w '%{http_code}' "$url" || true)
+        curl -s -m 10 -K - -o /dev/null -w '%{http_code}' "${URL%/}$url" || true)
       case "$code" in
         2??) ;;
         *) echo "fixture $key died (HTTP $code)"; rc=1 ;;
