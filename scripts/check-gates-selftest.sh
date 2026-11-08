@@ -1178,8 +1178,8 @@ block_wire_roundtrip_fires() {
 		'ReplyTo: m.ReplyTo, Revision: m.Revision,' \
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/Message
 	mutate_unit_block wire-gen-type-unpaired internal/gen/gen.go \
-		'// BridgeState creating: the bridge is reserved' \
-		$'// Extra defines model for Extra.\ntype Extra struct {\n\tA string\n}\n\n// BridgeState creating: the bridge is reserved' \
+		'type BridgeState string' \
+		$'type Extra struct {\n\tA string\n}\n\ntype BridgeState string' \
 		./internal/server/ '^TestWireRoundTrip$' TestWireRoundTrip/coverage \
 		'generated type Extra is neither paired nor excepted'
 	mutate_unit_block wire-exception-stale internal/server/wire_roundtrip_test.go \
@@ -1384,7 +1384,7 @@ block_spec_bounds_fire() {
 		'ReceiveCountCeiling = 10000' 'ReceiveCountCeiling = 10001' \
 		./internal/server/ '^TestSpecBounds$' TestSpecBounds/schemas/ReceiveRequest.count
 	mutate_spec_block description-unit-missing '    SendRequest:' \
-		'a line break is 400 validation. At most 200 code points.' 'a line break is 400 validation. At most 200.' \
+		'At most 200 code points.' 'At most 200.' \
 		./internal/server/ '^TestSpecBounds$' "$sub" 'description lacks the unit'
 	AGENTMESH_BUS_TRANSPORT=local mutate_block core-check-removed internal/core/rules/status.go \
 		'if utf8.RuneCountInString(s) > MaxLineRunes {' 'if utf8.RuneCountInString(s) > MaxLineRunes*4 {' \
@@ -1518,8 +1518,8 @@ block_spec_validation_fires() {
 # described and cites its source (TestSpecDescriptions), every schema and response carries a valid
 # example with no real host or token (TestSpecExamples, spec-lint's oas3-missing-example), and every
 # request example is replayed against the e2e server and its answer checked against the documented
-# response (TestRequestExamples). Docker-free; mutations 1 to 7 regenerate internal/gen, 5 needs the
-# pinned vacuum on the PATH (the same as make verify), 8 and 9 run the e2e package (about 40 s).
+# response (TestRequestExamples). Docker-free; mutations 1 to 4 and 6 to 8 regenerate internal/gen, 5
+# needs the pinned vacuum on the PATH (the same as make verify), 8 to 10 run the e2e package (about 40 s).
 # Mutation 8 removes `parent: 41` from createTask's own 201 example (the operations carry inline
 # examples, so the Task schema example is not what the replay compares): `parent` is optional in
 # Task.required, so kin still accepts the example, and the live answer echoes the parent (row 38 sets it).
@@ -1551,7 +1551,8 @@ block_spec_examples_fire() {
 	# 6. an example the schema refuses (kin validates examples in the document test)
 	mutate_spec_block example-invalid '    Session:' \
 		'        resumed: false' '        resumed: "no"' \
-		./internal/gen/ '^TestDocumentIs31AndValidates$' TestDocumentIs31AndValidates
+		./internal/gen/ '^TestDocumentIs31AndValidates$' TestDocumentIs31AndValidates \
+		'schema "Session": invalid example'
 	# 7. a real host in an example
 	mutate_spec_block real-host-in-example '    AuthorizationServerMetadata:' \
 		'        issuer: http://localhost:8420' '        issuer: https://mesh.corp.internal' \
@@ -1567,6 +1568,11 @@ block_spec_examples_fire() {
 		'		{op: "peek", status: 200, live: sessionPath},' '' \
 		./internal/e2e/ '^TestRequestExamples$' TestRequestExamples/coverage \
 		'no row for peek'
+	# 10. an emptyOK entry that never fires fails its row, naming the pointer
+	mutate_unit_block replay-emptyok-stale internal/e2e/zz_examples_test.go \
+		'emptyOK: []string{"/capabilities"}' 'emptyOK: []string{"/capabilities", "/bogus"}' \
+		./internal/e2e/ '^TestRequestExamples$' TestRequestExamples/createChannel \
+		'emptyOK /bogus never fired'
 }
 
 block_skip_in_wiring
