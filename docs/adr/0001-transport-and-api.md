@@ -416,6 +416,7 @@ Plan and controller rulings (2026-11-07; Eric may overrule; not his decisions):
 - Amends choice 13: the remote `Bus` (`errorOf`) decodes a problem body at any status and reads `Retry-After` (integer seconds, capped at 86400) into `bus.Error.RetryAfter`; a 429 without a problem body is a retryable `rate_limited`. It still never imports kin-openapi (decision 47).
 - Checks: `TestStatusTable` (every code maps to one status; `bus.Codes()` lists the codes) and `TestOperationErrorTable` in `internal/server/status_table_test.go`. `internal/respcheck` validates every wire response against the embedded spec in tests only, never in production; it is wired into the inproc Bus suite (`TestInprocResponseCheckWired`; the limiter's wait reaching the header is pinned by `TestSendRateLimitedRetryAfterIsTheLimitersWait` in `internal/server`, and the Bus suite's `TestSendRateLimited` asserts a wait of at least 500 ms), `TestAuthEndToEnd`, the `internal/server` and `internal/server/cmd` tests (`TestMain` fails on `respcheck.Late()`) and the e2e validating proxy. The m4 rule (`check_deps` in `scripts/m4-exit-checks.sh`, run by `make verify` as `--deps-only`) forbids `.` and `./cmd/agentmesh-mcponly` importing it. Mutations: `scripts/check-gates-selftest.sh` block 36 (12).
 - The protocol version stays `1.0.0` (pre-release rule).
+- The answers are fuzzed by a CATS campaign (issue #30, ADR 0018), which records the transport-layer exception (the net/http 501 and 431 that run before any handler).
 
 ## Request bounds addendum (Eric's decision of 2026-11-06; issue #34)
 

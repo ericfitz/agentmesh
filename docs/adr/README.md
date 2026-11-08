@@ -29,6 +29,7 @@ NNNN" to keep the two series apart.
 | [0015](0015-mcp-only-client.md) | The MCP-only client | Accepted (Eric, 2026-10-27); open notes are agent choices |
 | [0016](0016-mcp-events.md) | MCP events (server-initiated notifications) | Accepted (Eric, 2026-10-27 and 2026-11-03); build deferred |
 | [0017](0017-rename-to-agentmesh.md) | Rename agentbus2 to agentmesh | Accepted (Eric, 2026-11-03) |
+| [0018](0018-api-fuzzing-with-cats.md) | API fuzzing with CATS | Accepted (Eric, 2026-11-06; decisions 1 to 3) |
 
 Decisions 60 (TUI in a later milestone), 61 (release tooling in the
 final milestone) and 87 (Scoop and winget in that tooling) are scheduling
