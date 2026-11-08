@@ -1,0 +1,96 @@
+openapi: 3.1.0
+info:
+  title: min
+  version: 1.0.0
+  description: The minimal document.
+servers:
+  - url: http://localhost:8420
+security:
+  - bearerAuth: []
+tags:
+  - name: things
+    description: Things
+paths:
+  /v1/things:
+    get:
+      operationId: listThings
+      summary: List things
+      description: Lists the things.
+      tags: [things]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: The things.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Thing'
+              example: []
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createThing
+      summary: Create a thing
+      tags: [things]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  description: The name.
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Created.
+  /v1/things/{id}:
+    get:
+      operationId: getThing
+      summary: Get a thing
+      description: Gets one.
+      tags: [things]
+      externalDocs:
+        url: https://example.com
+      responses:
+        '200':
+          description: The thing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Thing'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: The page size.
+      schema:
+        type: integer
+  responses:
+    NotFound:
+      description: Not found.
+  schemas:
+    Thing:
+      type: object
+      description: A thing.
+      example:
+        id: a
+      x-foo: bar
+      properties:
+        id:
+          type: string
+        description:
+          type: string
+  examples:
+    Sample:
+      value: {id: a}
