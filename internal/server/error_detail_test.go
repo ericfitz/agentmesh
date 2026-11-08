@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -76,4 +77,40 @@ func detailText(p gen.Problem) string {
 		return ""
 	}
 	return *p.Detail
+}
+
+// TestTrailingJSONRefused: a JSON request body is exactly one JSON value
+// (issue #30, CATS finding RB1). The token endpoint keeps its RFC 6749 body.
+func TestTrailingJSONRefused(t *testing.T) {
+	e := newEnv(t, envOptions{})
+	e.identity("root", true)
+	cases := []struct{ name, path, body string }{
+		{"junk after the value", "/v1/channels", `{"name":"zz-trailing-probe-1"}bla`},
+		{"second value", "/v1/admin/scopes", `{"name":"a"} {"name":"b"}`},
+		{"array after the value", "/v1/channels", `{"name":"zz-trailing-probe-2"} []`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resp := e.rawAllowUnrouted("root", newReq(t, "POST", c.path, strings.NewReader(c.body)))
+			p := readProblem(t, resp)
+			if resp.StatusCode != 400 || p.Code != gen.ProblemCode("validation") {
+				t.Fatalf("got %d %s, want 400 validation", resp.StatusCode, p.Code)
+			}
+			if d := detailText(p); strings.Contains(d, "zz-trailing") || !strings.Contains(d, "one JSON value") {
+				t.Errorf("detail %q", d)
+			}
+		})
+	}
+	// Trailing whitespace is not data.
+	resp := e.raw("root", newReq(t, "POST", "/v1/channels", strings.NewReader("{\"name\":\"zz-ws\"} \n\t")))
+	if resp.StatusCode != 201 {
+		t.Errorf("trailing whitespace: %d", resp.StatusCode)
+	}
+	// The token endpoint answers its OAuth body for the same shape.
+	treq := newReq(t, "POST", "/v1/auth/token", strings.NewReader(`{"a":1}bla`))
+	resp = e.rawAllowUnrouted("", treq)
+	var oe gen.OAuthError
+	if err := json.NewDecoder(resp.Body).Decode(&oe); err != nil || resp.StatusCode != 400 || oe.Error != "invalid_request" {
+		t.Errorf("token endpoint: %d %+v %v", resp.StatusCode, oe, err)
+	}
 }

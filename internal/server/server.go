@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -178,11 +179,32 @@ func limitBody(next http.Handler, limit int64) http.Handler {
 					fmt.Sprintf("request body exceeds %d bytes", limit), false)
 				return
 			}
+			if !isTokenPath(r) && hasTrailingJSON(r, b) {
+				WriteProblem(w, r, http.StatusBadRequest, bus.CodeValidation, "the request body must be exactly one JSON value", false)
+				return
+			}
 			r.Body = io.NopCloser(bytes.NewReader(b))
 			r.ContentLength = int64(len(b))
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hasTrailingJSON reports whether a JSON body (Content-Type application/json)
+// holds anything after its first value: the decoders downstream read one value
+// and would ignore the rest (issue #30, CATS finding RB1). A body that is not
+// well-formed JSON at all is left to the validator's own refusal.
+func hasTrailingJSON(r *http.Request, b []byte) bool {
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+		return false
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	var first json.RawMessage
+	if dec.Decode(&first) != nil {
+		return false
+	}
+	var next json.RawMessage
+	return !errors.Is(dec.Decode(&next), io.EOF)
 }
 
 // isTokenPath reports whether r is addressed to the token endpoint, with or
