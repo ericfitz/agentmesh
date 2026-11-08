@@ -89,7 +89,7 @@ func New(c *core.Core, o Options) http.Handler {
 			if tokenRequestError(w, r) {
 				return
 			}
-			WriteProblem(w, r, http.StatusBadRequest, bus.CodeValidation, err.Error(), false)
+			WriteProblem(w, r, http.StatusBadRequest, bus.CodeValidation, frameworkDetail(err), false)
 		},
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			if _, _, write := ProblemFor(err); !write {
@@ -105,7 +105,7 @@ func New(c *core.Core, o Options) http.Handler {
 			if tokenRequestError(w, r) {
 				return
 			}
-			WriteProblem(w, r, http.StatusBadRequest, bus.CodeValidation, err.Error(), false)
+			WriteProblem(w, r, http.StatusBadRequest, bus.CodeValidation, frameworkDetail(err), false)
 		},
 	})
 
@@ -125,7 +125,7 @@ func New(c *core.Core, o Options) http.Handler {
 			if tokenRequestError(w, r) {
 				return
 			}
-			WriteProblem(w, r, opts.StatusCode, validatorCode(opts.StatusCode), err.Error(), false)
+			WriteProblem(w, r, opts.StatusCode, validatorCode(opts.StatusCode), requestDetail(err, opts.StatusCode), false)
 		},
 	})
 
