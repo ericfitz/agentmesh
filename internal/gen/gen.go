@@ -764,7 +764,7 @@ type ChannelInfo struct {
 	// Name The channel name: 1 to 128 bytes, no slash.
 	Name string `json:"name"`
 
-	// Scope The scope the channel belongs to; absent when it has none. A scoped channel is named <scope>-<rest>.
+	// Scope The scope the channel belongs to; absent when it has none. A scoped agent's channels are named <scope>-<rest>; an administrator may create a channel in a scope under any name that does not take another scope's prefix.
 	Scope *string `json:"scope,omitempty"`
 }
 
@@ -773,6 +773,7 @@ type ChannelInfoKind string
 
 // ClaimTaskRequest Claims a task for the caller, optionally with a lease that runs until a time.
 type ClaimTaskRequest struct {
+	// LeasedUntil When the claim's lease ends, in Unix milliseconds; it must be in the future (400 validation). Absent or 0 sets none: a task claimed from pending then has no lease, and a task already in_progress keeps the lease it has.
 	LeasedUntil *int64 `json:"leased_until,omitempty"`
 }
 
@@ -805,7 +806,7 @@ type CreateChannelRequest struct {
 	// Name The new channel's name: no slash, and <scope>-<rest> in a scope. A name already taken is 409 conflict. At most 128 bytes (the server counts bytes).
 	Name string `json:"name"`
 
-	// Scope Administrators only: the scope the channel belongs to, which must exist and not be done, and whose prefix the name must start with. Absent means the creator's own scope, or none for an unscoped creator. At most 128 bytes (the server counts bytes).
+	// Scope Administrators only: the scope the channel belongs to, which must exist and not be done. A scoped creator's channel names must start with its scope's prefix <scope>-; an administrator's need not, but no channel outside the scope may take the prefix. Absent means the creator's own scope, or none for an unscoped creator. At most 128 bytes (the server counts bytes).
 	Scope *string `json:"scope,omitempty"`
 }
 
@@ -888,10 +889,17 @@ type EditMemoryRequest struct {
 
 // EditResult Identifies the new revision of an edited memory and the one it replaced.
 type EditResult struct {
+	// MemoryId The memory's id; an edit never changes it.
 	MemoryId int64 `json:"memory_id"`
+
+	// Replaced The sequence number of the revision this edit replaced, now tombstoned.
 	Replaced int64 `json:"replaced"`
+
+	// Revision The new revision number: the replaced revision's plus one.
 	Revision int64 `json:"revision"`
-	Seq      int64 `json:"seq"`
+
+	// Seq The sequence number of the new revision's message, from the one counter of the whole server.
+	Seq int64 `json:"seq"`
 }
 
 // Gap A range of sequence numbers on a channel that the receiver will never see because retention removed them.
@@ -1492,38 +1500,72 @@ type TagPatterns struct {
 	Patterns []string `json:"patterns"`
 }
 
-// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease.
+// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease. The example shows every member at once; in a stored task reclaimed_from and reclaimed_at appear only on a pending task with no owner.
 type Task struct {
-	Blocked      bool               `json:"blocked"`
-	BlockedBy    *[]int64           `json:"blocked_by,omitempty"`
-	Channel      string             `json:"channel"`
-	Description  *string            `json:"description,omitempty"`
-	Id           int64              `json:"id"`
-	LeasedUntil  *int64             `json:"leased_until,omitempty"`
-	Metadata     *map[string]string `json:"metadata,omitempty"`
-	OpenBlockers *[]int64           `json:"open_blockers,omitempty"`
-	Owner        *string            `json:"owner,omitempty"`
-	Parent       *int64             `json:"parent,omitempty"`
-	Rank         string             `json:"rank"`
+	// Blocked True while at least one task in blocked_by is live and not completed.
+	Blocked bool `json:"blocked"`
+
+	// BlockedBy The ids of the tasks that must be completed before this one can start; absent when none. A blocker that was deleted stops counting and is dropped from the list on the task's next update.
+	BlockedBy *[]int64 `json:"blocked_by,omitempty"`
+
+	// Channel The name of the task list (a channel of kind tasks) the task is on.
+	Channel string `json:"channel"`
+
+	// Description The task's longer text; absent when empty.
+	Description *string `json:"description,omitempty"`
+
+	// Id The task's id: the sequence number of its first revision. It stays the same through every update and is the id the task operations take.
+	Id int64 `json:"id"`
+
+	// LeasedUntil When the owner's lease ends, in Unix milliseconds; absent when the task has none. Only an in_progress task keeps a lease, and a task whose lease has run out is abandoned.
+	LeasedUntil *int64 `json:"leased_until,omitempty"`
+
+	// Metadata Free-form string pairs attached to the task; absent when none. An update merges into them.
+	Metadata *map[string]string `json:"metadata,omitempty"`
+
+	// OpenBlockers The ids in blocked_by whose tasks are live and not completed; absent when none.
+	OpenBlockers *[]int64 `json:"open_blockers,omitempty"`
+
+	// Owner The identity working on the task; absent while nobody owns it. An in_progress task always has one.
+	Owner *string `json:"owner,omitempty"`
+
+	// Parent The id of the parent task, a task of the same list; absent for a task at the top of the list.
+	Parent *int64 `json:"parent,omitempty"`
+
+	// Rank The task's sort key among its siblings, the tasks with the same parent: siblings are ordered by rank, then id. Opaque; the server computes it from before, after and the existing ranks.
+	Rank string `json:"rank"`
 
 	// ReclaimedAt when the reclaim happened, unix ms
 	ReclaimedAt *int64 `json:"reclaimed_at,omitempty"`
 
 	// ReclaimedFrom the owner the abandoned-task reclaim took the task from; present until the task is claimed, assigned or leaves pending
 	ReclaimedFrom *string `json:"reclaimed_from,omitempty"`
-	Revision      int64   `json:"revision"`
-	Status        string  `json:"status"`
-	Subject       string  `json:"subject"`
-	UpdatedAt     int64   `json:"updated_at"`
-	UpdatedBy     string  `json:"updated_by"`
+
+	// Revision The task's revision number: 1 when created, plus one for every change stored, the server's own (a reclaim) included.
+	Revision int64 `json:"revision"`
+
+	// Status pending, in_progress or completed. A new task is pending, a claim makes it in_progress, and a completed task needs the status pending before it can be in_progress again.
+	Status string `json:"status"`
+
+	// Subject The task's one-line title: 1 to 256 characters, no control characters.
+	Subject string `json:"subject"`
+
+	// UpdatedAt When the task's current revision was stored, in Unix milliseconds.
+	UpdatedAt int64 `json:"updated_at"`
+
+	// UpdatedBy The identity that stored the current revision; empty when the server did (a reclaim).
+	UpdatedBy string `json:"updated_by"`
 }
 
 // TaskCreateRequest Creates a task: subject, description, parent, a position relative to a sibling (before or after, mutually exclusive), blockers and metadata.
 type TaskCreateRequest struct {
-	After  *int64 `json:"after,omitempty"`
+	// After The id of a sibling, a task with the same parent, to place the new task after (400 validation when it is not a sibling); not with before. Absent places the task last among its siblings.
+	After *int64 `json:"after,omitempty"`
+
+	// Before The id of a sibling, a task with the same parent, to place the new task before (400 validation when it is not a sibling); not with after. Absent places the task last among its siblings.
 	Before *int64 `json:"before,omitempty"`
 
-	// BlockedBy At most 64 items.
+	// BlockedBy The ids of live tasks of the same list that must be completed before this one can start (400 validation when one is not live). At most 64 items.
 	BlockedBy *[]int64 `json:"blocked_by,omitempty"`
 
 	// Description At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
@@ -1531,7 +1573,9 @@ type TaskCreateRequest struct {
 
 	// Metadata At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
 	Metadata *map[string]string `json:"metadata,omitempty"`
-	Parent   *int64             `json:"parent,omitempty"`
+
+	// Parent The id of the parent task, a live task of the same list (400 validation otherwise); absent or 0 puts the task at the top of the list.
+	Parent *int64 `json:"parent,omitempty"`
 
 	// Subject At least 1 and at most 256 code points.
 	Subject string `json:"subject"`
@@ -1539,58 +1583,88 @@ type TaskCreateRequest struct {
 
 // TaskPatch The task update input: absent fields are unchanged; before and after are mutually exclusive sibling ids.
 type TaskPatch struct {
-	// AddBlockedBy At most 64 items.
+	// AddBlockedBy Ids of live tasks of the list to add to the blockers. At most 64 items.
 	AddBlockedBy *[]int64 `json:"add_blocked_by,omitempty"`
-	After        *int64   `json:"after,omitempty"`
-	Before       *int64   `json:"before,omitempty"`
-	Delete       *bool    `json:"delete,omitempty"`
+
+	// After The id of a sibling, a task with the task's parent, to move the task after (400 validation when it is not a sibling); not with before.
+	After *int64 `json:"after,omitempty"`
+
+	// Before The id of a sibling, a task with the task's parent, to move the task before (400 validation when it is not a sibling); not with after.
+	Before *int64 `json:"before,omitempty"`
+
+	// Delete True deletes the task; it cannot be combined with another member (400 validation) and is refused while the task has subtasks (409 conflict). False or absent does nothing.
+	Delete *bool `json:"delete,omitempty"`
 
 	// Description At most 1048576 bytes (1 MiB, the largest max_message_kib); the server refuses content above its max_message_kib setting (default 64 KiB, at most 1024 KiB).
 	Description *string `json:"description,omitempty"`
-	LeasedUntil *int64  `json:"leased_until,omitempty"`
 
-	// Metadata At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
+	// LeasedUntil When the task's lease ends, in Unix milliseconds: the future, or 0 to clear it (400 validation otherwise). Only an in_progress task keeps a lease.
+	LeasedUntil *int64 `json:"leased_until,omitempty"`
+
+	// Metadata Pairs to merge into the task's metadata; a pair whose value is empty removes that key. At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
 	Metadata *map[string]string `json:"metadata,omitempty"`
 
-	// Owner At most 128 bytes (the server counts bytes).
-	Owner  *string `json:"owner,omitempty"`
-	Parent *int64  `json:"parent,omitempty"`
+	// Owner The new owner, a registered identity; an empty string clears it. At most 128 bytes (the server counts bytes).
+	Owner *string `json:"owner,omitempty"`
 
-	// RemoveBlockedBy At most 64 items.
+	// Parent Moves the task under this parent, a live task of the list other than the task itself or one of its descendants (400 validation otherwise); 0 moves it to the top of the list. Absent leaves the parent as it is.
+	Parent *int64 `json:"parent,omitempty"`
+
+	// RemoveBlockedBy Ids to remove from the blockers. At most 64 items.
 	RemoveBlockedBy *[]int64 `json:"remove_blocked_by,omitempty"`
 
-	// Status At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
+	// Status The new status. At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
 	Status *string `json:"status,omitempty"`
 
 	// Subject At most 256 code points.
 	Subject *string `json:"subject,omitempty"`
 }
 
-// TaskSummary One row of a task list result.
+// TaskSummary One row of a task list result. The example shows every member at once; reclaimed_from and reclaimed_at appear only on a pending task with no owner.
 type TaskSummary struct {
-	Depth        int      `json:"depth"`
-	HasDetails   *bool    `json:"has_details,omitempty"`
-	Id           int64    `json:"id"`
-	LeasedUntil  *int64   `json:"leased_until,omitempty"`
+	// Depth How many ancestors the task has: 0 at the top of the list. It is counted over the whole list, so it is the same whatever the filter hides.
+	Depth int `json:"depth"`
+
+	// HasDetails True when the task has a description, metadata or blockers, which getTask returns; absent otherwise.
+	HasDetails *bool `json:"has_details,omitempty"`
+
+	// Id The task's id.
+	Id int64 `json:"id"`
+
+	// LeasedUntil When the owner's lease ends, in Unix milliseconds; absent when the task has none.
+	LeasedUntil *int64 `json:"leased_until,omitempty"`
+
+	// OpenBlockers The ids of the tasks blocking this one that are live and not completed; absent when none.
 	OpenBlockers *[]int64 `json:"open_blockers,omitempty"`
-	Owner        *string  `json:"owner,omitempty"`
-	Parent       *int64   `json:"parent,omitempty"`
+
+	// Owner The identity working on the task; absent while nobody owns it.
+	Owner *string `json:"owner,omitempty"`
+
+	// Parent The id of the parent task; absent for a task at the top of the list.
+	Parent *int64 `json:"parent,omitempty"`
 
 	// ReclaimedAt when the reclaim happened, unix ms
 	ReclaimedAt *int64 `json:"reclaimed_at,omitempty"`
 
 	// ReclaimedFrom the owner the abandoned-task reclaim took the task from; present until the task is claimed, assigned or leaves pending
 	ReclaimedFrom *string `json:"reclaimed_from,omitempty"`
-	Status        string  `json:"status"`
-	Subject       string  `json:"subject"`
+
+	// Status pending, in_progress or completed.
+	Status string `json:"status"`
+
+	// Subject The task's one-line title.
+	Subject string `json:"subject"`
 }
 
 // TaskUpdateResult The result of a task update: the task, whether an earlier revision was replaced and whether the task was deleted.
 type TaskUpdateResult struct {
-	Deleted  *bool `json:"deleted,omitempty"`
+	// Deleted True when the update deleted the task, in which case task is the task as it was; absent otherwise.
+	Deleted *bool `json:"deleted,omitempty"`
+
+	// Replaced The sequence number of the task revision this update replaced; 0 when the update changed nothing and wrote no revision.
 	Replaced int64 `json:"replaced"`
 
-	// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease.
+	// Task A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease. The example shows every member at once; in a stored task reclaimed_from and reclaimed_at appear only on a pending task with no owner.
 	Task Task `json:"task"`
 }
 
@@ -1831,10 +1905,10 @@ type SubscribeParams struct {
 
 // ListTasksParams defines parameters for ListTasks.
 type ListTasksParams struct {
-	// Status At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
+	// Status Only tasks with this status; absent lists every status. At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
 
-	// Owner At most 128 bytes (the server counts bytes).
+	// Owner Only tasks owned by this identity; absent lists every owner. At most 128 bytes (the server counts bytes).
 	Owner *string `form:"owner,omitempty" json:"owner,omitempty"`
 }
 
@@ -2308,7 +2382,7 @@ type ClientInterface interface {
 
 	// CreateChannelWithBody Create a channel
 	//
-	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2317,7 +2391,7 @@ type ClientInterface interface {
 
 	// CreateChannel Create a channel
 	//
-	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2333,7 +2407,7 @@ type ClientInterface interface {
 
 	// RenameChannelWithBody Rename a channel
 	//
-	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2342,7 +2416,7 @@ type ClientInterface interface {
 
 	// RenameChannel Rename a channel
 	//
-	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2426,10 +2500,14 @@ type ClientInterface interface {
 
 	// ListTasks List a channel's tasks, optionally filtered by status or owner
 	//
+	// Lists the live tasks of a task list in tree order (each parent followed by its children, siblings by rank, then id) as summaries, optionally only those with one status or one owner; the depth of a task counts the whole list even when a filter hides its ancestors. An unknown status is 400 validation. Needs read on the list (the channel ACL's read permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found, and a channel that is not a task list is 400 validation. The result is cut to result_default_kib. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared, the reclaimed_from and reclaimed_at members marking it (ADR 0009, decisions of 2026-11-05), and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+	//
 	// Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
 	ListTasks(ctx context.Context, channel ChannelParam, params *ListTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateTaskWithBody Create a task on a channel's task list
+	//
+	// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2437,6 +2515,8 @@ type ClientInterface interface {
 	CreateTaskWithBody(ctx context.Context, channel ChannelParam, params *CreateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateTask Create a task on a channel's task list
+	//
+	// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2473,20 +2553,28 @@ type ClientInterface interface {
 
 	// DeleteMemory Delete a memory
 	//
+	// Deletes a memory: its live revision is tombstoned and its embedding and access record are dropped (earlier revisions were tombstoned by the edits that replaced them). Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found; an id on a task list is 400 validation (tasks are deleted with updateTask). The caller's rate limit counts one operation and no bytes: 429 rate_limited with Retry-After. Side effects: tombstones the revision and removes its embedding; no subscriber is woken. Idempotency-Key: a repeat with the same key and the same memory returns 204 and deletes nothing more; the same key for another memory is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008.
+	//
 	// Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
 	DeleteMemory(ctx context.Context, id IdParam, params *DeleteMemoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetMemory Read a memory's live revision
+	//
+	// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 	//
 	// Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 	GetMemory(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListMemoryRevisions List a memory's revisions
 	//
+	// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+	//
 	// Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 	ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EditMemoryWithBody Write a new revision of a memory
+	//
+	// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2494,6 +2582,8 @@ type ClientInterface interface {
 	EditMemoryWithBody(ctx context.Context, id IdParam, params *EditMemoryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// EditMemory Write a new revision of a memory
+	//
+	// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2598,7 +2688,7 @@ type ClientInterface interface {
 
 	// SubscribeTagsWithBody Add a tag subscription: one AND set of tag patterns
 	//
-	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2607,7 +2697,7 @@ type ClientInterface interface {
 
 	// SubscribeTags Add a tag subscription: one AND set of tag patterns
 	//
-	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -2616,10 +2706,14 @@ type ClientInterface interface {
 
 	// GetTask Read a task
 	//
+	// Returns one task with its derived members (blocked and open_blockers). Needs read on the task's list (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared and reclaimed_from and reclaimed_at set (ADR 0009, decisions of 2026-11-05), so the answer shows the reclaimed task, and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+	//
 	// Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
 	GetTask(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// UpdateTaskWithBody Update a task: absent fields stay unchanged
+	//
+	// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2628,12 +2722,16 @@ type ClientInterface interface {
 
 	// UpdateTask Update a task: absent fields stay unchanged
 	//
+	// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 	UpdateTask(ctx context.Context, id IdParam, params *UpdateTaskParams, body UpdateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ClaimTaskWithBody Claim a task for the caller, optionally with a lease
+	//
+	// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -2642,12 +2740,16 @@ type ClientInterface interface {
 
 	// ClaimTask Claim a task for the caller, optionally with a lease
 	//
+	// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
+	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTask(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReleaseTask Release a task: clear its owner and lease and return it to pending
+	//
+	// Releases a task: the same as updateTask with status pending, owner cleared and lease cleared, so a claimed task goes back to the list for anyone to claim. A release is not a reclaim and sets no reclaimed mark. A completed task is reopened as pending; a pending task with no owner changes nothing and answers with replaced 0. There is no owner guard: anyone with write on the list may release any task. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. The sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the released one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key returns the first answer and writes nothing. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 	//
 	// Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 	ReleaseTask(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3182,7 +3284,7 @@ func (c *Client) ListChannels(ctx context.Context, reqEditors ...RequestEditorFn
 
 // CreateChannelWithBody Create a channel
 //
-// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3201,7 +3303,7 @@ func (c *Client) CreateChannelWithBody(ctx context.Context, params *CreateChanne
 
 // CreateChannel Create a channel
 //
-// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3237,7 +3339,7 @@ func (c *Client) DeleteChannel(ctx context.Context, channel ChannelParam, params
 
 // RenameChannelWithBody Rename a channel
 //
-// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3256,7 +3358,7 @@ func (c *Client) RenameChannelWithBody(ctx context.Context, channel ChannelParam
 
 // RenameChannel Rename a channel
 //
-// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3440,6 +3542,8 @@ func (c *Client) Subscribe(ctx context.Context, channel ChannelParam, params *Su
 
 // ListTasks List a channel's tasks, optionally filtered by status or owner
 //
+// Lists the live tasks of a task list in tree order (each parent followed by its children, siblings by rank, then id) as summaries, optionally only those with one status or one owner; the depth of a task counts the whole list even when a filter hides its ancestors. An unknown status is 400 validation. Needs read on the list (the channel ACL's read permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found, and a channel that is not a task list is 400 validation. The result is cut to result_default_kib. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared, the reclaimed_from and reclaimed_at members marking it (ADR 0009, decisions of 2026-11-05), and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+//
 // Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
 func (c *Client) ListTasks(ctx context.Context, channel ChannelParam, params *ListTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListTasksRequest(c.Server, channel, params)
@@ -3454,6 +3558,8 @@ func (c *Client) ListTasks(ctx context.Context, channel ChannelParam, params *Li
 }
 
 // CreateTaskWithBody Create a task on a channel's task list
+//
+// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3471,6 +3577,8 @@ func (c *Client) CreateTaskWithBody(ctx context.Context, channel ChannelParam, p
 }
 
 // CreateTask Create a task on a channel's task list
+//
+// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3557,6 +3665,8 @@ func (c *Client) AgentStatusHistory(ctx context.Context, identity string, reqEdi
 
 // DeleteMemory Delete a memory
 //
+// Deletes a memory: its live revision is tombstoned and its embedding and access record are dropped (earlier revisions were tombstoned by the edits that replaced them). Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found; an id on a task list is 400 validation (tasks are deleted with updateTask). The caller's rate limit counts one operation and no bytes: 429 rate_limited with Retry-After. Side effects: tombstones the revision and removes its embedding; no subscriber is woken. Idempotency-Key: a repeat with the same key and the same memory returns 204 and deletes nothing more; the same key for another memory is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008.
+//
 // Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
 func (c *Client) DeleteMemory(ctx context.Context, id IdParam, params *DeleteMemoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteMemoryRequest(c.Server, id, params)
@@ -3571,6 +3681,8 @@ func (c *Client) DeleteMemory(ctx context.Context, id IdParam, params *DeleteMem
 }
 
 // GetMemory Read a memory's live revision
+//
+// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 //
 // Corresponds with GET /v1/memories/{id} (the `GetMemory` operationId).
 func (c *Client) GetMemory(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3587,6 +3699,8 @@ func (c *Client) GetMemory(ctx context.Context, id IdParam, reqEditors ...Reques
 
 // ListMemoryRevisions List a memory's revisions
 //
+// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+//
 // Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
 func (c *Client) ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListMemoryRevisionsRequest(c.Server, id)
@@ -3601,6 +3715,8 @@ func (c *Client) ListMemoryRevisions(ctx context.Context, id IdParam, reqEditors
 }
 
 // EditMemoryWithBody Write a new revision of a memory
+//
+// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3618,6 +3734,8 @@ func (c *Client) EditMemoryWithBody(ctx context.Context, id IdParam, params *Edi
 }
 
 // EditMemory Write a new revision of a memory
+//
+// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3852,7 +3970,7 @@ func (c *Client) ListTagSubscriptions(ctx context.Context, reqEditors ...Request
 
 // SubscribeTagsWithBody Add a tag subscription: one AND set of tag patterns
 //
-// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3871,7 +3989,7 @@ func (c *Client) SubscribeTagsWithBody(ctx context.Context, params *SubscribeTag
 
 // SubscribeTags Add a tag subscription: one AND set of tag patterns
 //
-// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -3890,6 +4008,8 @@ func (c *Client) SubscribeTags(ctx context.Context, params *SubscribeTagsParams,
 
 // GetTask Read a task
 //
+// Returns one task with its derived members (blocked and open_blockers). Needs read on the task's list (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared and reclaimed_from and reclaimed_at set (ADR 0009, decisions of 2026-11-05), so the answer shows the reclaimed task, and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+//
 // Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
 func (c *Client) GetTask(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetTaskRequest(c.Server, id)
@@ -3904,6 +4024,8 @@ func (c *Client) GetTask(ctx context.Context, id IdParam, reqEditors ...RequestE
 }
 
 // UpdateTaskWithBody Update a task: absent fields stay unchanged
+//
+// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3922,6 +4044,8 @@ func (c *Client) UpdateTaskWithBody(ctx context.Context, id IdParam, params *Upd
 
 // UpdateTask Update a task: absent fields stay unchanged
 //
+// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
@@ -3938,6 +4062,8 @@ func (c *Client) UpdateTask(ctx context.Context, id IdParam, params *UpdateTaskP
 }
 
 // ClaimTaskWithBody Claim a task for the caller, optionally with a lease
+//
+// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 //
 // Takes any type of body and a specified content type.
 //
@@ -3956,6 +4082,8 @@ func (c *Client) ClaimTaskWithBody(ctx context.Context, id IdParam, params *Clai
 
 // ClaimTask Claim a task for the caller, optionally with a lease
 //
+// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
+//
 // Takes a body of the `application/json` content type.
 //
 // Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
@@ -3972,6 +4100,8 @@ func (c *Client) ClaimTask(ctx context.Context, id IdParam, params *ClaimTaskPar
 }
 
 // ReleaseTask Release a task: clear its owner and lease and return it to pending
+//
+// Releases a task: the same as updateTask with status pending, owner cleared and lease cleared, so a claimed task goes back to the list for anyone to claim. A release is not a reclaim and sets no reclaimed mark. A completed task is reopened as pending; a pending task with no owner changes nothing and answers with replaced 0. There is no owner guard: anyone with write on the list may release any task. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. The sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the released one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key returns the first answer and writes nothing. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 //
 // Corresponds with POST /v1/tasks/{id}/release (the `ReleaseTask` operationId).
 func (c *Client) ReleaseTask(ctx context.Context, id IdParam, params *ReleaseTaskParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7038,7 +7168,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateChannelWithBodyWithResponse Create a channel
 	//
-	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7047,7 +7177,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateChannelWithResponse Create a channel
 	//
-	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+	// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7065,7 +7195,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenameChannelWithBodyWithResponse Rename a channel
 	//
-	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7074,7 +7204,7 @@ type ClientWithResponsesInterface interface {
 
 	// RenameChannelWithResponse Rename a channel
 	//
-	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+	// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7164,6 +7294,8 @@ type ClientWithResponsesInterface interface {
 
 	// ListTasksWithResponse List a channel's tasks, optionally filtered by status or owner
 	//
+	// Lists the live tasks of a task list in tree order (each parent followed by its children, siblings by rank, then id) as summaries, optionally only those with one status or one owner; the depth of a task counts the whole list even when a filter hides its ancestors. An unknown status is 400 validation. Needs read on the list (the channel ACL's read permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found, and a channel that is not a task list is 400 validation. The result is cut to result_default_kib. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared, the reclaimed_from and reclaimed_at members marking it (ADR 0009, decisions of 2026-11-05), and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
@@ -7171,12 +7303,16 @@ type ClientWithResponsesInterface interface {
 
 	// CreateTaskWithBodyWithResponse Create a task on a channel's task list
 	//
+	// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
 	CreateTaskWithBodyWithResponse(ctx context.Context, channel ChannelParam, params *CreateTaskParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTaskResponse, error)
 
 	// CreateTaskWithResponse Create a task on a channel's task list
+	//
+	// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7221,12 +7357,16 @@ type ClientWithResponsesInterface interface {
 
 	// DeleteMemoryWithResponse Delete a memory
 	//
+	// Deletes a memory: its live revision is tombstoned and its embedding and access record are dropped (earlier revisions were tombstoned by the edits that replaced them). Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found; an id on a task list is 400 validation (tasks are deleted with updateTask). The caller's rate limit counts one operation and no bytes: 429 rate_limited with Retry-After. Side effects: tombstones the revision and removes its embedding; no subscriber is woken. Idempotency-Key: a repeat with the same key and the same memory returns 204 and deletes nothing more; the same key for another memory is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
 	DeleteMemoryWithResponse(ctx context.Context, id IdParam, params *DeleteMemoryParams, reqEditors ...RequestEditorFn) (*DeleteMemoryResponse, error)
 
 	// GetMemoryWithResponse Read a memory's live revision
+	//
+	// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7235,6 +7375,8 @@ type ClientWithResponsesInterface interface {
 
 	// ListMemoryRevisionsWithResponse List a memory's revisions
 	//
+	// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
@@ -7242,12 +7384,16 @@ type ClientWithResponsesInterface interface {
 
 	// EditMemoryWithBodyWithResponse Write a new revision of a memory
 	//
+	// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
+	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
 	EditMemoryWithBodyWithResponse(ctx context.Context, id IdParam, params *EditMemoryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EditMemoryResponse, error)
 
 	// EditMemoryWithResponse Write a new revision of a memory
+	//
+	// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7364,7 +7510,7 @@ type ClientWithResponsesInterface interface {
 
 	// SubscribeTagsWithBodyWithResponse Add a tag subscription: one AND set of tag patterns
 	//
-	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7373,7 +7519,7 @@ type ClientWithResponsesInterface interface {
 
 	// SubscribeTagsWithResponse Add a tag subscription: one AND set of tag patterns
 	//
-	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+	// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7382,12 +7528,16 @@ type ClientWithResponsesInterface interface {
 
 	// GetTaskWithResponse Read a task
 	//
+	// Returns one task with its derived members (blocked and open_blockers). Needs read on the task's list (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared and reclaimed_from and reclaimed_at set (ADR 0009, decisions of 2026-11-05), so the answer shows the reclaimed task, and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
 	GetTaskWithResponse(ctx context.Context, id IdParam, reqEditors ...RequestEditorFn) (*GetTaskResponse, error)
 
 	// UpdateTaskWithBodyWithResponse Update a task: absent fields stay unchanged
+	//
+	// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7396,12 +7546,16 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateTaskWithResponse Update a task: absent fields stay unchanged
 	//
+	// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
 	UpdateTaskWithResponse(ctx context.Context, id IdParam, params *UpdateTaskParams, body UpdateTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateTaskResponse, error)
 
 	// ClaimTaskWithBodyWithResponse Claim a task for the caller, optionally with a lease
+	//
+	// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -7410,12 +7564,16 @@ type ClientWithResponsesInterface interface {
 
 	// ClaimTaskWithResponse Claim a task for the caller, optionally with a lease
 	//
+	// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
+	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
 	ClaimTaskWithResponse(ctx context.Context, id IdParam, params *ClaimTaskParams, body ClaimTaskJSONRequestBody, reqEditors ...RequestEditorFn) (*ClaimTaskResponse, error)
 
 	// ReleaseTaskWithResponse Release a task: clear its owner and lease and return it to pending
+	//
+	// Releases a task: the same as updateTask with status pending, owner cleared and lease cleared, so a claimed task goes back to the list for anyone to claim. A release is not a reclaim and sets no reclaimed mark. A completed task is reopened as pending; a pending task with no owner changes nothing and answers with replaced 0. There is no owner guard: anyone with write on the list may release any task. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. The sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the released one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key returns the first answer and writes nothing. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -12796,7 +12954,7 @@ func (c *ClientWithResponses) ListChannelsWithResponse(ctx context.Context, reqE
 
 // CreateChannelWithBodyWithResponse Create a channel
 //
-// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12811,7 +12969,7 @@ func (c *ClientWithResponses) CreateChannelWithBodyWithResponse(ctx context.Cont
 
 // CreateChannelWithResponse Create a channel
 //
-// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
+// Creates a channel of kind ordinary (the default), memory or tasks, with the caller as its creator. The ACL is the one in the request; absent, it is the configured default_acl (shipped: everyone read and write, the creator read, write and admin, admins admin); an empty array stores no entries. There is no implicit creator entry, so an ACL that leaves out the caller leaves it without access. Every named identity must be a registered identity the caller can see, or one of the groups everyone, admins and humans; an entry with no permission or an unknown one is 400 validation. Any registered identity may create while channel_creation is open (the default); only an administrator when it is admins (403 forbidden). scope: only an administrator may name one, and it must exist and not be done (unknown or retired 404 not_found, done 409 conflict); otherwise the channel takes the caller's scope. A scoped agent's channel names must be <scope>-<rest> (an administrator who names a scope is exempt from the prefix), and no channel outside scope S may take a name starting S- (400 validation). A name already taken is 409 conflict. Side effects: inserts the channel and its ACL rows. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12841,7 +12999,7 @@ func (c *ClientWithResponses) DeleteChannelWithResponse(ctx context.Context, cha
 
 // RenameChannelWithBodyWithResponse Rename a channel
 //
-// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -12856,7 +13014,7 @@ func (c *ClientWithResponses) RenameChannelWithBodyWithResponse(ctx context.Cont
 
 // RenameChannelWithResponse Rename a channel
 //
-// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped channel and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
+// Renames a channel; its id stays, so subscriptions, cursors and messages stay with it. Needs admin on the channel (the channel ACL's admin permission, which administrators hold everywhere): without it 403 forbidden, and a channel that does not exist or lies outside a scoped caller's scope is 404 not_found. The general channel cannot be renamed (400 validation), and a channel whose Slack bridge is live or being created is 409 conflict. The new name follows the creation rules: 1 to 128 bytes without a slash, <scope>-<rest> for a scoped agent (an administrator is exempt from the prefix) and never a name starting with another scope's prefix (400 validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR 0011.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13006,6 +13164,8 @@ func (c *ClientWithResponses) SubscribeWithResponse(ctx context.Context, channel
 
 // ListTasksWithResponse List a channel's tasks, optionally filtered by status or owner
 //
+// Lists the live tasks of a task list in tree order (each parent followed by its children, siblings by rank, then id) as summaries, optionally only those with one status or one owner; the depth of a task counts the whole list even when a filter hides its ancestors. An unknown status is 400 validation. Needs read on the list (the channel ACL's read permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found, and a channel that is not a task list is 400 validation. The result is cut to result_default_kib. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared, the reclaimed_from and reclaimed_at members marking it (ADR 0009, decisions of 2026-11-05), and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/channels/{channel}/tasks (the `ListTasks` operationId).
@@ -13019,6 +13179,8 @@ func (c *ClientWithResponses) ListTasksWithResponse(ctx context.Context, channel
 
 // CreateTaskWithBodyWithResponse Create a task on a channel's task list
 //
+// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/channels/{channel}/tasks (the `CreateTask` operationId).
@@ -13031,6 +13193,8 @@ func (c *ClientWithResponses) CreateTaskWithBodyWithResponse(ctx context.Context
 }
 
 // CreateTaskWithResponse Create a task on a channel's task list
+//
+// Adds a task to a task list (a channel of kind tasks; any other kind is 400 validation) and returns it. The task starts pending with no owner. The subject is 1 to 256 characters without control characters. parent, when given, and every id in blocked_by must be a live task of the same list (400 validation); duplicate blockers collapse. before or after (not both) names a sibling to place the task next to, else it goes last among its parent's children. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; a list that does not exist or lies outside a scoped caller's scope is 404 not_found. A request body above the server's limit is 413 payload_too_large, a task document above max_message_kib is 400 validation, and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured the subject, description and metadata are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: appends the task as the first revision of a new memory on the list and wakes the watches of its subscribers. Idempotency-Key: a repeat with the same key and body returns the first task and creates nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13105,6 +13269,8 @@ func (c *ClientWithResponses) AgentStatusHistoryWithResponse(ctx context.Context
 
 // DeleteMemoryWithResponse Delete a memory
 //
+// Deletes a memory: its live revision is tombstoned and its embedding and access record are dropped (earlier revisions were tombstoned by the edits that replaced them). Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found; an id on a task list is 400 validation (tasks are deleted with updateTask). The caller's rate limit counts one operation and no bytes: 429 rate_limited with Retry-After. Side effects: tombstones the revision and removes its embedding; no subscriber is woken. Idempotency-Key: a repeat with the same key and the same memory returns 204 and deletes nothing more; the same key for another memory is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with DELETE /v1/memories/{id} (the `DeleteMemory` operationId).
@@ -13117,6 +13283,8 @@ func (c *ClientWithResponses) DeleteMemoryWithResponse(ctx context.Context, id I
 }
 
 // GetMemoryWithResponse Read a memory's live revision
+//
+// Returns the live revision of a memory as a message with memory_id and revision set. A memory is a message on a channel of kind memory; its id is the sequence number of its first revision and stays the same through every edit. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. Side effects: moves the memory's access time to now (a memory's expiry counts from it). No idempotency key: reading again returns whatever revision is then live. Source: spec 3.2, Decision 95, ADR 0008.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13131,6 +13299,8 @@ func (c *ClientWithResponses) GetMemoryWithResponse(ctx context.Context, id IdPa
 
 // ListMemoryRevisionsWithResponse List a memory's revisions
 //
+// Lists every revision of a memory, oldest first by revision number, tombstoned ones included, each as a message with memory_id and revision set; the newest is the live one unless the memory was deleted. Needs read on the memory's channel (the channel ACL's read permission): without it 403 forbidden; an id with no revision at all, or whose channel lies outside a scoped caller's scope, is 404 not_found. Writes nothing and does not move the access time. No idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/memories/{id}/revisions (the `ListMemoryRevisions` operationId).
@@ -13144,6 +13314,8 @@ func (c *ClientWithResponses) ListMemoryRevisionsWithResponse(ctx context.Contex
 
 // EditMemoryWithBodyWithResponse Write a new revision of a memory
 //
+// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
+//
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/memories/{id}/revisions (the `EditMemory` operationId).
@@ -13156,6 +13328,8 @@ func (c *ClientWithResponses) EditMemoryWithBodyWithResponse(ctx context.Context
 }
 
 // EditMemoryWithResponse Write a new revision of a memory
+//
+// Writes the next revision of a memory: the live revision is tombstoned and its embedding dropped, and a new message is appended with the next revision number. Each of subject, content, type, metadata and tags that the request leaves out keeps the live value, and a present empty subject, type, metadata or tags clears it; an empty content is 400 validation (delete the memory instead), as is a request with no field, a merged message above max_message_kib and a memory on a task list. if_revision, when given, must equal the live revision (409 conflict otherwise); absent, the edit is not conditional. Needs write on the memory's channel (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose channel lies outside a scoped caller's scope, is 404 not_found. A request body above the server's limit is 413 payload_too_large. The sender's rate limit (send_messages_per_second and send_kib_per_second) answers 429 rate_limited with Retry-After. When a write inspector is configured the merged record is judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the old revision, appends the new one, moves the access time, wakes the watches of the channel's subscribers and queues the memory for embedding. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008, ADR 0013.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13350,7 +13524,7 @@ func (c *ClientWithResponses) ListTagSubscriptionsWithResponse(ctx context.Conte
 
 // SubscribeTagsWithBodyWithResponse Add a tag subscription: one AND set of tag patterns
 //
-// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13365,7 +13539,7 @@ func (c *ClientWithResponses) SubscribeTagsWithBodyWithResponse(ctx context.Cont
 
 // SubscribeTagsWithResponse Add a tag subscription: one AND set of tag patterns
 //
-// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
+// Adds one tag subscription: a set of 1 to 10 patterns, each a tag or a prefix followed by an asterisk. A message matches the set when each pattern matches one of its tags, and is then delivered to the caller's sessions when it is on a channel the caller may read (an unfiltered receive marks it with matched_tags; a channel the caller is subscribed to delivers it anyway), except that an agent is never delivered a memory channel's messages (the Deliver action, Decision 20). The patterns are lowercased, sorted and deduplicated, and the subscription counts messages after the newest sequence number at this moment. Adding a set that exists is a no-op. Any registered identity. Side effects: stores the set. Idempotency-Key: a repeat with the same key and body returns the first answer. Source: spec 4.4 and 4.5, ADR 0008.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13380,6 +13554,8 @@ func (c *ClientWithResponses) SubscribeTagsWithResponse(ctx context.Context, par
 
 // GetTaskWithResponse Read a task
 //
+// Returns one task with its derived members (blocked and open_blockers). Needs read on the task's list (the channel ACL's read permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. Side effects: a task found abandoned (in_progress with its lease run out or with an owner who has no live session) is first returned to pending with its owner and lease cleared and reclaimed_from and reclaimed_at set (ADR 0009, decisions of 2026-11-05), so the answer shows the reclaimed task, and the list's read time is recorded at most once an hour. No idempotency key: a read has nothing to repeat. Source: spec 3.2, Decision 90, ADR 0009.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/tasks/{id} (the `GetTask` operationId).
@@ -13392,6 +13568,8 @@ func (c *ClientWithResponses) GetTaskWithResponse(ctx context.Context, id IdPara
 }
 
 // UpdateTaskWithBodyWithResponse Update a task: absent fields stay unchanged
+//
+// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13406,6 +13584,8 @@ func (c *ClientWithResponses) UpdateTaskWithBodyWithResponse(ctx context.Context
 
 // UpdateTaskWithResponse Update a task: absent fields stay unchanged
 //
+// Changes a task; every member the request leaves out stays as it is. status is pending, in_progress or completed (anything else is 400 validation): a completed task needs the status pending before it can be in_progress again, an in_progress task always has an owner (400 validation), moving a task to in_progress while a blocker is open is 409 conflict, completed takes the caller as owner when there is none, and a move into pending clears the owner (unless the patch sets one) and the lease. An owner must be a registered identity the caller can see (404 not_found otherwise). leased_until must be in the future or 0, and only an in_progress task keeps a lease. metadata merges into the task's and a value that is empty removes its key. add_blocked_by and remove_blocked_by change the blockers, parent moves the task and before or after (not both) places it among its siblings. delete removes the task and cannot be combined with another change (400 validation); a task with subtasks cannot be deleted (409 conflict). A change that alters nothing writes nothing and answers the current task with replaced 0. There is no owner guard: anyone with write on the list may update any task, whoever owns it. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. An abandoned target is first returned to pending (ADR 0009), in the same transaction, so a refused patch undoes the reclaim. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. When a write inspector is configured and the patch changes the subject, description or metadata, the new values are judged first: a refusal is 422 inspection_rejected, and an inspector that cannot answer is 503 unavailable under inspection_on_failure closed. Side effects: tombstones the live revision and appends the next one and wakes the watches of the list's subscribers; a delete tombstones the task and appends no revision of its own. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with PATCH /v1/tasks/{id} (the `UpdateTask` operationId).
@@ -13418,6 +13598,8 @@ func (c *ClientWithResponses) UpdateTaskWithResponse(ctx context.Context, id IdP
 }
 
 // ClaimTaskWithBodyWithResponse Claim a task for the caller, optionally with a lease
+//
+// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -13432,6 +13614,8 @@ func (c *ClientWithResponses) ClaimTaskWithBodyWithResponse(ctx context.Context,
 
 // ClaimTaskWithResponse Claim a task for the caller, optionally with a lease
 //
+// Claims a task for the caller: the same as updateTask with owner set to the caller and status in_progress, plus the lease when the body names one. A pending task is taken; a completed task is 400 validation (reopen it with status pending first). A task that is in_progress and owned by another identity is taken over: there is no owner guard, anyone with write on the list may claim. A pending task with an open blocker is 409 conflict. leased_until must be in the future (400 validation). The claim clears reclaimed_from and reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. A request body above the server's limit is 413 payload_too_large and the sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the claimed one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key and body returns the first answer and writes nothing; the same key with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
+//
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/tasks/{id}/claim (the `ClaimTask` operationId).
@@ -13444,6 +13628,8 @@ func (c *ClientWithResponses) ClaimTaskWithResponse(ctx context.Context, id IdPa
 }
 
 // ReleaseTaskWithResponse Release a task: clear its owner and lease and return it to pending
+//
+// Releases a task: the same as updateTask with status pending, owner cleared and lease cleared, so a claimed task goes back to the list for anyone to claim. A release is not a reclaim and sets no reclaimed mark. A completed task is reopened as pending; a pending task with no owner changes nothing and answers with replaced 0. There is no owner guard: anyone with write on the list may release any task. Needs write on the list (the channel ACL's write permission): without it 403 forbidden; an id with no live revision, or whose list lies outside a scoped caller's scope, is 404 not_found, as is an id that is not a task. The sender's rate limit answers 429 rate_limited with Retry-After. Side effects: tombstones the live revision, appends the released one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat with the same key returns the first answer and writes nothing. Source: spec 3.2 and 3.4, Decision 81, ADR 0009.
 //
 // Returns a wrapper object for the known response body format(s).
 //

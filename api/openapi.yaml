@@ -740,9 +740,10 @@ paths:
         administrator when it is admins (403 forbidden). scope: only an
         administrator may name one, and it must exist and not be done (unknown or
         retired 404 not_found, done 409 conflict); otherwise the channel takes the
-        caller's scope. A scoped channel is named <scope>-<rest>, and nobody outside
-        scope S may take a name starting S- (400 validation). A name already taken
-        is 409 conflict. Side effects: inserts the channel and its ACL rows.
+        caller's scope. A scoped agent's channel names must be <scope>-<rest> (an
+        administrator who names a scope is exempt from the prefix), and no channel
+        outside scope S may take a name starting S- (400 validation). A name
+        already taken is 409 conflict. Side effects: inserts the channel and its ACL rows.
         Idempotency-Key: a repeat with the same key and body returns the first
         answer. Source: spec 3.2 and 4.6, ADR 0008, ADR 0011.
       parameters:
@@ -824,9 +825,9 @@ paths:
         not_found. The general channel cannot be renamed (400 validation), and a
         channel whose Slack bridge is live or being created is 409 conflict. The new
         name follows the creation rules: 1 to 128 bytes without a slash,
-        <scope>-<rest> for a scoped channel and never a name starting with another
-        scope's prefix (400 validation); a name another channel holds is 409
-        conflict. Side effects: changes the name. Idempotency-Key: a repeat with the
+        <scope>-<rest> for a scoped agent (an administrator is exempt from the
+        prefix) and never a name starting with another scope's prefix (400
+        validation); a name another channel holds is 409 conflict. Side effects: changes the name. Idempotency-Key: a repeat with the
         same key and body returns the first answer. Source: ADR 0008, ADR 0009, ADR
         0011.
       parameters:
@@ -1082,7 +1083,9 @@ paths:
         followed by an asterisk. A message matches the set when each pattern matches
         one of its tags, and is then delivered to the caller's sessions when it is on
         a channel the caller may read (an unfiltered receive marks it with
-        matched_tags; a channel the caller is subscribed to delivers it anyway). The
+        matched_tags; a channel the caller is subscribed to delivers it anyway),
+        except that an agent is never delivered a memory channel's messages (the
+        Deliver action, Decision 20). The
         patterns are lowercased, sorted and deduplicated, and the subscription counts
         messages after the newest sequence number at this moment. Adding a set that
         exists is a no-op. Any registered identity. Side effects: stores the set.
@@ -1489,6 +1492,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SearchResult"
+              example:
+                hits:
+                  - message:
+                      seq: 42
+                      channel: release-train
+                      sender: acme-coder-1
+                      sender_kind: agent
+                      session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+                      display: acme-coder-1/builder
+                      created_at: 1794096000000
+                      type: status
+                      subject: Build 42 is green
+                      content: Build 42 is green on main; deploying to staging.
+                      reply_to: 41
+                      metadata:
+                        build: "42"
+                      tags: [deploy-prod, build-42]
+                    score: 0
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1506,6 +1527,16 @@ paths:
       operationId: getMemory
       summary: "Read a memory's live revision"
       tags: [memories]
+      description: >-
+        Returns the live revision of a memory as a message with memory_id and
+        revision set. A memory is a message on a channel of kind memory; its id is the
+        sequence number of its first revision and stays the same through every edit.
+        Needs read on the memory's channel (the channel ACL's read permission): without
+        it 403 forbidden; an id with no live revision, or whose channel lies outside a
+        scoped caller's scope, is 404 not_found. Side effects: moves the memory's access
+        time to now (a memory's expiry counts from it). No idempotency key: reading
+        again returns whatever revision is then live. Source: spec 3.2, Decision 95,
+        ADR 0008.
       parameters:
         - $ref: "#/components/parameters/IdParam"
       responses:
@@ -1515,6 +1546,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Message"
+              example:
+                seq: 42
+                channel: release-notes
+                sender: acme-coder-1
+                sender_kind: agent
+                session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+                display: acme-coder-1/builder
+                created_at: 1794092400000
+                type: note
+                subject: Release notes 2026.11
+                content: "Release notes for 2026.11: build 42 is green on main."
+                memory_id: 42
+                revision: 1
+                tags: [release]
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1531,6 +1576,18 @@ paths:
       operationId: deleteMemory
       summary: "Delete a memory"
       tags: [memories]
+      description: >-
+        Deletes a memory: its live revision is tombstoned and its embedding and access
+        record are dropped (earlier revisions were tombstoned by the edits that replaced
+        them). Needs write on the memory's channel (the channel ACL's write
+        permission): without it 403 forbidden; an id with no live revision, or whose
+        channel lies outside a scoped caller's scope, is 404 not_found; an id on a task
+        list is 400 validation (tasks are deleted with updateTask). The caller's rate
+        limit counts one operation and no bytes: 429 rate_limited with Retry-After.
+        Side effects: tombstones the revision and removes its embedding; no
+        subscriber is woken. Idempotency-Key: a repeat with the same key and the same
+        memory returns 204 and deletes nothing more; the same key for another memory is
+        409 conflict. Source: spec 3.2 and 3.4, Decision 46, ADR 0008.
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -1558,6 +1615,14 @@ paths:
       operationId: listMemoryRevisions
       summary: "List a memory's revisions"
       tags: [memories]
+      description: >-
+        Lists every revision of a memory, oldest first by revision number, tombstoned
+        ones included, each as a message with memory_id and revision set; the newest
+        is the live one unless the memory was deleted. Needs read on the memory's
+        channel (the channel ACL's read permission): without it 403 forbidden; an id
+        with no revision at all, or whose channel lies outside a scoped caller's scope,
+        is 404 not_found. Writes nothing and does not move the access time. No
+        idempotency key: a read has nothing to repeat. Source: spec 3.2, ADR 0008.
       parameters:
         - $ref: "#/components/parameters/IdParam"
       responses:
@@ -1569,6 +1634,33 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Message"
+              example:
+                - seq: 42
+                  channel: release-notes
+                  sender: acme-coder-1
+                  sender_kind: agent
+                  session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+                  display: acme-coder-1/builder
+                  created_at: 1794092400000
+                  type: note
+                  subject: Release notes 2026.11
+                  content: "Release notes for 2026.11: build 42 is green on main."
+                  memory_id: 42
+                  revision: 1
+                  tags: [release]
+                - seq: 43
+                  channel: release-notes
+                  sender: acme-coder-1
+                  sender_kind: agent
+                  session: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
+                  display: acme-coder-1/builder
+                  created_at: 1794096000000
+                  type: note
+                  subject: Release notes 2026.11
+                  content: "Release notes for 2026.11: build 42 is green on main; staging deploy approved."
+                  memory_id: 42
+                  revision: 2
+                  tags: [release]
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1585,6 +1677,28 @@ paths:
       operationId: editMemory
       summary: "Write a new revision of a memory"
       tags: [memories]
+      description: >-
+        Writes the next revision of a memory: the live revision is tombstoned and its
+        embedding dropped, and a new message is appended with the next revision number.
+        Each of subject, content, type, metadata and tags that the request leaves out
+        keeps the live value, and a present empty subject, type, metadata or tags
+        clears it; an empty content is 400 validation (delete the memory instead), as
+        is a request with no field, a merged message above max_message_kib and a
+        memory on a task list. if_revision, when given, must equal the live revision
+        (409 conflict otherwise); absent, the edit is not conditional. Needs write on
+        the memory's channel (the channel ACL's write permission): without it 403
+        forbidden; an id with no live revision, or whose channel lies outside a scoped
+        caller's scope, is 404 not_found. A request body above the server's limit is
+        413 payload_too_large. The sender's rate limit (send_messages_per_second and
+        send_kib_per_second) answers 429 rate_limited with Retry-After. When a write
+        inspector is configured the merged record is judged first: a refusal is 422
+        inspection_rejected, and an inspector that cannot answer is 503 unavailable
+        under inspection_on_failure closed. Side effects: tombstones the old revision,
+        appends the new one, moves the access time, wakes the watches of the channel's
+        subscribers and queues the memory for embedding. Idempotency-Key: a repeat with
+        the same key and body returns the first answer and writes nothing; the same key
+        with a different body is 409 conflict. Source: spec 3.2 and 3.4, Decision 46,
+        ADR 0008, ADR 0013.
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -1627,6 +1741,26 @@ paths:
       operationId: createTask
       summary: "Create a task on a channel's task list"
       tags: [tasks]
+      description: >-
+        Adds a task to a task list (a channel of kind tasks; any other kind is 400
+        validation) and returns it. The task starts pending with no owner. The
+        subject is 1 to 256 characters without control characters. parent, when given,
+        and every id in blocked_by must be a live task of the same list (400
+        validation); duplicate blockers collapse. before or after (not both) names a sibling to
+        place the task next to, else it goes last among its parent's children. Needs
+        write on the list (the channel ACL's write permission): without it 403
+        forbidden; a list that does not exist or lies outside a scoped caller's scope
+        is 404 not_found. A request body above the server's limit is 413
+        payload_too_large, a task document above max_message_kib is 400 validation,
+        and the sender's rate limit answers 429 rate_limited with Retry-After. When a
+        write inspector is configured the subject, description and metadata are judged
+        first: a refusal is 422 inspection_rejected, and an inspector that cannot
+        answer is 503 unavailable under inspection_on_failure closed. Side effects:
+        appends the task as the first revision of a new memory on the list and wakes
+        the watches of its subscribers. Idempotency-Key: a repeat with the same key and
+        body returns the first task and creates nothing; the same key with a different
+        body is 409 conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90,
+        ADR 0009.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -1644,6 +1778,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Task"
+              example:
+                id: 42
+                channel: release-tasks
+                revision: 1
+                subject: Cut release 2026.11
+                description: Tag main, build the archives and publish them.
+                status: pending
+                parent: 41
+                rank: V
+                blocked_by: [40]
+                metadata:
+                  ticket: REL-142
+                blocked: false
+                updated_at: 1794092400000
+                updated_by: acme-coder-1
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1668,23 +1817,40 @@ paths:
       operationId: listTasks
       summary: "List a channel's tasks, optionally filtered by status or owner"
       tags: [tasks]
+      description: >-
+        Lists the live tasks of a task list in tree order (each parent followed by its
+        children, siblings by rank, then id) as summaries, optionally only those with
+        one status or one owner; the depth of a task counts the whole list even when a
+        filter hides its ancestors. An unknown status is 400 validation. Needs read on
+        the list (the channel ACL's read permission): without it 403 forbidden; a list
+        that does not exist or lies outside a scoped caller's scope is 404 not_found,
+        and a channel that is not a task list is 400 validation. The result is cut to
+        result_default_kib. Side effects: a task found abandoned (in_progress with its
+        lease run out or with an owner who has no live session) is first returned to
+        pending with its owner and lease cleared, the reclaimed_from and reclaimed_at
+        members marking it (ADR 0009, decisions of 2026-11-05), and the list's read
+        time is recorded at most once an hour. No idempotency key: a read has nothing
+        to repeat. Source: spec 3.2, Decision 90, ADR 0009.
       parameters:
         - $ref: "#/components/parameters/ChannelParam"
         - name: status
+          example: in_progress
           in: query
           required: false
           schema:
             type: string
             maxLength: 256
           description: >-
-            At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
+            Only tasks with this status; absent lists every status. At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
         - name: owner
+          example: acme-coder-1
           in: query
           required: false
           schema:
             type: string
             maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: >-
+            Only tasks owned by this identity; absent lists every owner. At most 128 bytes (the server counts bytes).
       responses:
         "200":
           description: Task summaries in tree order.
@@ -1694,6 +1860,15 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/TaskSummary"
+              example:
+                - id: 42
+                  subject: Cut release 2026.11
+                  status: in_progress
+                  owner: acme-coder-1
+                  parent: 41
+                  depth: 1
+                  leased_until: 1794182400000
+                  has_details: true
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1711,6 +1886,17 @@ paths:
       operationId: getTask
       summary: "Read a task"
       tags: [tasks]
+      description: >-
+        Returns one task with its derived members (blocked and open_blockers). Needs
+        read on the task's list (the channel ACL's read permission): without it 403
+        forbidden; an id with no live revision, or whose list lies outside a scoped
+        caller's scope, is 404 not_found, as is an id that is not a task. Side effects:
+        a task found abandoned (in_progress with its lease run out or with an owner who
+        has no live session) is first returned to pending with its owner and lease
+        cleared and reclaimed_from and reclaimed_at set (ADR 0009, decisions of
+        2026-11-05), so the answer shows the reclaimed task, and the list's read time is
+        recorded at most once an hour. No idempotency key: a read has nothing to repeat.
+        Source: spec 3.2, Decision 90, ADR 0009.
       parameters:
         - $ref: "#/components/parameters/IdParam"
       responses:
@@ -1720,6 +1906,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Task"
+              example:
+                id: 42
+                channel: release-tasks
+                revision: 2
+                subject: Cut release 2026.11
+                description: Tag main, build the archives and publish them.
+                status: in_progress
+                owner: acme-coder-1
+                parent: 41
+                rank: V
+                blocked_by: [40]
+                leased_until: 1794182400000
+                metadata:
+                  ticket: REL-142
+                blocked: false
+                updated_at: 1794096000000
+                updated_by: acme-coder-1
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1736,6 +1939,37 @@ paths:
       operationId: updateTask
       summary: "Update a task: absent fields stay unchanged"
       tags: [tasks]
+      description: >-
+        Changes a task; every member the request leaves out stays as it is. status
+        is pending, in_progress or completed (anything else is 400 validation): a
+        completed task needs the status pending before it can be in_progress again, an
+        in_progress task always has an owner (400 validation), moving a task to
+        in_progress while a blocker is open is 409 conflict, completed takes the caller
+        as owner when there is none, and a move into pending clears the owner (unless
+        the patch sets one) and the lease. An owner must be a registered identity the caller can
+        see (404 not_found otherwise). leased_until must be in the future or 0, and
+        only an in_progress task keeps a lease. metadata merges into the task's and a
+        value that is empty removes its key. add_blocked_by and remove_blocked_by
+        change the blockers, parent moves the task and before or after (not both)
+        places it among its siblings. delete removes the task and cannot be combined
+        with another change (400 validation); a task with subtasks cannot be deleted
+        (409 conflict). A change that alters nothing writes nothing and answers the
+        current task with replaced 0. There is no owner guard: anyone with write on the
+        list may update any task, whoever owns it. Needs write on the list (the channel
+        ACL's write permission): without it 403 forbidden; an id with no live revision,
+        or whose list lies outside a scoped caller's scope, is 404 not_found, as is an
+        id that is not a task. An abandoned target is first returned to pending (ADR
+        0009), in the same transaction, so a refused patch undoes the reclaim. A request
+        body above the server's limit is 413 payload_too_large and the sender's rate
+        limit answers 429 rate_limited with Retry-After. When a write inspector is
+        configured and the patch changes the subject, description or metadata, the new
+        values are judged first: a refusal is 422 inspection_rejected, and an inspector
+        that cannot answer is 503 unavailable under inspection_on_failure closed. Side
+        effects: tombstones the live revision and appends the next one and wakes the
+        watches of the list's subscribers; a delete tombstones the task and appends no
+        revision of its own. Idempotency-Key: a repeat with the same key and body returns the
+        first answer and writes nothing; the same key with a different body is 409
+        conflict. Source: spec 3.2 and 3.4, Decision 81, Decision 90, ADR 0009.
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -1753,6 +1987,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskUpdateResult"
+              example:
+                task:
+                  id: 42
+                  channel: release-tasks
+                  revision: 3
+                  subject: Cut release 2026.11
+                  description: Tag main, build the archives and publish them.
+                  status: completed
+                  owner: acme-coder-1
+                  parent: 41
+                  rank: V
+                  blocked_by: [40]
+                  metadata:
+                    ticket: REL-142
+                    release: "2026.11"
+                  blocked: false
+                  updated_at: 1794099600000
+                  updated_by: acme-coder-1
+                replaced: 45
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1778,6 +2031,24 @@ paths:
       operationId: claimTask
       summary: "Claim a task for the caller, optionally with a lease"
       tags: [tasks]
+      description: >-
+        Claims a task for the caller: the same as updateTask with owner set to the
+        caller and status in_progress, plus the lease when the body names one. A
+        pending task is taken; a completed task is 400 validation (reopen it with
+        status pending first). A task that is in_progress and owned by
+        another identity is taken over: there is no owner guard, anyone with write on
+        the list may claim. A pending task with an open blocker is 409 conflict. leased_until
+        must be in the future (400 validation). The claim clears reclaimed_from and
+        reclaimed_at (ADR 0009, decisions of 2026-11-05). Needs write on the list (the
+        channel ACL's write permission): without it 403 forbidden; an id with no live
+        revision, or whose list lies outside a scoped caller's scope, is 404 not_found,
+        as is an id that is not a task. A request body above the server's limit is 413
+        payload_too_large and the sender's rate limit answers 429 rate_limited with
+        Retry-After. Side effects: tombstones the live revision, appends the claimed
+        one and wakes the watches of the list's subscribers. Idempotency-Key: a repeat
+        with the same key and body returns the first answer and writes nothing; the
+        same key with a different body is 409 conflict. Source: spec 3.2 and 3.4,
+        Decision 81, ADR 0009.
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -1795,6 +2066,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskUpdateResult"
+              example:
+                task:
+                  id: 42
+                  channel: release-tasks
+                  revision: 2
+                  subject: Cut release 2026.11
+                  description: Tag main, build the archives and publish them.
+                  status: in_progress
+                  owner: acme-coder-1
+                  parent: 41
+                  rank: V
+                  blocked_by: [40]
+                  leased_until: 1794182400000
+                  metadata:
+                    ticket: REL-142
+                  blocked: false
+                  updated_at: 1794096000000
+                  updated_by: acme-coder-1
+                replaced: 42
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1820,6 +2110,20 @@ paths:
       operationId: releaseTask
       summary: "Release a task: clear its owner and lease and return it to pending"
       tags: [tasks]
+      description: >-
+        Releases a task: the same as updateTask with status pending, owner cleared and
+        lease cleared, so a claimed task goes back to the list for anyone to claim. A
+        release is not a reclaim and sets no reclaimed mark. A completed task is
+        reopened as pending; a pending task with no owner changes nothing and answers
+        with replaced 0. There is no owner guard: anyone with write on the list may
+        release any task. Needs write on the list (the channel ACL's write permission):
+        without it 403 forbidden; an id with no live revision, or whose list lies outside
+        a scoped caller's scope, is 404 not_found, as is an id that is not a task. The
+        sender's rate limit answers 429 rate_limited with Retry-After. Side effects:
+        tombstones the live revision, appends the released one and wakes the watches of
+        the list's subscribers. Idempotency-Key: a repeat with the same key returns the
+        first answer and writes nothing. Source: spec 3.2 and 3.4, Decision 81,
+        ADR 0009.
       parameters:
         - $ref: "#/components/parameters/IdParam"
         - $ref: "#/components/parameters/IdempotencyKeyParam"
@@ -1830,6 +2134,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskUpdateResult"
+              example:
+                task:
+                  id: 42
+                  channel: release-tasks
+                  revision: 3
+                  subject: Cut release 2026.11
+                  description: Tag main, build the archives and publish them.
+                  status: pending
+                  parent: 41
+                  rank: V
+                  blocked_by: [40]
+                  metadata:
+                    ticket: REL-142
+                  blocked: false
+                  updated_at: 1794099600000
+                  updated_by: acme-coder-1
+                replaced: 45
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -3558,7 +3879,7 @@ components:
           description: "The identity that created the channel; empty for general, which the server creates itself."
         scope:
           type: string
-          description: "The scope the channel belongs to; absent when it has none. A scoped channel is named <scope>-<rest>."
+          description: "The scope the channel belongs to; absent when it has none. A scoped agent's channels are named <scope>-<rest>; an administrator may create a channel in a scope under any name that does not take another scope's prefix."
         created_at:
           type: integer
           format: int64
@@ -3615,7 +3936,7 @@ components:
         scope:
           type: string
           maxLength: 128
-          description: "Administrators only: the scope the channel belongs to, which must exist and not be done, and whose prefix the name must start with. Absent means the creator's own scope, or none for an unscoped creator. At most 128 bytes (the server counts bytes)."
+          description: "Administrators only: the scope the channel belongs to, which must exist and not be done. A scoped creator's channel names must start with its scope's prefix <scope>-; an administrator's need not, but no channel outside the scope may take the prefix. Absent means the creator's own scope, or none for an unscoped creator. At most 128 bytes (the server counts bytes)."
     RenameChannelRequest:
       example:
         name: release-train-archive
@@ -3795,6 +4116,9 @@ components:
           type: boolean
           description: "True when semantic or both was asked for and could not be used (no embedding provider is configured, or it failed), so the hits are the text matches; absent otherwise."
     EditMemoryRequest:
+      example:
+        if_revision: 1
+        content: "Release notes for 2026.11: build 42 is green on main; staging deploy approved."
       type: object
       description: >-
         Every field is optional and an omitted field keeps the live revision's
@@ -3842,6 +4166,11 @@ components:
           maxItems: 10
           description: At most 10 items.
     EditResult:
+      example:
+        seq: 43
+        memory_id: 42
+        revision: 2
+        replaced: 42
       description: Identifies the new revision of an edited memory and the one it replaced.
       type: object
       required: [seq, memory_id, revision, replaced]
@@ -3849,49 +4178,88 @@ components:
         seq:
           type: integer
           format: int64
+          description: "The sequence number of the new revision's message, from the one counter of the whole server."
         memory_id:
           type: integer
           format: int64
+          description: "The memory's id; an edit never changes it."
         revision:
           type: integer
           format: int64
+          description: "The new revision number: the replaced revision's plus one."
         replaced:
           type: integer
           format: int64
+          description: "The sequence number of the revision this edit replaced, now tombstoned."
     Task:
-      description: A task as returned to callers, with its channel (the task list), status, owner, parent, rank, blockers and lease.
+      example:
+        id: 42
+        channel: release-tasks
+        revision: 3
+        subject: Cut release 2026.11
+        description: Tag main, build the archives and publish them.
+        status: in_progress
+        owner: acme-coder-1
+        parent: 41
+        rank: V
+        blocked_by: [40]
+        leased_until: 1794182400000
+        reclaimed_from: acme-builder
+        reclaimed_at: 1794092400000
+        metadata:
+          ticket: REL-142
+        blocked: true
+        open_blockers: [40]
+        updated_at: 1794096000000
+        updated_by: acme-coder-1
+      description: >-
+        A task as returned to callers, with its channel (the task list), status, owner,
+        parent, rank, blockers and lease. The example shows every member at once; in a
+        stored task reclaimed_from and reclaimed_at appear only on a pending task with
+        no owner.
       type: object
       required: [id, channel, revision, subject, status, rank, blocked, updated_at, updated_by]
       properties:
         id:
           type: integer
           format: int64
+          description: "The task's id: the sequence number of its first revision. It stays the same through every update and is the id the task operations take."
         channel:
           type: string
+          description: "The name of the task list (a channel of kind tasks) the task is on."
         revision:
           type: integer
           format: int64
+          description: "The task's revision number: 1 when created, plus one for every change stored, the server's own (a reclaim) included."
         subject:
           type: string
+          description: "The task's one-line title: 1 to 256 characters, no control characters."
         description:
           type: string
+          description: "The task's longer text; absent when empty."
         status:
           type: string
+          description: "pending, in_progress or completed. A new task is pending, a claim makes it in_progress, and a completed task needs the status pending before it can be in_progress again."
         owner:
           type: string
+          description: "The identity working on the task; absent while nobody owns it. An in_progress task always has one."
         parent:
           type: integer
           format: int64
+          description: "The id of the parent task, a task of the same list; absent for a task at the top of the list."
         rank:
           type: string
+          description: "The task's sort key among its siblings, the tasks with the same parent: siblings are ordered by rank, then id. Opaque; the server computes it from before, after and the existing ranks."
         blocked_by:
           type: array
           items:
             type: integer
             format: int64
+          description: "The ids of the tasks that must be completed before this one can start; absent when none. A blocker that was deleted stops counting and is dropped from the list on the task's next update."
         leased_until:
           type: integer
           format: int64
+          description: "When the owner's lease ends, in Unix milliseconds; absent when the task has none. Only an in_progress task keeps a lease, and a task whose lease has run out is abandoned."
         reclaimed_from:
           type: string
           description: "the owner the abandoned-task reclaim took the task from; present until the task is claimed, assigned or leaves pending"
@@ -3903,45 +4271,72 @@ components:
           type: object
           additionalProperties:
             type: string
+          description: "Free-form string pairs attached to the task; absent when none. An update merges into them."
         blocked:
           type: boolean
+          description: "True while at least one task in blocked_by is live and not completed."
         open_blockers:
           type: array
           items:
             type: integer
             format: int64
+          description: "The ids in blocked_by whose tasks are live and not completed; absent when none."
         updated_at:
           type: integer
           format: int64
+          description: "When the task's current revision was stored, in Unix milliseconds."
         updated_by:
           type: string
+          description: "The identity that stored the current revision; empty when the server did (a reclaim)."
     TaskSummary:
-      description: One row of a task list result.
+      example:
+        id: 42
+        subject: Cut release 2026.11
+        status: in_progress
+        owner: acme-coder-1
+        parent: 41
+        depth: 1
+        open_blockers: [40]
+        leased_until: 1794182400000
+        reclaimed_from: acme-builder
+        reclaimed_at: 1794092400000
+        has_details: true
+      description: >-
+        One row of a task list result. The example shows every member at once;
+        reclaimed_from and reclaimed_at appear only on a pending task with no owner.
       type: object
       required: [id, subject, status, depth]
       properties:
         id:
           type: integer
           format: int64
+          description: "The task's id."
         subject:
           type: string
+          description: "The task's one-line title."
         status:
           type: string
+          description: "pending, in_progress or completed."
         owner:
           type: string
+          description: "The identity working on the task; absent while nobody owns it."
         parent:
           type: integer
           format: int64
+          description: "The id of the parent task; absent for a task at the top of the list."
         depth:
           type: integer
+          description: "How many ancestors the task has: 0 at the top of the list. It is counted over the whole list, so it is the same whatever the filter hides."
         open_blockers:
           type: array
           items:
             type: integer
             format: int64
+          description: "The ids of the tasks blocking this one that are live and not completed; absent when none."
         leased_until:
           type: integer
           format: int64
+          description: "When the owner's lease ends, in Unix milliseconds; absent when the task has none."
         reclaimed_from:
           type: string
           description: "the owner the abandoned-task reclaim took the task from; present until the task is claimed, assigned or leaves pending"
@@ -3951,7 +4346,15 @@ components:
           description: "when the reclaim happened, unix ms"
         has_details:
           type: boolean
+          description: "True when the task has a description, metadata or blockers, which getTask returns; absent otherwise."
     TaskCreateRequest:
+      example:
+        subject: Cut release 2026.11
+        description: Tag main, build the archives and publish them.
+        parent: 41
+        blocked_by: [40]
+        metadata:
+          ticket: REL-142
       description: "Creates a task: subject, description, parent, a position relative to a sibling (before or after, mutually exclusive), blockers and metadata."
       type: object
       additionalProperties: false
@@ -3972,16 +4375,19 @@ components:
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "The id of the parent task, a live task of the same list (400 validation otherwise); absent or 0 puts the task at the top of the list."
         before:
           type: integer
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "The id of a sibling, a task with the same parent, to place the new task before (400 validation when it is not a sibling); not with after. Absent places the task last among its siblings."
         after:
           type: integer
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "The id of a sibling, a task with the same parent, to place the new task after (400 validation when it is not a sibling); not with before. Absent places the task last among its siblings."
         blocked_by:
           type: array
           items:
@@ -3990,7 +4396,7 @@ components:
             minimum: 0
             maximum: 9223372036854775807
           maxItems: 64
-          description: At most 64 items.
+          description: "The ids of live tasks of the same list that must be completed before this one can start (400 validation when one is not live). At most 64 items."
         metadata:
           type: object
           additionalProperties:
@@ -4001,6 +4407,10 @@ components:
           description: >-
             At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
     TaskPatch:
+      example:
+        status: completed
+        metadata:
+          release: "2026.11"
       description: "The task update input: absent fields are unchanged; before and after are mutually exclusive sibling ids."
       type: object
       additionalProperties: false
@@ -4008,12 +4418,11 @@ components:
         status:
           type: string
           maxLength: 256
-          description: >-
-            At most 256 code points. One of pending, in_progress, completed; any other value answers validation.
+          description: "The new status. At most 256 code points. One of pending, in_progress, completed; any other value answers validation."
         owner:
           type: string
           maxLength: 128
-          description: At most 128 bytes (the server counts bytes).
+          description: "The new owner, a registered identity; an empty string clears it. At most 128 bytes (the server counts bytes)."
         subject:
           type: string
           maxLength: 256
@@ -4028,16 +4437,19 @@ components:
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "Moves the task under this parent, a live task of the list other than the task itself or one of its descendants (400 validation otherwise); 0 moves it to the top of the list. Absent leaves the parent as it is."
         before:
           type: integer
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "The id of a sibling, a task with the task's parent, to move the task before (400 validation when it is not a sibling); not with after."
         after:
           type: integer
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "The id of a sibling, a task with the task's parent, to move the task after (400 validation when it is not a sibling); not with before."
         add_blocked_by:
           type: array
           items:
@@ -4046,7 +4458,7 @@ components:
             minimum: 0
             maximum: 9223372036854775807
           maxItems: 64
-          description: At most 64 items.
+          description: "Ids of live tasks of the list to add to the blockers. At most 64 items."
         remove_blocked_by:
           type: array
           items:
@@ -4055,12 +4467,13 @@ components:
             minimum: 0
             maximum: 9223372036854775807
           maxItems: 64
-          description: At most 64 items.
+          description: "Ids to remove from the blockers. At most 64 items."
         leased_until:
           type: integer
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "When the task's lease ends, in Unix milliseconds: the future, or 0 to clear it (400 validation otherwise). Only an in_progress task keeps a lease."
         metadata:
           type: object
           additionalProperties:
@@ -4068,11 +4481,24 @@ components:
             maxLength: 1024
             description: At most 1024 code points.
           maxProperties: 32
-          description: >-
-            At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points.
+          description: "Pairs to merge into the task's metadata; a pair whose value is empty removes that key. At most 32 keys; a key is at most 64 code points (the server enforces this, the validator cannot) and a value at most 1024 code points."
         delete:
           type: boolean
+          description: "True deletes the task; it cannot be combined with another member (400 validation) and is refused while the task has subtasks (409 conflict). False or absent does nothing."
     TaskUpdateResult:
+      example:
+        task:
+          id: 43
+          channel: release-tasks
+          revision: 1
+          subject: Draft the release notes
+          status: pending
+          rank: W
+          blocked: false
+          updated_at: 1794092400000
+          updated_by: acme-coder-1
+        replaced: 43
+        deleted: true
       description: "The result of a task update: the task, whether an earlier revision was replaced and whether the task was deleted."
       type: object
       required: [task, replaced]
@@ -4082,9 +4508,13 @@ components:
         replaced:
           type: integer
           format: int64
+          description: "The sequence number of the task revision this update replaced; 0 when the update changed nothing and wrote no revision."
         deleted:
           type: boolean
+          description: "True when the update deleted the task, in which case task is the task as it was; absent otherwise."
     ClaimTaskRequest:
+      example:
+        leased_until: 1794182400000
       description: Claims a task for the caller, optionally with a lease that runs until a time.
       type: object
       additionalProperties: false
@@ -4094,6 +4524,7 @@ components:
           format: int64
           minimum: 0
           maximum: 9223372036854775807
+          description: "When the claim's lease ends, in Unix milliseconds; it must be in the future (400 validation). Absent or 0 sets none: a task claimed from pending then has no lease, and a task already in_progress keeps the lease it has."
     Notice:
       description: "A server notice shown to administrators: its kind, message and the time it was set."
       type: object
