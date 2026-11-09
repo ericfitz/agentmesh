@@ -148,6 +148,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 - Goal is **partially** met:
   - ✅ Agents cannot become human: `register` refuses human names (`internal/core/identities/register.go:78-81`), `MarkHuman` refuses identities holding keys (`human.go:164-170`), and `sender_kind` and the `humans` group come from the stored kind, never from the request (`internal/core/append.go:23-25`; `internal/core/access/decide.go:277-285`).
   - ❌ OIDC: the exchange binds on `email` plus the `users` match and never checks `email_verified` (`internal/auth/token/external.go:249-316`; no occurrence in `internal/`). The provider subject is recorded only at first sign-in (`human.go:276-279`), so the race is lost by whoever signs in first. Proposed: require `email_verified: true` (or a per-issuer opt-out) and refuse a sign-in whose subject differs from a recorded one.
+  - ❌ OIDC key set: an `http` `jwks_uri` on a non-loopback host is accepted with a start-up warning only (`internal/server/config/config.go:337-347`), so an on-path attacker substitutes the provider's key set and signs provider tokens for any `users` email: the same harm as the unverified email, with no account at the provider needed (catalog 28).
   - ⚠️ Slack: inbound posts map the Slack profile email to a human through `human_bindings` and pin the Slack user on first use in `slack_users` (`internal/slackbridge/inbound.go:154-170, 199-243, 297-306`); bots, guests, external and deleted users are refused. Trust rests on the workspace's email integrity. Inbound metadata `slack_display_name` is unverified (`inbound.go:373-405`). Accepted dependency on the workspace administrator; should be stated in ADR 0009.
   - Design note: every human in `users` is an operator to every agent; there is no per-agent or per-channel notion of whose instructions count.
 
@@ -226,7 +227,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
   - ✅ Every outbound URL is operator configuration; no API input reaches one (`internal/server/config/config.go:100-106`).
   - ⚠️ Slack: bridged channels send subject, content, tags and sender name (`internal/slackbridge/format.go:265-308`); memory and task channels are not posted, but the scope canvas publishes task trees and memory contents (docs/ops/slack-bridge.md, "The scope canvas"). Bus-to-Slack posts are not inspected. Accepted by bridging, but the canvas exposure should be stated in ADR 0009.
   - ⚠️ Inspection webhook: receives the full record of every inspected write (docs/ops/inspection.md:24-37); https or loopback http only, no redirects (`config.go:352-367`; `internal/core/inspect/webhook.go:33-35`); authenticated by a static bearer only, with no request signing (`webhook.go:72-74`). Fails closed by default (`inspection_on_failure`).
-  - ❌ Embedding endpoint: message text goes to any absolute URL, `http` allowed (`config.go:299-305`), unlike the inspection URL rule. Proposed: apply the inspection URL rule (https, or http on loopback).
+  - ❌ Embedding endpoint: memory text, and the query text of every semantic search (`internal/core/search/service.go:42`), go to any absolute URL, `http` allowed (`config.go:299-305`), unlike the inspection URL rule. Proposed: apply the inspection URL rule (https, or http on loopback).
   - ❌ Postgres link: no TLS guidance, and the shipped compose file uses `sslmode=disable` (`deploy/docker-compose.yml:23`); every row crosses that hop.
 
 ---
@@ -293,7 +294,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 - ❌ Goal is **not** met:
   - Over budget (2048 MiB default), eviction is global and oldest first: idle task lists, idle memories, then messages older than 1 h (`internal/core/budget.go:30-37`; `maintenance/budget.go:71-177`). There is no per-identity quota.
-  - The limiter is per identity and per replica, in memory (`limiter.go:8-37`); in `open` mode one caller registers unlimited identities and multiplies it.
+  - The limiter is per identity and per replica, in memory (`limiter.go:8-37`): in `open` mode one caller registers unlimited identities and multiplies it (catalog 19), and every added replica multiplies each identity's budget again (catalog 29).
   - Request bodies up to about 1.06 MiB are buffered before authentication, and the HTTP server has timeouts but no connection or concurrency cap (`internal/server/server.go:136-190`; `serve.go:75-94`).
 
 ---
@@ -337,7 +338,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 | 10 | Scoped agent enumerates humans, admins and live sessions | I | identities, statuses | By design (ADR 0011) | Hide session ids from scoped agents | Low |
 | 11 | Slack scope canvas publishes memories and task trees | I | Slack bridge | Admin-only bridge creation | State in ADR 0009; option to disable the canvas | Medium |
 | 12 | Webhook authenticated by a static bearer only | S, T | inspection | https, no redirects, fail closed | Request signing (HMAC over body and time) | Medium |
-| 13 | Embedding endpoint over plain http | I | embeddings | Operator config only | Apply the inspection URL rule | Medium |
+| 13 | Embedding endpoint over plain http; it receives memory text and every semantic search query | I | embeddings | Operator config only | Apply the inspection URL rule | Medium |
 | 14 | Postgres traffic unencrypted | I, T | store link | None | Document `sslmode=verify-full`; warn on `disable` off loopback | Medium |
 | 15 | Bearers valid after reset-credential | E | tokens | Lifetime ceiling 86400 s; retire deletes | `jti` or per-identity revocation epoch | Medium |
 | 16 | Human admin flag persists after removal from `admins` | E | identities | Recomputed at sign-in | Recompute per request or on list change | Medium |
@@ -352,6 +353,11 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 | 25 | Vault provider allows http and `VAULT_SKIP_VERIFY` | S, I | key provider | Signature checked against the row's public key | Refuse both off loopback | Low |
 | 26 | Compromised replica controls all data and maintenance | E | replicas | Accepted (P04) | None | Accepted |
 | 27 | Injected `NOTIFY` | D | pgnotify | Hints only; malformed becomes catch-up | None | Accepted |
+| 28 | On-path attacker substitutes an `http` JWKS and forges provider tokens, posting as any human | S, E | OIDC exchange | Start-up warning; issuer, audience and algorithm allowlist | Refuse an `http` `jwks_uri` off loopback (with catalog 6) | High |
+| 29 | Per-replica limiter: each added replica multiplies every identity's write budget | D | limiter | Per-process token buckets | Shared limiter in the store, or a documented proxy quota | Medium |
+| 30 | Secrets supplied by environment variable (`AGENTMESH_SERVER_*` including the Postgres DSN, `inspection_api_key_env`, `embedding_api_key_env`, `VAULT_TOKEN`) are readable by other processes of the same user | I | configuration | `*_file` alternatives for the API keys | Prefer owner-only files; warn on secret-bearing environment configuration | Low |
+
+Rows 28 to 30 and the search-query part of row 13 were added after comparison with an independent threat model of the same tree (2026-11-08), which also found rows 1, 5 to 7, 9, 11 to 13, 15, 17 and 19. Row 30 is mostly dominated: a same-user process on the server host can also read the configuration and key files.
 
 ## ADR alignment
 
@@ -365,9 +371,9 @@ Each is a proposal for Eric; none changes a recorded decision without his approv
 1. **Verified email on OIDC sign-in** (catalog 3, SD2): require `email_verified`; refuse a sign-in whose provider subject differs from the recorded one. Priority: Critical.
 2. **Key set trust** (catalog 2, SD1): verification trusts only rows of the configured provider. Priority: High.
 3. **Open registration behind a proxy** (catalog 5, SD3): docs warning plus a start-up check. Priority: High.
-4. **Transport ADR** (catalog 6, SD3): record the plain-HTTP-behind-proxy decision and refuse `http` issuer and `jwks_uri` off loopback. Priority: High.
+4. **Transport ADR** (catalog 6 and 28, SD2, SD3): record the plain-HTTP-behind-proxy decision and refuse `http` issuer and `jwks_uri` off loopback. Priority: High.
 5. **Audit log** (catalog 17, SD7). Priority: Medium.
 6. **Bearer revocation and admin flag recomputation** (catalog 15 and 16, SD6). Priority: Medium.
-7. **Anonymous endpoint and storage DoS** (catalog 7, 18, 19, 20, SD8). Priority: Medium.
-8. **Outbound transport hygiene** (catalog 12, 13, 14, 25, SD5). Priority: Medium.
+7. **Anonymous endpoint and storage DoS** (catalog 7, 18, 19, 20, 29, SD8). Priority: Medium.
+8. **Outbound transport and secret hygiene** (catalog 12, 13, 14, 25, 30, SD5). Priority: Medium.
 9. **Error and oracle cleanup** (catalog 21, 22, 23, SD9). Priority: Low.
