@@ -122,6 +122,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
   - ❌ Store provider (the default): a reader takes the plaintext PEM and mints anything. This is an accepted, documented trade-off: "read access to the database equals the admin flag" (ADR 0004 signing keys addendum; ADR 0012; docs/ops/deploy.md:44).
   - ✅ External provider, read only: the row holds the public key and a reference; signing happens remotely, one `Sign` call per bearer (docs/ops/signing-keys.md:10, 94).
   - ❌ External provider, write: `Keyring.LoadKeys` trusts the public key of every `signing_keys` row whatever its provider (`internal/core/signingkeys/keyring.go:39-65`), so an inserted row with an attacker key verifies forged bearers. Proposed: verify only rows whose provider matches the configured one, or sign the key set with the provider key.
+  - ❌ Every provider, write: signing-key rows are one path among several. A writer can also set `identities.admin`, add a row to `identity_keys` for any agent (the server then issues a genuine bearer for that agent), bind an email in `human_bindings` or edit `access_refs`. Fixing the key rows alone does not meet the goal; the design for tamper-protected tables is pending (ADR 0012, key set trust addendum).
   - Also readable on a database read, whatever the provider: all content (no column encryption), human email bindings, Slack bindings, and `sessions.pending_token` in plaintext (schema `0001_initial.sql:97`). Enrollment and resume tokens are hashed.
 
 ---
@@ -148,7 +149,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 - Goal is **partially** met:
   - ✅ Agents cannot become human: `register` refuses human names (`internal/core/identities/register.go:78-81`), `MarkHuman` refuses identities holding keys (`human.go:164-170`), and `sender_kind` and the `humans` group come from the stored kind, never from the request (`internal/core/append.go:23-25`; `internal/core/access/decide.go:277-285`).
   - ✅ OIDC: the exchange refuses a provider token unless its `email_verified` claim is the JSON boolean `true` or the string `"true"`; absent, `false`, `"TRUE"`, numbers and `null` all refuse as `invalid_request` (`internal/auth/token/external.go:303, 326-337`; ADR 0002 verified email addendum). A provider that never sends the claim needs the per-issuer `trust_unverified_email: true`, which logs a start-up warning naming the entry (`internal/server/config/config.go:348-350`; docs/ops/configuration.md). The provider subject is recorded at first sign-in and a later different subject is refused (`internal/core/identities/human.go`, rule 4: the subject-pin half was already implemented).
-  - ❌ OIDC key set: an `http` `jwks_uri` on a non-loopback host is accepted with a start-up warning only (`internal/server/config/config.go:337-347`), so an on-path attacker substitutes the provider's key set and signs provider tokens for any `users` email: the same harm as the unverified email, with no account at the provider needed (catalog 28).
+  - ❌ OIDC key set: an `http` `jwks_uri` on a non-loopback host is accepted with a start-up warning only (`internal/server/config/config.go:337-347`), so an on-path attacker substitutes the provider's key set and signs provider tokens for any `users` email: the same harm as the unverified email, with no account at the provider needed (threat 28).
   - ⚠️ Slack: inbound posts map the Slack profile email to a human through `human_bindings` and pin the Slack user on first use in `slack_users` (`internal/slackbridge/inbound.go:154-170, 199-243, 297-306`); bots, guests, external and deleted users are refused. Trust rests on the workspace's email integrity. Inbound metadata `slack_display_name` is unverified (`inbound.go:373-405`). Accepted dependency on the workspace administrator; should be stated in ADR 0009.
   - Design note: every human in `users` is an operator to every agent; there is no per-agent or per-channel notion of whose instructions count.
 
@@ -294,7 +295,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 - ❌ Goal is **not** met:
   - Over budget (2048 MiB default), eviction is global and oldest first: idle task lists, idle memories, then messages older than 1 h (`internal/core/budget.go:30-37`; `maintenance/budget.go:71-177`). There is no per-identity quota.
-  - The limiter is per identity and per replica, in memory (`limiter.go:8-37`): in `open` mode one caller registers unlimited identities and multiplies it (catalog 19), and every added replica multiplies each identity's budget again (catalog 29).
+  - The limiter is per identity and per replica, in memory (`limiter.go:8-37`): in `open` mode one caller registers unlimited identities and multiplies it (threat 19), and every added replica multiplies each identity's budget again (threat 29).
   - Request bodies up to about 1.06 MiB are buffered before authentication, and the HTTP server has timeouts but no connection or concurrency cap (`internal/server/server.go:136-190`; `serve.go:75-94`).
 
 ---
@@ -322,7 +323,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 ---
 
-## Threat catalog (STRIDE)
+## Threats (STRIDE)
 
 | # | Threat | STRIDE | Component | Existing mitigation | Proposed mitigation | Risk |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -353,7 +354,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 | 25 | Vault provider allows http and `VAULT_SKIP_VERIFY` | S, I | key provider | Signature checked against the row's public key | Refuse both off loopback | Low |
 | 26 | Compromised replica controls all data and maintenance | E | replicas | Accepted (P04) | None | Accepted |
 | 27 | Injected `NOTIFY` | D | pgnotify | Hints only; malformed becomes catch-up | None | Accepted |
-| 28 | On-path attacker substitutes an `http` JWKS and forges provider tokens, posting as any human | S, E | OIDC exchange | Start-up warning; issuer, audience and algorithm allowlist | Refuse an `http` `jwks_uri` off loopback (with catalog 6) | High |
+| 28 | On-path attacker substitutes an `http` JWKS and forges provider tokens, posting as any human | S, E | OIDC exchange | Start-up warning; issuer, audience and algorithm allowlist | Refuse an `http` `jwks_uri` off loopback (with threat 6) | High |
 | 29 | Per-replica limiter: each added replica multiplies every identity's write budget | D | limiter | Per-process token buckets | Shared limiter in the store, or a documented proxy quota | Medium |
 | 30 | Secrets supplied by environment variable (`AGENTMESH_SERVER_*` including the Postgres DSN, `inspection_api_key_env`, `embedding_api_key_env`, `VAULT_TOKEN`) are readable by other processes of the same user | I | configuration | `*_file` alternatives for the API keys | Prefer owner-only files; warn on secret-bearing environment configuration | Low |
 
@@ -368,12 +369,12 @@ Rows 28 to 30 and the search-query part of row 13 were added after comparison wi
 
 Each is a proposal for Eric; none changes a recorded decision without his approval.
 
-1. **Verified email on OIDC sign-in** (catalog 3, SD2): done. The exchange requires `email_verified` (per-issuer opt-out `trust_unverified_email`), and a sign-in whose provider subject differs from the recorded one was already refused; see the ADR 0002 verified email addendum. Priority was Critical.
-2. **Key set trust** (catalog 2, SD1): verification trusts only rows of the configured provider. Priority: High.
-3. **Open registration behind a proxy** (catalog 5, SD3): docs warning plus a start-up check. Priority: High.
-4. **Transport ADR** (catalog 6 and 28, SD2, SD3): record the plain-HTTP-behind-proxy decision and refuse `http` issuer and `jwks_uri` off loopback. Priority: High.
-5. **Audit log** (catalog 17, SD7). Priority: Medium.
-6. **Bearer revocation and admin flag recomputation** (catalog 15 and 16, SD6). Priority: Medium.
-7. **Anonymous endpoint and storage DoS** (catalog 7, 18, 19, 20, 29, SD8). Priority: Medium.
-8. **Outbound transport and secret hygiene** (catalog 12, 13, 14, 25, 30, SD5). Priority: Medium.
-9. **Error and oracle cleanup** (catalog 21, 22, 23, SD9). Priority: Low.
+1. **Verified email on OIDC sign-in** (threat 3, SD2): done. The exchange requires `email_verified` (per-issuer opt-out `trust_unverified_email`), and a sign-in whose provider subject differs from the recorded one was already refused; see the ADR 0002 verified email addendum. Priority was Critical.
+2. **Database writers take control** (threat 2, SD1): a database writer can add a signing-key row, set an identity's admin flag, register a login key for any agent, bind an email or edit the `admins` list. Eric (2026-11-09) chose to design tamper protection for the security-critical tables rather than fix the signing-key rows alone (ADR 0012, key set trust addendum). Priority: High.
+3. **Open registration behind a proxy** (threat 5, SD3): docs warning plus a start-up check. Priority: High.
+4. **Transport ADR** (threats 6 and 28, SD2, SD3): record the plain-HTTP-behind-proxy decision and refuse `http` issuer and `jwks_uri` off loopback. Priority: High.
+5. **Audit log** (threat 17, SD7). Priority: Medium.
+6. **Bearer revocation and admin flag recomputation** (threats 15 and 16, SD6). Priority: Medium.
+7. **Anonymous endpoint and storage DoS** (threats 7, 18, 19, 20, 29, SD8). Priority: Medium.
+8. **Outbound transport and secret hygiene** (threats 12, 13, 14, 25, 30, SD5). Priority: Medium.
+9. **Error and oracle cleanup** (threats 21, 22, 23, SD9). Priority: Low.

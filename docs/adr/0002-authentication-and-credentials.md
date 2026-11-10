@@ -769,7 +769,7 @@ Eric's decision 2026-10-27 (ADR 0015, decision 2): the MCP-only binary `agentbus
 
 ## Verified email addendum (2026-11-09)
 
-Threat model catalog 3 (`docs/security/threat-model-server.md`, SD2): the token exchange bound a human on the provider's `email` claim without checking that the provider had verified it, so an account at a permissive identity provider could claim a `users` entry. The second half of the proposed fix (refuse a sign-in whose provider subject differs from the recorded one) was already in place (`internal/core/identities/human.go`, rule 4).
+The unverified-email threat (threat 3 in `docs/security/threat-model-server.md`, SD2): the token exchange bound a human on the provider's `email` claim without checking that the provider had verified it, so an account at a permissive identity provider could claim a `users` entry. The second half of the proposed fix (refuse a sign-in whose provider subject differs from the recorded one) was already in place (`internal/core/identities/human.go`, rule 4).
 
 ### Decisions (Eric, 2026-11-09)
 

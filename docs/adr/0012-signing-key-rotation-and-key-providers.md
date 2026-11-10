@@ -96,3 +96,19 @@ The figures recorded in the task commits were 37527266, 44113426, 41254674, 5691
 
 - Sign through `azkeys` directly for Azure (open note 3): a departure from decision 1, left for Eric.
 - A key-file setting (`signing_key_file`): rejected in ADR 0002; the Store row stays the default.
+
+## Key set trust addendum (2026-11-09)
+
+The forged signing-key row threat (threat 2 in `docs/security/threat-model-server.md`, SD1): `Keyring.LoadKeys` trusts the public key of every `signing_keys` row, so a database writer can add a row with a key of their own and forge bearers. Filtering rows by `provider` alone does not help, since the writer also writes that column.
+
+### Decisions (Eric, 2026-11-09)
+
+1. **Three kinds of signing-key mode.** Database mode (the `store` provider: local and development use; database read access equals the admin flag, and a forged row is accepted there too); Kubernetes secret mode; and the external key services (AWS KMS, Cloud KMS, Azure Key Vault, Vault/OpenBao) for cloud-native deployments.
+2. **Tamper protection for the security-critical tables, not the key rows alone.** Signing-key rows are one of several paths a database writer has: they can also set an identity's admin flag, register a login key for any agent (the server then issues a genuine bearer), bind an email to a human or edit the `admins` and `users` lists. Confirming key rows with the key source (the first proposal) would close only the first. Eric chose a design that makes database write access stop equaling control, covering identities, login keys, human bindings, the admin and user lists, channel access lists and signing-key rows, over that standalone fix or accepting the risk. The design is a spec for Eric's review.
+3. **Kubernetes secret mode has both forms.** A mounted Secret volume (a directory of key files; also serves Compose secrets and systemd credentials; no API credential; rotation by the operator) and a Kubernetes API provider (one named Secret, `get` and `update` on that resourceName; the server adds keys on rotation, so scheduled rotation works; behind a build tag like the key-service backends).
+4. **Database mode stays the default** on every listener; the docs recommend another mode for a clustered or exposed server.
+5. **No environment-variable key source** (Claude's advice, not objected to): environment values leak through `docker inspect`, `/proc/<pid>/environ` and child processes.
+
+6. **One effort** (sequencing): the tamper protection and both Kubernetes secret providers are designed and land together; the push hold of 2026-11-08 waits on it.
+
+The URI schemes, the file layout, the Secret layout and the tamper-protection mechanism (where its key lives, which rows it covers, how replicas and rotation interact) are for the design spec.
