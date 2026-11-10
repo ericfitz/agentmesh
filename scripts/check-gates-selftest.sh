@@ -1415,7 +1415,7 @@ block_spec_bounds_fire() {
 # issue #32: make spec-lint (vacuum at fail-severity info) is a gate, every operation has a summary
 # (TestOperationShape), no route exists outside the document (TestNoRoutesOutsideTheDocument), the
 # m4 rule keeps internal/arazzotest out of both binaries and the runner's refusals each have a
-# fixture. Docker-free. Mutations 1 to 3 need the pinned vacuum on the PATH (the same as
+# fixture. Docker-free. Mutations 1 to 3 need vacuum 0.36.2 or newer on the PATH (the same as
 # make verify).
 # mutate_lint_block LABEL FILE FROM TO WANT: replace FROM (exactly once on one line of FILE) with TO,
 # run make spec-lint in the worktree and require exit non-zero and the text WANT in its log.
@@ -1519,7 +1519,7 @@ block_spec_validation_fires() {
 # example with no real host or token (TestSpecExamples, spec-lint's oas3-missing-example), and every
 # request example is replayed against the e2e server and its answer checked against the documented
 # response (TestRequestExamples). Docker-free; mutations 1 to 4, 6, 7, 8, 11 and 12 regenerate internal/gen, 5
-# needs the pinned vacuum on the PATH (the same as make verify), 8 to 10 run the e2e package (about 40 s).
+# needs vacuum 0.36.2 or newer on the PATH (the same as make verify), 8 to 10 run the e2e package (about 40 s).
 # Mutation 8 removes `parent: 41` from createTask's own 201 example (the operations carry inline
 # examples, so the Task schema example is not what the replay compares): `parent` is optional in
 # Task.required, so kin still accepts the example, and the live answer echoes the parent (row 38 sets it).
