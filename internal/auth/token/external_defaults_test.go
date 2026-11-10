@@ -13,7 +13,7 @@ func TestExternalDefaultsLiveInTheTokenPackage(t *testing.T) {
 	if got := e.EffectiveHumanLifetime(); got != 900*time.Second {
 		t.Errorf("default lifetime %v", got)
 	}
-	if got := e.Claims.orDefault(); got != (ClaimNames{Email: "email", Groups: "groups", Subject: "sub"}) {
+	if got := e.Claims.orDefault(); got != (ClaimNames{Email: "email", EmailVerified: "email_verified", Groups: "groups", Subject: "sub"}) {
 		t.Errorf("default claims %+v", got)
 	}
 	e.HumanLifetime = time.Hour

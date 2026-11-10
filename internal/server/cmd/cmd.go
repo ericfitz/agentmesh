@@ -297,12 +297,14 @@ func externalIssuers(cfg config.Config) []*token.External {
 			Name: i.Name, Issuer: i.Issuer, JWKSURI: i.JWKSURI, Audience: i.Audience,
 			Algorithms: algs,
 			Claims: token.ClaimNames{
-				Email:   i.Claims.Email,
-				Groups:  i.Claims.Groups,
-				Subject: i.Claims.Subject,
+				Email:         i.Claims.Email,
+				EmailVerified: i.Claims.EmailVerified,
+				Groups:        i.Claims.Groups,
+				Subject:       i.Claims.Subject,
 			},
-			HumanLifetime: time.Duration(i.HumanTokenLifetimeSeconds) * time.Second,
-			TTL:           time.Duration(cfg.JWKSRefreshSeconds) * time.Second,
+			TrustUnverifiedEmail: i.TrustUnverifiedEmail,
+			HumanLifetime:        time.Duration(i.HumanTokenLifetimeSeconds) * time.Second,
+			TTL:                  time.Duration(cfg.JWKSRefreshSeconds) * time.Second,
 		})
 	}
 	return out

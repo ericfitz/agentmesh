@@ -547,7 +547,7 @@ func TestBearerRefusesCorporateToken(t *testing.T) {
 	raw, err := jwt.Signed(sg).Claims(jwt.Claims{
 		Issuer: ext.Issuer, Subject: "sub-1", Audience: jwt.Audience{"agentmesh"}, ID: "j",
 		Expiry: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-	}).Claims(map[string]any{"email": "pat@corp.example"}).Serialize()
+	}).Claims(map[string]any{"email": "pat@corp.example", "email_verified": true}).Serialize()
 	if err != nil {
 		t.Fatal(err)
 	}

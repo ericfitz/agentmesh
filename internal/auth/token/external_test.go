@@ -132,7 +132,7 @@ func extToken(t *testing.T, k crypto.Signer, mut func(*jwt.Claims)) string {
 	if mut != nil {
 		mut(&c)
 	}
-	return extSign(t, k, kid, c, map[string]any{"email": "alice@corp.example"})
+	return extSign(t, k, kid, c, map[string]any{"email": "alice@corp.example", "email_verified": true})
 }
 
 // extSign signs c plus extra claims (a nil value drops the key).
@@ -165,6 +165,9 @@ func extTokenWith(t *testing.T, k crypto.Signer, extra map[string]any) string {
 	c := jwt.Claims{
 		Issuer: extIss, Subject: "idp-user-1", Audience: jwt.Audience{extAud}, ID: "j",
 		IssuedAt: jwt.NewNumericDate(t0), Expiry: jwt.NewNumericDate(t0.Add(time.Hour)),
+	}
+	if _, ok := extra["email_verified"]; !ok {
+		extra["email_verified"] = true // a nil value drops the claim (extSign)
 	}
 	return extSign(t, k, kid, c, extra)
 }
@@ -220,7 +223,7 @@ func TestExternalRS256(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, err := jwt.Signed(sg).Claims(jwt.Claims{Issuer: extIss, Subject: "idp-user-1", Audience: jwt.Audience{extAud},
-		Expiry: jwt.NewNumericDate(t0.Add(time.Hour))}).Claims(map[string]any{"email": "alice@corp.example"}).Serialize()
+		Expiry: jwt.NewNumericDate(t0.Add(time.Hour))}).Claims(map[string]any{"email": "alice@corp.example", "email_verified": true}).Serialize()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,6 +410,70 @@ func TestExternalNoEmailRefused(t *testing.T) {
 		if !errors.Is(err, ErrNoEmail) || !errors.Is(err, ErrInvalid) {
 			t.Errorf("%s: %v, want ErrNoEmail and ErrInvalid", name, err)
 		}
+	}
+}
+
+func TestExternalEmailVerified(t *testing.T) {
+	k := genKey(t, keys.EdDSA)
+	s := newJWKS(t, k)
+	cases := []struct {
+		name    string
+		v       any
+		trust   bool
+		refused bool
+	}{
+		{"bool true", true, false, false},
+		{"string true", "true", false, false},
+		{"absent", nil, false, true},
+		{"bool false", false, false, true},
+		{"string false", "false", false, true},
+		{"string TRUE", "TRUE", false, true},
+		{"string True", "True", false, true},
+		{"string padded", " true", false, true},
+		{"empty string", "", false, true},
+		{"number 1", 1, false, true},
+		{"null", json.RawMessage("null"), false, true},
+		{"array", []any{true}, false, true},
+		{"object", map[string]any{}, false, true},
+		{"trust absent", nil, true, false},
+		{"trust false", false, true, false},
+		{"trust string false", "false", true, false},
+	}
+	for _, c := range cases {
+		e := newExternal(s, &clock{t: t0})
+		e.TrustUnverifiedEmail = c.trust
+		extra := map[string]any{"email": "a@corp.example"}
+		extra["email_verified"] = c.v // nil: absent
+		f, err := e.Verify(context.Background(), extTokenWith(t, k, extra))
+		if c.refused {
+			if !errors.Is(err, ErrInvalid) || !errors.Is(err, ErrEmailUnverified) || errors.Is(err, ErrNoEmail) {
+				t.Errorf("%s: %v, want ErrInvalid and ErrEmailUnverified", c.name, err)
+			}
+			continue
+		}
+		if err != nil || f.Email != "a@corp.example" {
+			t.Errorf("%s: %+v, %v, want accepted", c.name, f, err)
+		}
+	}
+}
+
+func TestExternalEmailVerifiedCustomName(t *testing.T) {
+	k := genKey(t, keys.EdDSA)
+	s := newJWKS(t, k)
+	e := newExternal(s, &clock{t: t0})
+	e.Claims.EmailVerified = "mail_ok"
+	// The default name is ignored when a custom one is set.
+	_, err := e.Verify(context.Background(), extTokenWith(t, k, map[string]any{"email": "a@corp.example", "email_verified": true}))
+	if !errors.Is(err, ErrEmailUnverified) {
+		t.Errorf("default name honored: %v", err)
+	}
+	// The email_verified claim under the custom name only: false refuses, true accepts.
+	_, err = e.Verify(context.Background(), extTokenWith(t, k, map[string]any{"email": "a@corp.example", "mail_ok": false, "email_verified": true}))
+	if !errors.Is(err, ErrEmailUnverified) {
+		t.Errorf("custom false: %v", err)
+	}
+	if _, err = e.Verify(context.Background(), extTokenWith(t, k, map[string]any{"email": "a@corp.example", "mail_ok": "true"})); err != nil {
+		t.Errorf("custom true: %v", err)
 	}
 }
 

@@ -32,14 +32,19 @@ type Issuer struct {
 	// HumanTokenLifetimeSeconds is the lifetime of the human bearer minted
 	// for this issuer; 0 means 900.
 	HumanTokenLifetimeSeconds int `json:"human_token_lifetime_seconds"`
+	// TrustUnverifiedEmail skips the verified-email check for a provider that
+	// never sends the claim (ADR 0002 verified email addendum); default false.
+	TrustUnverifiedEmail bool `json:"trust_unverified_email"`
 }
 
-// IssuerClaims names the provider claims that carry the email, the groups and
-// the subject; "" means the default (email, groups, sub).
+// IssuerClaims names the provider claims that carry the email, its verified
+// flag, the groups and the subject; "" means the default (email,
+// email_verified, groups, sub).
 type IssuerClaims struct {
-	Email   string `json:"email"`
-	Groups  string `json:"groups"`
-	Subject string `json:"subject"`
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
+	Groups        string `json:"groups"`
+	Subject       string `json:"subject"`
 }
 
 // Config is the server configuration (Decision 85, spec 6.5).
@@ -340,6 +345,9 @@ func (c Config) Validate() error {
 func (c Config) Warnings() []string {
 	var w []string
 	for i, is := range c.Issuers {
+		if is.TrustUnverifiedEmail {
+			w = append(w, fmt.Sprintf("issuers: entry %d (%q): trust_unverified_email is true; tokens whose email the provider has not verified are accepted, so anyone who can register that email at the provider can claim its users entry", i, is.Name))
+		}
 		u, err := url.Parse(is.JWKSURI)
 		if err != nil || !strings.EqualFold(u.Scheme, "http") || loopbackHost(u.Hostname()) {
 			continue

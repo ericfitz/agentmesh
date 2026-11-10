@@ -147,7 +147,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 - Goal is **partially** met:
   - ✅ Agents cannot become human: `register` refuses human names (`internal/core/identities/register.go:78-81`), `MarkHuman` refuses identities holding keys (`human.go:164-170`), and `sender_kind` and the `humans` group come from the stored kind, never from the request (`internal/core/append.go:23-25`; `internal/core/access/decide.go:277-285`).
-  - ❌ OIDC: the exchange binds on `email` plus the `users` match and never checks `email_verified` (`internal/auth/token/external.go:249-316`; no occurrence in `internal/`). The provider subject is recorded only at first sign-in (`human.go:276-279`), so the race is lost by whoever signs in first. Proposed: require `email_verified: true` (or a per-issuer opt-out) and refuse a sign-in whose subject differs from a recorded one.
+  - ✅ OIDC: the exchange refuses a provider token unless its `email_verified` claim is the JSON boolean `true` or the string `"true"`; absent, `false`, `"TRUE"`, numbers and `null` all refuse as `invalid_request` (`internal/auth/token/external.go:303, 326-337`; ADR 0002 verified email addendum). A provider that never sends the claim needs the per-issuer `trust_unverified_email: true`, which logs a start-up warning naming the entry (`internal/server/config/config.go:348-350`; docs/ops/configuration.md). The provider subject is recorded at first sign-in and a later different subject is refused (`internal/core/identities/human.go`, rule 4: the subject-pin half was already implemented).
   - ❌ OIDC key set: an `http` `jwks_uri` on a non-loopback host is accepted with a start-up warning only (`internal/server/config/config.go:337-347`), so an on-path attacker substitutes the provider's key set and signs provider tokens for any `users` email: the same harm as the unverified email, with no account at the provider needed (catalog 28).
   - ⚠️ Slack: inbound posts map the Slack profile email to a human through `human_bindings` and pin the Slack user on first use in `slack_users` (`internal/slackbridge/inbound.go:154-170, 199-243, 297-306`); bots, guests, external and deleted users are refused. Trust rests on the workspace's email integrity. Inbound metadata `slack_display_name` is unverified (`inbound.go:373-405`). Accepted dependency on the workspace administrator; should be stated in ADR 0009.
   - Design note: every human in `users` is an operator to every agent; there is no per-agent or per-channel notion of whose instructions count.
@@ -328,7 +328,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | DB or backup reader mints bearers with the plaintext store key | S, E | signing keys | External key providers (ADR 0012) | Recommend a KMS provider for any shared or backed-up database in docs/ops | Critical |
 | 2 | DB writer inserts a signing key row that verification trusts | S, E | keyring | None | Trust only rows of the configured provider | High |
-| 3 | Unverified IdP email claims a `users` entry and posts as human (operator instruction to all agents) | S, E | OIDC exchange | `users` list match, first-sign-in subject pin | Require `email_verified`; refuse subject change | Critical |
+| 3 | Unverified IdP email claims a `users` entry and posts as human (operator instruction to all agents) | S, E | OIDC exchange | `users` list match, first-sign-in subject pin, `email_verified` required (per-issuer opt-out `trust_unverified_email`, warned at start) | Fixed (ADR 0002 verified email addendum) | Critical |
 | 4 | Slack account with a matching email posts as human | S | Slack bridge inbound | Bot, guest, external, team checks; first-use pin; Post needs write | Document trust in ADR 0009; consider pinning on Slack user id at bind time | High |
 | 5 | Open registration exposed through a reverse proxy | S, E | registration | `enrollment` default on non-loopback binds | Warn or switch default when `issuer` is not loopback | High |
 | 6 | Bearer or assertion sniffed on an HTTP hop | I, S | transport | Docs ask for a TLS proxy | Refuse `http` issuer and `jwks_uri` off loopback; ADR for the transport decision | High |
@@ -362,13 +362,13 @@ Rows 28 to 30 and the search-query part of row 13 were added after comparison wi
 ## ADR alignment
 
 - Aligned: SD4 and the scope rules follow ADR 0011 (one access check, decision 15 no task owner guard); SD1's store-provider status follows ADR 0004 (signing keys addendum) and ADR 0012; SD5's webhook follows ADR 0013; the Slack trust checks follow ADR 0009; token and assertion rules follow ADR 0002.
-- Gaps (security-relevant choices with no ADR): the transport decision (plain HTTP behind an operator's TLS proxy, `http` issuer accepted); audit logging; trusting `email` without `email_verified`; the Slack email-to-human trust and the scope canvas exposure (ADR 0009 does not state them); the operator instruction rule that any `sender_kind: human` message steers every agent.
+- Gaps (security-relevant choices with no ADR): the transport decision (plain HTTP behind an operator's TLS proxy, `http` issuer accepted); audit logging; the Slack email-to-human trust and the scope canvas exposure (ADR 0009 does not state them); the operator instruction rule that any `sender_kind: human` message steers every agent.
 
 ## Unmitigated threats for follow-up
 
 Each is a proposal for Eric; none changes a recorded decision without his approval.
 
-1. **Verified email on OIDC sign-in** (catalog 3, SD2): require `email_verified`; refuse a sign-in whose provider subject differs from the recorded one. Priority: Critical.
+1. **Verified email on OIDC sign-in** (catalog 3, SD2): done. The exchange requires `email_verified` (per-issuer opt-out `trust_unverified_email`), and a sign-in whose provider subject differs from the recorded one was already refused; see the ADR 0002 verified email addendum. Priority was Critical.
 2. **Key set trust** (catalog 2, SD1): verification trusts only rows of the configured provider. Priority: High.
 3. **Open registration behind a proxy** (catalog 5, SD3): docs warning plus a start-up check. Priority: High.
 4. **Transport ADR** (catalog 6 and 28, SD2, SD3): record the plain-HTTP-behind-proxy decision and refuse `http` issuer and `jwks_uri` off loopback. Priority: High.

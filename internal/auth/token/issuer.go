@@ -37,6 +37,9 @@ var (
 	// ErrNoEmail marks a provider token without a usable email claim; it is
 	// wrapped alongside ErrInvalid.
 	ErrNoEmail = errors.New("token: no email claim")
+	// ErrEmailUnverified marks a provider token whose email-verified claim is
+	// not true; it is wrapped alongside ErrInvalid.
+	ErrEmailUnverified = errors.New("token: email not verified")
 	// ErrJWKSUnavailable marks a provider key set that could not be fetched
 	// and left no usable key (the provider is down, not the token bad).
 	ErrJWKSUnavailable = errors.New("token: issuer key set unavailable")

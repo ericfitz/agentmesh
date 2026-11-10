@@ -414,3 +414,32 @@ func TestProviderRequestsAndIsolation(t *testing.T) {
 		t.Error("Requests exposes its backing slice")
 	}
 }
+
+// TestMintEmailVerifiedDefault: a token with an email claim carries
+// email_verified true unless the caller sets (or omits, with nil) the member.
+func TestMintEmailVerifiedDefault(t *testing.T) {
+	p := New(t, Options{Audience: "pai"})
+	claimsOf := func(raw string) map[string]any {
+		tok, err := jwt.ParseSigned(raw, []jose.SignatureAlgorithm{jose.RS256})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var all map[string]any
+		if err := tok.UnsafeClaimsWithoutVerification(&all); err != nil {
+			t.Fatal(err)
+		}
+		return all
+	}
+	if v := claimsOf(p.Mint(map[string]any{"email": "a@b"}))["email_verified"]; v != true {
+		t.Errorf("default email_verified = %v, want true", v)
+	}
+	if v := claimsOf(p.Mint(map[string]any{"email": "a@b", "email_verified": false}))["email_verified"]; v != false {
+		t.Errorf("explicit email_verified = %v, want false", v)
+	}
+	if _, ok := claimsOf(p.Mint(map[string]any{"email": "a@b", "email_verified": nil}))["email_verified"]; ok {
+		t.Error("nil email_verified present")
+	}
+	if _, ok := claimsOf(p.Mint(map[string]any{"sub": "x"}))["email_verified"]; ok {
+		t.Error("email_verified added without an email")
+	}
+}

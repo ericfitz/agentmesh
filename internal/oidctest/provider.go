@@ -144,7 +144,9 @@ func (p *Provider) BreakJWKS() { p.broken.Store(true) }
 
 // Mint signs a token with claims. It fills iss (the provider URL), aud
 // (Options.Audience), client_id (Options.ClientID, when set), iat and exp (five
-// minutes from now) unless claims has them; a member set to nil is omitted.
+// minutes from now) unless claims has them, and email_verified true when
+// claims has an email and no email_verified (as Dex and most providers send);
+// a member set to nil is omitted.
 func (p *Provider) Mint(claims map[string]any) string {
 	now := time.Now()
 	all := map[string]any{
@@ -155,6 +157,11 @@ func (p *Provider) Mint(claims map[string]any) string {
 	}
 	if p.opts.ClientID != "" {
 		all["client_id"] = p.opts.ClientID
+	}
+	if _, hasEmail := claims["email"]; hasEmail {
+		if _, set := claims["email_verified"]; !set {
+			all["email_verified"] = true
+		}
 	}
 	for k, v := range claims {
 		if v == nil {

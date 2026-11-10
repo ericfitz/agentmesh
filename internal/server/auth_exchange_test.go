@@ -199,6 +199,15 @@ func TestTokenExchangeRefusals(t *testing.T) {
 		{"no-email", 400, "invalid_request", func(f *fedEnv) url.Values {
 			return exchangeForm(f.prov.Mint(map[string]any{"sub": "g-1"}), nil)
 		}, nil},
+		{"email-unverified-false", 400, "invalid_request", func(f *fedEnv) url.Values {
+			return exchangeForm(f.prov.Mint(map[string]any{"sub": "g-1", "email": corpEric, "email_verified": false}), nil)
+		}, nil},
+		{"email-unverified-absent", 400, "invalid_request", func(f *fedEnv) url.Values {
+			return exchangeForm(f.prov.Mint(map[string]any{"sub": "g-1", "email": corpEric, "email_verified": nil}), nil)
+		}, nil},
+		{"email-unverified-string", 400, "invalid_request", func(f *fedEnv) url.Values {
+			return exchangeForm(f.prov.Mint(map[string]any{"sub": "g-1", "email": corpEric, "email_verified": "TRUE"}), nil)
+		}, nil},
 		{"jwks-down", 503, "temporarily_unavailable", func(f *fedEnv) url.Values { return exchangeForm(good(f), nil) },
 			func(f *fedEnv) { f.prov.BreakJWKS() }},
 		{"not-in-users", 400, exchangeDeniedCode, func(f *fedEnv) url.Values {
@@ -354,5 +363,16 @@ func TestTokenExchangeExpiresInFollowsMint(t *testing.T) {
 	_, body, m := f.post(exchangeForm(f.prov.Mint(map[string]any{"sub": "g-1", "email": corpEric}), nil))
 	if m["expires_in"] != token.DefaultHumanLifetime.Seconds() {
 		t.Fatalf("expires_in = %v, want the default (%s)", m["expires_in"], body)
+	}
+}
+
+// TestTokenExchangeTrustUnverifiedEmail: an issuer with TrustUnverifiedEmail
+// admits a token without a verified email; the default refuses it (ADR 0002
+// verified email addendum).
+func TestTokenExchangeTrustUnverifiedEmail(t *testing.T) {
+	f := newFedEnv(t, 0, func(e *token.External) { e.TrustUnverifiedEmail = true })
+	tok := f.prov.Mint(map[string]any{"sub": "g-1", "email": corpEric, "email_verified": nil})
+	if status, body, _ := f.post(exchangeForm(tok, nil)); status != 200 {
+		t.Fatalf("exchange without email_verified = %d %s, want 200 with the opt-out", status, body)
 	}
 }

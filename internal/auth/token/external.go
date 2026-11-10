@@ -38,7 +38,8 @@ type External struct {
 	Name                      string // the issuers entry name
 	Issuer, JWKSURI, Audience string
 	Algorithms                []jose.SignatureAlgorithm // nil: EdDSA, ES256, RS256
-	Claims                    ClaimNames                // empty members: email, groups, sub
+	Claims                    ClaimNames                // empty members: email, email_verified, groups, sub
+	TrustUnverifiedEmail      bool                      // true: skip the verified-email check (provider never sends the claim)
 	HumanLifetime             time.Duration             // lifetime of the human bearer minted for this issuer; 0: DefaultHumanLifetime (see EffectiveHumanLifetime)
 	Client                    *http.Client              // nil: a 10 s client
 	TTL                       time.Duration             // 0: 300 s
@@ -64,13 +65,17 @@ func (e *External) EffectiveHumanLifetime() time.Duration {
 	return DefaultHumanLifetime
 }
 
-// ClaimNames are the provider claims that carry the email, the groups and the
-// subject; an empty member means the default (email, groups, sub).
-type ClaimNames struct{ Email, Groups, Subject string }
+// ClaimNames are the provider claims that carry the email, its verified flag,
+// the groups and the subject; an empty member means the default (email,
+// email_verified, groups, sub).
+type ClaimNames struct{ Email, EmailVerified, Groups, Subject string }
 
 func (n ClaimNames) orDefault() ClaimNames {
 	if n.Email == "" {
 		n.Email = "email"
+	}
+	if n.EmailVerified == "" {
+		n.EmailVerified = "email_verified"
 	}
 	if n.Groups == "" {
 		n.Groups = "groups"
@@ -295,6 +300,9 @@ func (e *External) Verify(ctx context.Context, raw string) (Federated, error) {
 	if f.Email, _ = all[names.Email].(string); f.Email == "" {
 		return Federated{}, fmt.Errorf("%w: %w: %s claim is required", ErrInvalid, ErrNoEmail, names.Email)
 	}
+	if !e.TrustUnverifiedEmail && !emailVerified(all[names.EmailVerified]) {
+		return Federated{}, fmt.Errorf("%w: %w: %s claim must be true", ErrInvalid, ErrEmailUnverified, names.EmailVerified)
+	}
 	if f.Groups, err = groupsOf(all[names.Groups]); err != nil {
 		return Federated{}, invalid("%s claim: %v", names.Groups, err)
 	}
@@ -313,6 +321,20 @@ func (e *External) Verify(ctx context.Context, raw string) (Federated, error) {
 		}
 	}
 	return f, nil
+}
+
+// emailVerified reports whether an email-verified claim says verified: the
+// JSON boolean true or the exact string "true" (some providers send a string).
+// Absent, null and every other value are unverified (ADR 0002 verified email
+// addendum).
+func emailVerified(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		return x == "true"
+	}
+	return false
 }
 
 // groupsOf reads a groups claim: absent is nil, a string is one group, an

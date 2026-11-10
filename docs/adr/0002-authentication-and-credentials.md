@@ -766,3 +766,17 @@ Eric's decision 2026-10-27 (ADR 0015, decision 2): the MCP-only binary `agentbus
 - The path is never read from the repository file (item 8 holds: `.local/agentbus2.json` selects a profile only) and `config.json` has no field for it, so only the command line or the environment names it.
 - The file is read-only to agentbus2 (agent choice, ADR 0015 open note 4): `register -credential FILE` registers that key's public half and writes neither a credential file nor a pending file. It is refused with a `credential_process` profile, a local profile or a human sign-in.
 - The bearer cache is unchanged: `<data dir>/tokens/<profile>/<identity>.json`, used until 60 seconds before expiry, with one refresh on a 401.
+
+## Verified email addendum (2026-11-09)
+
+Threat model catalog 3 (`docs/security/threat-model-server.md`, SD2): the token exchange bound a human on the provider's `email` claim without checking that the provider had verified it, so an account at a permissive identity provider could claim a `users` entry. The second half of the proposed fix (refuse a sign-in whose provider subject differs from the recorded one) was already in place (`internal/core/identities/human.go`, rule 4).
+
+### Decisions (Eric, 2026-11-09)
+
+1. **Require a verified email, with a per-issuer opt-out.** `External.Verify` refuses a provider token unless its `email_verified` claim is verified; a missing claim refuses too. An `issuers` entry may set `trust_unverified_email: true` (default false) for a provider that never sends the claim (for example Entra ID v2 tokens without optional claims); the check is then skipped for that issuer, and the server logs a warning at start naming each such entry.
+2. **Verified values.** The JSON boolean `true` or the exact string `"true"` (AWS Cognito and some Okta and Auth0 setups send a string). Everything else refuses: `false`, `"false"`, `"TRUE"`, `1`, `null`, an absent claim.
+
+### Plan rulings (Claude, overrulable by Eric)
+
+- The claim name is configurable like the others: `claims.email_verified`, default `email_verified`.
+- The refusal is the existing invalid-token path (`ErrInvalid` wrapping a new `ErrEmailUnverified`), so the exchange answers `invalid_request` like a missing `email` claim, and the warn log names the reason.

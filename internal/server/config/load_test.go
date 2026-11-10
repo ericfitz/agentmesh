@@ -268,3 +268,28 @@ func TestBoolSettingExact(t *testing.T) {
 		t.Error("a JSON string accepted for a bool setting")
 	}
 }
+
+// TestLoadVerifiedEmailFields: claims.email_verified and trust_unverified_email
+// load from the file; a wrong type or a misspelled member is refused, and
+// trust_unverified_email defaults to false.
+func TestLoadVerifiedEmailFields(t *testing.T) {
+	const head = `{"sqlite":"x","issuers":[{"name":"n","issuer":"https://i","jwks_uri":"https://i/j","audience":"a"`
+	c, err := Load(writeFile(t, head+`,"claims":{"email_verified":"ev"},"trust_unverified_email":true}]}`), nil, nil)
+	if err != nil || c.Issuers[0].Claims.EmailVerified != "ev" || !c.Issuers[0].TrustUnverifiedEmail {
+		t.Fatalf("fields: %+v, %v", c.Issuers, err)
+	}
+	c, err = Load(writeFile(t, head+`}]}`), nil, nil)
+	if err != nil || c.Issuers[0].TrustUnverifiedEmail || c.Issuers[0].Claims.EmailVerified != "" {
+		t.Fatalf("defaults: %+v, %v", c.Issuers, err)
+	}
+	for name, body := range map[string]string{
+		"string trust":   head + `,"trust_unverified_email":"yes"}]}`,
+		"misspelled":     head + `,"trust_unverified_emails":true}]}`,
+		"number claim":   head + `,"claims":{"email_verified":3}}]}`,
+		"claims unknown": head + `,"claims":{"email_verifed":"x"}}]}`,
+	} {
+		if _, err := Load(writeFile(t, body), nil, nil); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

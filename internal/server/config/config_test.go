@@ -198,6 +198,21 @@ func TestWarnings(t *testing.T) {
 	}
 }
 
+// TestWarningsTrustUnverifiedEmail: each issuers entry that sets
+// trust_unverified_email is named in a start-up warning (cmd.Run logs every
+// Warnings line at warn level).
+func TestWarningsTrustUnverifiedEmail(t *testing.T) {
+	c := valid()
+	a, b := goodIssuer(), goodIssuer()
+	a.Issuer, a.Name = "https://a.example", "alpha"
+	b.Issuer, b.Name, b.TrustUnverifiedEmail = "https://b.example", "beta", true
+	c.Issuers = []Issuer{a, b}
+	w := c.Warnings()
+	if len(w) != 1 || !strings.Contains(w[0], "entry 1") || !strings.Contains(w[0], `"beta"`) || !strings.Contains(w[0], "trust_unverified_email") {
+		t.Errorf("warnings = %q, want one naming entry 1 and beta", w)
+	}
+}
+
 func TestCoreMapsDefaultACL(t *testing.T) {
 	c := valid()
 	c.DefaultACL = []ACLEntry{{"everyone", []string{"read"}}, {CreatorPlaceholder, []string{"read", "write", "admin"}}}

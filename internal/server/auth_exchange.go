@@ -112,6 +112,9 @@ func (a *api) tokenExchange(ctx context.Context, b *gen.TokenFormdataRequestBody
 	case errors.Is(err, token.ErrNoEmail):
 		return a.refuseExchange(ext.Name, oauthFail(http.StatusBadRequest, "invalid_request", "subject_token has no email claim"),
 			"no email claim", "")
+	case errors.Is(err, token.ErrEmailUnverified):
+		return a.refuseExchange(ext.Name, oauthFail(http.StatusBadRequest, "invalid_request", "subject_token email is not verified"),
+			"email not verified", "")
 	case err != nil:
 		return a.refuseExchange(ext.Name, oauthFail(http.StatusBadRequest, "invalid_request", "subject_token verification failed"),
 			"verification failed: "+err.Error(), "")
