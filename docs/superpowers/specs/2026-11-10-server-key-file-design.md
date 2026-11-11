@@ -1,3 +1,5 @@
+> **Superseded (Eric, 2026-11-11): this design was abandoned and none of it is to be implemented.** It is kept only as a record. See "Server key file design abandoned (2026-11-11)" in `docs/adr/0012-signing-key-rotation-and-key-providers.md` and the design that replaces it, `docs/adr/0019-certificate-hierarchy-and-signed-messages.md`.
+
 # Server key file: row MACs and sealed signing keys (design spec)
 
 ## 1. Status

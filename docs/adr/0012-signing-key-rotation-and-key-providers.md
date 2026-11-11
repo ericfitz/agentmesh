@@ -162,3 +162,9 @@ The first draft of the design spec (`docs/superpowers/specs/2026-11-10-server-ke
 A limit of decision 7, noted by the controller and not decided by Eric: two new databases created from one key file, or a database and a copy of it, share the database id, and nothing detects it.
 
 Plan rulings and the questions these decisions leave open are in the spec (its sections 4 and 11), not here; they are not Eric's decisions until he rules on them.
+
+## Server key file design abandoned (2026-11-11)
+
+**Decision (Eric, 2026-11-11):** the server key file design is abandoned. The ability to write to the database is accepted as the same privilege as being the administrator of the application, and that includes replicas and restores. The "Server key file addendum" and its "security review decisions" above, and the spec `docs/superpowers/specs/2026-11-10-server-key-file-design.md`, are superseded and kept only as a record; none of it is to be implemented.
+
+The work that replaces it has two subjects, still to be designed: (1) key storage and rotation strategy, and (2) provenance for human-initiated messages. The threat model (`docs/security/threat-model-server.md`, SD1 and threat 2) is to be rewritten to state the accepted risk.

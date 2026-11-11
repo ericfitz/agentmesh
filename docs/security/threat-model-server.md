@@ -100,30 +100,43 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 ---
 
-## SD1: A database reader or writer can mint bearers for any identity
+## SD1: A database reader or writer mints bearers, forges human messages or takes over administration
 
 **Criticality:** Critical
+
+Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key file design abandoned (2026-11-11)"; ADR 0019). The statements about today's code were checked against the tree at commit `dcdc943`. The mitigations marked "designed, not built" are those of ADR 0019 and its two specs (`docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md`, `docs/superpowers/specs/2026-11-11-signed-messages-design.md`); none of them is in the tree, and parts of them still wait on open questions listed there.
 
 ### Threat Model
 
 - Attacker can read the database or a backup of it (a leaked backup, a read-only reporting role, a SQL injection in another tenant of a shared Postgres).
-- Attacker can, in a second variant, write rows (a compromised Postgres role or a compromised replica).
-- Attacker does not hold the KMS or Vault credentials of the server's runtime role, and cannot run code in the server process.
+- Attacker can, in a second variant, write rows (a compromised Postgres role, a compromised replica, or a restore of a copy the attacker altered).
+- Attacker does not hold the KMS or Vault credentials of the server's runtime role, cannot read files on the server host, and cannot run code in the server process or read its memory.
 
 ### Security Goal
 
-- With an external key provider configured, read access to the database does not let the attacker mint a bearer.
-- With an external key provider configured, write access to the database does not let the attacker mint a bearer that the server accepts.
-- **Rationale:** Enforces P06 (minimized impact) and P04's boundary (database access should not equal host compromise); protects the signing key; harm if violated is impersonation of any agent, human or administrator, including posting `sender_kind: human` instructions to every agent.
+- Read access to the database or a backup does not give the attacker a key that mints bearers or signs messages.
+- Write access to the database does not make a key of the attacker's trusted, and does not let the attacker produce a message that clients accept as sent by a human who did not send it.
+- **Not a goal (accepted risk, Eric 2026-11-11):** keeping a database writer from administering the application. See the first item under Accepted Goal Status.
+- **Rationale:** Enforces P06 (minimized impact); protects the signing key and the human-sender authority; harm if violated is impersonation of any agent, human or administrator, including posting `sender_kind: human` instructions to every agent.
 
 ### Accepted Goal Status
 
-- Goal is **partially** met:
-  - ❌ Store provider (the default): a reader takes the plaintext PEM and mints anything. This is an accepted, documented trade-off: "read access to the database equals the admin flag" (ADR 0004 signing keys addendum; ADR 0012; docs/ops/deploy.md:44).
-  - ✅ External provider, read only: the row holds the public key and a reference; signing happens remotely, one `Sign` call per bearer (docs/ops/signing-keys.md:10, 94).
-  - ❌ External provider, write: `Keyring.LoadKeys` trusts the public key of every `signing_keys` row whatever its provider (`internal/core/signingkeys/keyring.go:39-65`), so an inserted row with an attacker key verifies forged bearers. Proposed: verify only rows whose provider matches the configured one, or sign the key set with the provider key.
-  - ❌ Every provider, write: signing-key rows are one path among several. A writer can also set `identities.admin`, add a row to `identity_keys` for any agent (the server then issues a genuine bearer for that agent), bind an email in `human_bindings` or edit `access_refs`. Fixing the key rows alone does not meet the goal; the design for tamper-protected tables is pending (ADR 0012, key set trust addendum).
+- **Accepted risk (Eric, 2026-11-11; ADR 0012 "Server key file design abandoned", ADR 0019 Decision 15):** the ability to write to the database is the same privilege as being the administrator of the application, and that includes replicas and restores. A writer can set `identities.is_admin` (schema `0001_initial.sql:26`), add a row to `identity_keys` for any agent (the server then issues a genuine bearer for that agent), bind an email in `human_bindings`, edit the `users` and `admins` lists in `access_refs`, edit any ACL, and alter or delete any content. This is P04's line: the database credential is protected like the administrator credential. The tamper protection for tables chosen on 2026-11-09 and the server key file design of 2026-11-10 were abandoned; nothing replaces them for this item.
+- Goal is **not met** today:
+  - ❌ Store provider (the default), read: a reader takes the plaintext PEM from `signing_keys.private_key_pem` and mints anything. Documented: "read access to the database equals the admin flag" (ADR 0004 signing keys addendum; ADR 0012; docs/ops/deploy.md:44).
+  - ✅ External provider, read: the row holds the public key and a reference; signing happens remotely, one `Sign` call per bearer (docs/ops/signing-keys.md:10, 94).
+  - ❌ Any provider, write: `Keyring.LoadKeys` trusts the public key of every `signing_keys` row whatever its provider (`internal/core/signingkeys/keyring.go:39-63`), so an inserted row with an attacker key verifies forged bearers (threat 2).
+  - ❌ Write, messages: `sender_kind` is copied from the sender's identity row when a message is written (`internal/core/messaging/send.go:144`) and read back from the message row on delivery (`internal/core/convert.go:46`). A writer who inserts or edits a message row with `sender_kind = 'human'` produces an operator instruction for every agent that reads it, and no client can tell.
   - Also readable on a database read, whatever the provider: all content (no column encryption), human email bindings, Slack bindings, and `sessions.pending_token` in plaintext (schema `0001_initial.sql:97`). Enrollment and resume tokens are hashed.
+- **Designed, not built** (ADR 0019):
+  - Keys (spec 1): a root certificate pinned in the server's configuration and on each client; one intermediate key per installation, in a file or a key service; one signing key per server process, held in memory and certified for a few days. No private key and no trusted public key is in the database: a reader finds no key, and a certificate row that does not chain to the pinned root is ignored. Revocation is by CRLs delivered inside ordinary responses.
+  - Messages (spec 2): the server signs every message before the insert and stores the signed blob; every client in server mode verifies every message and acts only on what the signature covers. The blob says a message is from a human only when the request's bearer came from the browser sign-in, or when the Slack bridge's check passed, and it names the email.
+  - Replay (spec 2): clients mark repeated and old human messages as history, using state kept outside the database.
+- **Would stay open once that is built**, each an accepted risk in ADR 0019:
+  - Everything in the first item above. In particular a writer can add an email to the `users` list, and whoever signs in with that email at the provider is then a human to every agent; the signature names the email but cannot say the person is an authorized operator.
+  - A writer can delete, hide or delay messages, bring back an earlier signed revision of a memory or task, and plant agent status text and server notice text.
+  - A writer can hide a revocation from clients that have not yet seen it, until the revoked certificate expires.
+  - A human message younger than the client's stale bound can be delivered again, unmarked, to a new session.
 
 ---
 
@@ -328,7 +341,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 | # | Threat | STRIDE | Component | Existing mitigation | Proposed mitigation | Risk |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | DB or backup reader mints bearers with the plaintext store key | S, E | signing keys | External key providers (ADR 0012) | Recommend a KMS provider for any shared or backed-up database in docs/ops | Critical |
-| 2 | DB writer inserts a signing key row that verification trusts | S, E | keyring | None | Trust only rows of the configured provider | High |
+| 2 | DB writer inserts a signing key row that verification trusts, or writes a message row marked `human` that agents take for an operator instruction | S, E, T | keyring, messages | None today. Accepted and not mitigated (Eric 2026-11-11): a DB writer administers the application (admin flag, login keys, ACLs, `users` and `admins` lists), replicas and restores included | Designed, not built (ADR 0019): no key is trusted because of a row (bearers and messages verify by a certificate chain to a pinned root), the server signs each message before the insert, and clients verify before use | High |
 | 3 | Unverified IdP email claims a `users` entry and posts as human (operator instruction to all agents) | S, E | OIDC exchange | `users` list match, first-sign-in subject pin, `email_verified` required (per-issuer opt-out `trust_unverified_email`, warned at start) | Fixed (ADR 0002 verified email addendum) | Critical |
 | 4 | Slack account with a matching email posts as human | S | Slack bridge inbound | Bot, guest, external, team checks; first-use pin; Post needs write | Document trust in ADR 0009; consider pinning on Slack user id at bind time | High |
 | 5 | Open registration exposed through a reverse proxy | S, E | registration | `enrollment` default on non-loopback binds | Warn or switch default when `issuer` is not loopback | High |
@@ -370,7 +383,7 @@ Rows 28 to 30 and the search-query part of row 13 were added after comparison wi
 Each is a proposal for Eric; none changes a recorded decision without his approval.
 
 1. **Verified email on OIDC sign-in** (threat 3, SD2): done. The exchange requires `email_verified` (per-issuer opt-out `trust_unverified_email`), and a sign-in whose provider subject differs from the recorded one was already refused; see the ADR 0002 verified email addendum. Priority was Critical.
-2. **Database writers take control** (threat 2, SD1): a database writer can add a signing-key row, set an identity's admin flag, register a login key for any agent, bind an email or edit the `admins` list. Eric (2026-11-09) chose to design tamper protection for the security-critical tables rather than fix the signing-key rows alone (ADR 0012, key set trust addendum). Priority: High.
+2. **Database writers take control** (threat 2, SD1): a database writer can add a signing-key row, set an identity's admin flag, register a login key for any agent, bind an email or edit the `admins` list. Eric's decisions of 2026-11-11 settle it in two parts. Accepted: the ability to write to the database is the same privilege as administering the application, replicas and restores included; the tamper protection for tables chosen on 2026-11-09 and the server key file design of 2026-11-10 are abandoned (ADR 0012, "Server key file design abandoned (2026-11-11)"). Designed, not built: a certificate hierarchy that keeps every key out of the database, and server-signed messages that clients verify, so that a writer can neither make a key trusted nor forge a human's message (ADR 0019). Priority: High.
 3. **Open registration behind a proxy** (threat 5, SD3): docs warning plus a start-up check. Priority: High.
 4. **Transport ADR** (threats 6 and 28, SD2, SD3): record the plain-HTTP-behind-proxy decision and refuse `http` issuer and `jwks_uri` off loopback. Priority: High.
 5. **Audit log** (threat 17, SD7). Priority: Medium.
