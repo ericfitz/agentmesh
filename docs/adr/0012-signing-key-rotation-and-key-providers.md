@@ -112,3 +112,21 @@ The forged signing-key row threat (threat 2 in `docs/security/threat-model-serve
 6. **One effort** (sequencing): the tamper protection and both Kubernetes secret providers are designed and land together; the push hold of 2026-11-08 waits on it.
 
 The URI schemes, the file layout, the Secret layout and the tamper-protection mechanism (where its key lives, which rows it covers, how replicas and rotation interact) are for the design spec.
+
+## Server key file addendum (2026-11-10)
+
+Supersedes decisions 1, 3 and 6 of the key set trust addendum where they differ. Eric asked for one mechanism, a reasonable threat model (no nation-state goals) and two or three documented configurations with their accepted risks, for four scenarios: (1) local testing, (2) a lab with local and remote agents, (3) production on-prem, (4) production in a cloud. The design spec is still to be written.
+
+### Decisions (Eric, 2026-11-10)
+
+1. **One optional server key file** (`server_key_file`), outside the database. It seals (encrypts) the `store` provider's private keys and puts a MAC on every protected row. No Kubernetes API provider: a Kubernetes Secret, Compose secret, systemd credential or plain file delivers it. **File only**: no cloud secret-store source (a later issue if asked).
+2. **Three configurations:** Local (no key file, the default; scenarios 1 and 2; database access equals control, accepted), Server (key file; scenarios 3 and 4), Server plus key service (key file plus `signing_key_uri`; the KMS backends stay as an option, Eric chose to keep them).
+3. **Optional, warn:** never required; a non-loopback listener without a key file logs a start-up warning and the health document's administrator tier reports it.
+4. **Messages are covered:** each message carries a MAC over channel, sender, sender_kind, seq and a content digest; a failing message is never delivered.
+5. **Rotation and rollback, seq epochs:** the key file holds several keys (one `current`). `resign` re-signs only the security rows and re-seals the private keys under the current key, then writes an epoch row per other key, `(key id, max seq)`, signed by the current key. A retired key is valid for messages with seq at most S and for no security row; a non-current key without an epoch row is valid until `resign` runs (mixed replicas during a roll). Rotation never rewrites messages. Bounded by seq, not time, because delivery follows seq and a forger can backdate a timestamp.
+6. **Key file format:** one JSON file, `{"version":1,"current":"k2","keys":{"k1":"<base64>","k2":"<base64>"}}`.
+7. **Turning it off is unsupported:** once sealed, the database needs the key (pre-release rule, no conversion path).
+8. **Covered tables** (approved): identities, identity_keys, human_bindings, access_refs, channels, channel_acl, signing_keys, enrollment_tokens, slack_users, bridges, messages and a new integrity_epochs table; a failing row is dropped as absent, logged and counted; the check lives in `internal/store/sqlstore` behind a `store.Integrity` port.
+9. **Two columns** (`mac`, `mac_key`), not a prefixed string or a context table; the algorithm comes from the key file only, never from the database; the key id is part of the MAC input.
+10. **No URL references in key rows:** `signing_keys` keeps `provider` and `provider_ref` under the configured provider; `identity_keys` keeps the public key inline; agents fetch their own private keys through `credential_process` or a key file.
+11. **Slack email-to-human trust (threat 4) stays a separate issue**, outside this effort.
