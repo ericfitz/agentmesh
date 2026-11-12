@@ -1,6 +1,6 @@
 # ADR 0019: Certificate hierarchy and signed messages
 
-Status: Accepted (Eric, 2026-11-11, human-made): Decisions 1 to 20 below. The plan rulings are not Eric's decisions; he may overrule any of them. One open question remains (Open question 28). Designed, not built.
+Status: Accepted (Eric, 2026-11-11, human-made): Decisions 1 to 21 below. The plan rulings are not Eric's decisions; he may overrule any of them. No open question remains. Eric approved both specs on 2026-11-11. Designed, not built.
 
 The design is in two specs: `docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md` (spec 1, the hierarchy, shippable alone) and `docs/superpowers/specs/2026-11-11-signed-messages-design.md` (spec 2, signed messages, which depends on spec 1).
 
@@ -18,7 +18,7 @@ Two points of the outline were later changed by Eric himself: clients get the ro
 
 ## Decisions (Eric, 2026-11-11, human-made)
 
-Decisions 1 to 15 were made in the design session. Decisions 16 to 20 are his rulings, the same day, on open questions the first draft of the specs (commit `d3f5b56`) raised.
+Decisions 1 to 15 were made in the design session. Decisions 16 to 20 are his rulings, the same day, on open questions the first draft of the specs (commit `d3f5b56`) raised. Decision 21 is his ruling on Open question 28, which the second draft raised.
 
 1. **Human assertion.** The server signs sender kind `human` only when the request's bearer carries a human claim, and only the OIDC browser sign-in exchange sets that claim. The identity row's kind is never consulted for it.
 2. **Slack-origin humans.** The signed blob carries `origin=slack` with the Slack user id, the email Slack reported and the Slack timestamp. `origin=api` carries the sign-in claim (the signed-in email). Clients treat both as human and can show which.
@@ -40,10 +40,11 @@ Decisions 1 to 15 were made in the design session. Decisions 16 to 20 are his ru
 18. **The `users` list is database state; accepted.** (Open question 27, option A.) Whoever can sign in as a human is a human to every agent. The signed email is shown in the MCP receive result and in the TUI.
 19. **Clients get the root, the chain and the CRLs from the discover document**, not from registration or token responses. (Open questions 1 and 2; this changes the first draft's recommendation and the outline's "at registration".) A client with no pinned root pins from discover on first contact and stores it in `<config dir>/trust/<profile>/`. A different root later is an error until `-accept-new-root`. HTTPS is required by default for a server profile; a client configuration override switch, for local testing, disables the HTTPS requirement. Registration and token responses keep their current shapes.
 20. **The server stops a Slack message from being ingested twice.** (Open question 23; this changes the first draft's recommendation to a third option.) Before ingesting, the bridge looks for a verified stored message carrying the same signed Slack timestamp in that channel and skips the Slack message when it finds one. Clients keep no memory of Slack timestamps. Eric accepted the limit: a writer who also deletes those rows gets them ingested again, and the `stale` mark is the remaining bound.
+21. **A task update says when it replaces the whole document.** (Open question 28, option B.) The task patch gains `replace: true` and is then the whole document: fields it does not give take creation's values, `add_blocked_by` is the whole blocked-by list, `remove_blocked_by` must be empty, the position is `before`, `after` or the end of the siblings, and the lease and the reclaimed mark are cleared. The task keeps its id. Not taken: inferring a replacement from an update that sets every field (A), and no replacement for tasks, only delete and create again with a new id (C).
 
 ## Plan rulings Eric approved with the design sections (2026-11-11)
 
-Each was proposed during the design session and approved by Eric as part of a design section. They are not among the twenty decisions, and he may overrule any of them. Where a later decision of his changed one, the item says so.
+Each was proposed during the design session and approved by Eric as part of a design section. They are not among the twenty-one decisions, and he may overrule any of them. Where a later decision of his changed one, the item says so.
 
 Names:
 
@@ -169,15 +170,9 @@ Eric has not decided these. Each is a proposal he may overrule.
 
 Until the specs are implemented the code is as ADR 0012 and ADR 0004 describe it, and `docs/ops/signing-keys.md` stays as it is; it is rewritten with spec 1's implementation.
 
-## Open question for Eric
+## Open questions
 
-**Open question 28** (spec 2, section 12): how a task update supplies the whole document, which Decision 17 needs. A memory edit can give every field; a task patch changes the blocked-by list and the position only relative to the stored document (`internal/bus/tasks.go:68-84`).
-- A. Infer it from an update that sets every field.
-- B. An explicit `replace: true` on the task patch; the task keeps its id.
-- C. No replacement for tasks: delete and create again, losing the id.
-- Recommendation: B. Spec 2 is written against it.
-
-The first draft's Open questions 1 to 27 are all settled: by Decisions 16 to 20, or as the plan rulings listed above.
+None. The first draft's Open questions 1 to 27 are settled by Decisions 16 to 20 or as the plan rulings listed above; the second draft's Open question 28 by Decision 21.
 
 ## Alternatives not taken
 

@@ -2,15 +2,15 @@
 
 ## 1. Status
 
-- Second draft, 2026-11-11. The first draft is commit `d3f5b56`; this one folds in Eric's rulings of 2026-11-11 on that draft's open questions. Nothing here is built.
+- Approved by Eric, 2026-11-11 (second draft plus Decision 21). The first draft is commit `d3f5b56`; the second folds in Eric's rulings of 2026-11-11 on that draft's open questions. Nothing here is built.
 - This is spec 1 of 2. Spec 2, `docs/superpowers/specs/2026-11-11-signed-messages-design.md`, puts signed messages on top of this hierarchy. Spec 1 ships alone (Decision 13): it moves the server's signing keys out of the database and makes bearers verify by a certificate chain instead of by database rows.
 - The record of decisions is ADR 0019 (`docs/adr/0019-certificate-hierarchy-and-signed-messages.md`).
 - It replaces the abandoned server key file design (`docs/superpowers/specs/2026-11-10-server-key-file-design.md`; ADR 0012, "Server key file design abandoned (2026-11-11)").
 - Labels used below:
-  - **(Eric 2026-11-11, Decision N)**: one of Eric's twenty decisions of 2026-11-11, numbered as in ADR 0019. Decisions 16 to 20 are his rulings on the first draft's open questions.
+  - **(Eric 2026-11-11, Decision N)**: one of Eric's twenty-one decisions of 2026-11-11, numbered as in ADR 0019. Decisions 16 to 20 are his rulings on the first draft's open questions, Decision 21 his ruling on the second draft's Open question 28.
   - **(plan ruling)**: a proposal made while writing the design. Eric approved the ones that come from the three design sections of 2026-11-11 as part of those sections. The others are not his decisions, and he may overrule any of them.
   - **Ruling N**: the plan ruling on what the first draft called Open question N. Section 11 lists them (3, 4, 6 to 13 and 24 here; 14 to 16, 18 to 22, 25 and 26 are in spec 2) with the alternative not taken. They are not Eric's decisions.
-- This spec has no open question. Spec 2 has one (Open question 28).
+- Neither spec has an open question.
 - Every statement about today's code was checked against the tree at commit `d3f5b56` and carries a `path:line` citation.
 
 ## 2. What this changes, in short

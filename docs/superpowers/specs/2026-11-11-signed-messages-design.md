@@ -2,14 +2,13 @@
 
 ## 1. Status
 
-- Second draft, 2026-11-11. The first draft is commit `d3f5b56`; this one folds in Eric's rulings of 2026-11-11 on that draft's open questions. Nothing here is built.
+- Approved by Eric, 2026-11-11 (second draft plus Decision 21). The first draft is commit `d3f5b56`; the second folds in Eric's rulings of 2026-11-11 on that draft's open questions. Nothing here is built.
 - This is spec 2 of 2. **It depends on spec 1**, `docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md`: the pinned root, the intermediate, the in-memory leaf, the CRLs, the trust bundle, the discover document and the client's trust store are defined there and are not repeated here. Spec 1 ships alone; this spec cannot (Decision 13).
 - The record of decisions is ADR 0019 (`docs/adr/0019-certificate-hierarchy-and-signed-messages.md`).
 - Labels, as in spec 1:
-  - **(Eric 2026-11-11, Decision N)**: one of Eric's twenty decisions of 2026-11-11, numbered as in ADR 0019. Decisions 16 to 20 are his rulings on the first draft's open questions.
+  - **(Eric 2026-11-11, Decision N)**: one of Eric's twenty-one decisions of 2026-11-11, numbered as in ADR 0019. Decisions 16 to 20 are his rulings on the first draft's open questions, Decision 21 his ruling on the second draft's Open question 28.
   - **(plan ruling)**: a proposal made while writing the design. It is not Eric's decision, and he may overrule it.
   - **Ruling N**: the plan ruling on what the first draft called Open question N. Section 11 lists them (14 to 16, 18 to 22, 25 and 26 here; 3, 4, 6 to 13 and 24 are in spec 1). They are not Eric's decisions.
-  - **Open question 28**: the one question this draft raises (section 12). The text is written against its recommendation and says so.
 - Every statement about today's code was checked against the tree at commit `d3f5b56` and carries a `path:line` citation.
 
 ## 2. What this changes, in short
@@ -147,7 +146,7 @@ A memory edit that leaves a field out copies it from the stored revision, and ev
 - **A base that does not verify** cannot be built upon. The write answers `conflict`, and the text names the reason: "the current revision does not verify (`revoked`); replace it whole or delete it", with the reason of section 4.10 in the brackets.
 - **A full replacement is still accepted**: a write that supplies the whole document builds on nothing, so it needs no verified base. This is also how content from a revoked period is written again (Decision 17): after a forced renewal, the operator or an agent writes the memory or task anew, and the new revision is signed by a live leaf with the writer as its sender.
   - A memory edit is a full replacement when it gives subject, content, type, metadata and tags (`internal/bus/memories.go:12-21`).
-  - A task update is a full replacement when it says so (Open question 28; written against Recommendation B): the patch carries `replace: true` and is then the whole document. Fields it does not give take the values a creation would give them, `add_blocked_by` is the whole blocked-by list and `remove_blocked_by` must be empty, the position comes from `before` or `after` or is the end of the siblings as on creation, and the lease and the reclaimed mark are cleared. The task keeps its id.
+  - A task update is a full replacement when it says so (Eric 2026-11-11, Decision 21): the patch carries `replace: true` and is then the whole document. Fields it does not give take the values a creation would give them, `add_blocked_by` is the whole blocked-by list and `remove_blocked_by` must be empty, the position comes from `before` or `after` or is the end of the siblings as on creation, and the lease and the reclaimed mark are cleared. The task keeps its id.
   - In both cases the new revision's number is the stored revision's number plus one. That number is read from the row; it orders revisions and carries no content.
 - **Deleting** a memory or a task is always allowed.
 - **The server's own task writes** (the reclaim, the sibling re-rank) skip a task whose current revision does not verify and log it. A claim or a release of such a task answers the same `conflict`.
@@ -179,7 +178,7 @@ The protocol version stays `1.0.0`.
 | `Message` | Gains `signed` (the compact JWS; on every message from a server), `channel_id` (the id of the channel the message is delivered on) and `certificate` (the signing leaf's certificate, base64 DER, on the first message of a response that names that leaf). Rulings 19 and 20 |
 | `Task` | Gains `signed` and `certificate` for the task's current revision (Ruling 18) |
 | `TaskSummary` | Unchanged: a list row is a server-made index, not a message (Ruling 18) |
-| The task update request | Gains `replace` (boolean, default false; Open question 28, Recommendation B) |
+| The task update request | Gains `replace` (boolean, default false; Decision 21) |
 | Responses with messages | `receive`, `history`, `search`, `getMemory`, `listMemoryRevisions`: unchanged shapes; the certificates ride in the messages (Ruling 20) |
 
 The plain members of `Message` stay on the wire (approved section 2: "then discard the unsigned copy"); the client drops them once the blob is verified. `matched_tags` is a note from the delivery about the receiver's own subscriptions; it is not signed and is passed through as a note (Ruling 19).
@@ -412,11 +411,6 @@ None of these is Eric's decision. Each stands as the first draft's recommendatio
 
 **Ruling 26: the inspection webhook keeps its shape.** `sender_kind` is the kind that will be signed; the origin is not sent. Not taken: adding `origin` as version 2 of the webhook contract (ADR 0013).
 
-## 12. Open question for Eric
+## 12. Open questions
 
-**Open question 28: how does a task update supply the whole document?**
-Decision 17 keeps "a full replacement that supplies the whole document" open as the way to write over a revision that does not verify. A memory edit can already give every field. A task patch cannot: it changes the blocked-by list by adding and removing, and the position relative to siblings, both starting from the stored document (`internal/bus/tasks.go:68-84`).
-- A. Infer it: an update that sets status, owner, subject, description, parent, lease and metadata counts as the whole document, with `add_blocked_by` read as the whole list.
-- B. Say it: the patch gains `replace: true`. Fields not given take creation's defaults, `add_blocked_by` is the whole list, `remove_blocked_by` must be empty, the position is `before`, `after` or the end, and the lease and the reclaimed mark are cleared. The task keeps its id.
-- C. No replacement for tasks: delete the task and create it again. Other tasks that name the old id as parent or blocker then point at nothing.
-- Recommendation: B. The intent is explicit, nothing is inferred from which fields happen to be present, and the id survives. The cost is one boolean on the wire and in `task_update`. Section 4.7 is written against B.
+None. Open question 28 (how a task update supplies the whole document) is settled by Decision 21, option B: an explicit `replace: true` on the task patch (section 4.7). Not taken: inferring a replacement from an update that sets every field (A), and delete and create again with a new id (C).
