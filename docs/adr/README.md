@@ -23,13 +23,14 @@ NNNN" to keep the two series apart.
 | [0009](0009-scopes-and-slack-bridge.md) | Scopes and the Slack bridge | Accepted (Eric, 2026-10-23) |
 | [0010](0010-server-health.md) | Server health | Accepted (agent proposal, ratified by Eric 2026-10-25) |
 | [0011](0011-one-access-check.md) | One access check | Accepted (Eric, 2026-10-25) |
-| [0012](0012-signing-key-rotation-and-key-providers.md) | Signing key rotation and key providers | Accepted (Eric, 2026-10-27); controller rulings pending his review |
+| [0012](0012-signing-key-rotation-and-key-providers.md) | Signing key rotation and key providers | Accepted (Eric, 2026-10-27); controller rulings pending his review; partly superseded by 0019 (not yet built) |
 | [0013](0013-write-inspection.md) | Write inspection | Accepted (Eric, 2026-10-27) |
 | [0014](0014-agent-status.md) | Agent status and history | Accepted (Eric, 2026-10-27) |
 | [0015](0015-mcp-only-client.md) | The MCP-only client | Accepted (Eric, 2026-10-27); open notes are agent choices |
 | [0016](0016-mcp-events.md) | MCP events (server-initiated notifications) | Accepted (Eric, 2026-10-27 and 2026-11-03); build deferred |
 | [0017](0017-rename-to-agentmesh.md) | Rename agentbus2 to agentmesh | Accepted (Eric, 2026-11-03) |
 | [0018](0018-api-fuzzing-with-cats.md) | API fuzzing with CATS | Accepted (Eric, 2026-11-06; decisions 1 to 3) |
+| [0019](0019-certificate-hierarchy-and-signed-messages.md) | Certificate hierarchy and signed messages | Accepted (Eric, 2026-11-11; decisions 1 to 20); plan rulings are not his; one open question; designed, not built |
 
 Decisions 60 (TUI in a later milestone), 61 (release tooling in the
 final milestone) and 87 (Scoop and winget in that tooling) are scheduling

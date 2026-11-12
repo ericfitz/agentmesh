@@ -1,6 +1,6 @@
 # ADR 0012: Signing key rotation and key providers
 
-Status: Accepted (Eric, 2026-10-27, decisions 1 to 12 below); the controller rulings in "Controller rulings" are pending Eric's review.
+Status: Accepted (Eric, 2026-10-27, decisions 1 to 12 below); the controller rulings in "Controller rulings" are pending Eric's review. Partly superseded by ADR 0019 (Eric, 2026-11-11; designed, not built): the Store-row provider and the Store as the registry of keys (decision 2 and the default of decision 1), the key set and its rotation (decisions 3, 5 and 7 to 11), the "Key set trust addendum" and the two server key file addenda. Decisions 4, 6 and 12 and the four backends stay. ADR 0019's "What this supersedes" has the detail. The code follows this ADR until ADR 0019 is implemented.
 
 Covers issues #6 (rotation) and #8 (key providers). The design is `docs/superpowers/specs/2026-10-27-signing-keys-design.md` (sections 4 and 5 are Eric's decisions); the plan is `docs/superpowers/plans/2026-10-27-signing-keys.md`; the operator guide is `docs/ops/signing-keys.md`.
 

@@ -1,8 +1,10 @@
 # ADR 0019: Certificate hierarchy and signed messages
 
-Status: Decisions 1 to 15 below are Accepted (Eric, 2026-11-11, human-made). The plan rulings are proposals Eric may overrule. Open questions 1 to 27 await his rulings; until he rules, the two specs are written against the recommendation for each. Nothing is built.
+Status: Accepted (Eric, 2026-11-11, human-made): Decisions 1 to 20 below. The plan rulings are not Eric's decisions; he may overrule any of them. One open question remains (Open question 28). Designed, not built.
 
 The design is in two specs: `docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md` (spec 1, the hierarchy, shippable alone) and `docs/superpowers/specs/2026-11-11-signed-messages-design.md` (spec 2, signed messages, which depends on spec 1).
+
+Partly supersedes ADR 0012 and the signing keys addendum of ADR 0004; see "What this supersedes".
 
 ## Context
 
@@ -12,7 +14,11 @@ Two earlier answers were recorded in ADR 0012 and are not being built: the key s
 
 Eric's outline of 2026-11-11, condensed: a root CA with a private key, which can be anything and is not used for TLS, with the root certificate pinned in the server's configuration and given to clients at registration. Each installation is an intermediate CA under the root: a "generate" step makes a private key (a file or a key service) and a certificate signing request, and the administrator returns the certificate. The signing key is a private key with a certificate the intermediate issued. CRLs for revocation, delivered in band. A validity window with two active certificates at all times, renewal at half the window, and failed renewals retried more often toward the end. A server API forces immediate renewal with revocation of the previous certificate. No signing of data in the database: the server signs the message before the insert and stores the signed blob, with fields still extracted into columns for filtering and search. The client validates before acting; an invalid signature is an error and the client does not act. No keys in the database and no dependence on database integrity: assurance moves to the server before the insert and to the client after receipt and before use.
 
+Two points of the outline were later changed by Eric himself: clients get the root from the discover document, not at registration (Decision 19), and clients verify every message, not only human ones (Decision 14).
+
 ## Decisions (Eric, 2026-11-11, human-made)
+
+Decisions 1 to 15 were made in the design session. Decisions 16 to 20 are his rulings, the same day, on open questions the first draft of the specs (commit `d3f5b56`) raised.
 
 1. **Human assertion.** The server signs sender kind `human` only when the request's bearer carries a human claim, and only the OIDC browser sign-in exchange sets that claim. The identity row's kind is never consulted for it.
 2. **Slack-origin humans.** The signed blob carries `origin=slack` with the Slack user id, the email Slack reported and the Slack timestamp. `origin=api` carries the sign-in claim (the signed-in email). Clients treat both as human and can show which.
@@ -29,10 +35,15 @@ Eric's outline of 2026-11-11, condensed: a root CA with a private key, which can
 13. **Two specs and one ADR.** The hierarchy first, shippable alone; then signed messages on top.
 14. **Clients verify every message** in server mode, not only human ones. This overrides "optional for agent messages" in the outline; Eric accepted it.
 15. **Database write still equals application administrator** for what the server reads to decide: ACLs, the administrator flag, identity rows other than the human claim. Replicas and restores are included.
+16. **A forced renewal invalidates the revoked leaves' history; accepted.** (First draft's Open question 5, option A.) Everything the revoked leaves signed stops verifying, memories and tasks included. The command reports, for each revoked leaf, the counts of messages, memory revisions and task documents it had signed.
+17. **The server verifies the stored base revision before a memory edit or a task update.** (Open question 17, option A.) An unverified base answers `conflict` and names the reason. A full replacement that supplies the whole document is still accepted; this is also how content from a revoked period is written again.
+18. **The `users` list is database state; accepted.** (Open question 27, option A.) Whoever can sign in as a human is a human to every agent. The signed email is shown in the MCP receive result and in the TUI.
+19. **Clients get the root, the chain and the CRLs from the discover document**, not from registration or token responses. (Open questions 1 and 2; this changes the first draft's recommendation and the outline's "at registration".) A client with no pinned root pins from discover on first contact and stores it in `<config dir>/trust/<profile>/`. A different root later is an error until `-accept-new-root`. HTTPS is required by default for a server profile; a client configuration override switch, for local testing, disables the HTTPS requirement. Registration and token responses keep their current shapes.
+20. **The server stops a Slack message from being ingested twice.** (Open question 23; this changes the first draft's recommendation to a third option.) Before ingesting, the bridge looks for a verified stored message carrying the same signed Slack timestamp in that channel and skips the Slack message when it finds one. Clients keep no memory of Slack timestamps. Eric accepted the limit: a writer who also deletes those rows gets them ingested again, and the `stale` mark is the remaining bound.
 
 ## Plan rulings Eric approved with the design sections (2026-11-11)
 
-Each was proposed during the brainstorm and approved by Eric as part of a design section. They are not among the fifteen decisions, and he may overrule any of them.
+Each was proposed during the design session and approved by Eric as part of a design section. They are not among the twenty decisions, and he may overrule any of them. Where a later decision of his changed one, the item says so.
 
 Names:
 
@@ -41,7 +52,7 @@ Names:
 
 Section 1, the hierarchy:
 
-3. The server pins the root from a file named by a setting. The client receives it in the registration response and stores it beside its credential; a different root later is an error needing re-registration. (Open questions 1 and 2 revisit where it is stored and how it is replaced.)
+3. The server pins the root from a file named by a setting. The client receives it in the registration response and stores it beside its credential; a different root later is an error needing re-registration. **Changed by Decision 19**: the client receives it from discover, stores it in its own directory, and replaces it only with `-accept-new-root`.
 4. `agentmesh server admin ca csr` makes the intermediate key and prints the request; `ca install CERT` checks the certificate against the pinned root (CA true, path length 0, certificate and CRL signing) and stores it; `ca install-crl` stores a root CRL; `ca status` reports.
 5. The intermediate certificate, the leaf certificates and the CRLs are public and self-verifying and live in one database table. Nothing is distributed to replicas by file, and a tampered row fails verification.
 6. Without a valid intermediate the server exits 2 and names the two commands.
@@ -55,31 +66,67 @@ Section 2, signed messages:
 11. The bearer gains a kind claim; `Append` takes the sender kind from the claim or from the bridge's Slack check. (The claim exists already, `internal/auth/token/issuer.go:266-273`; what is new is carrying it to the write, and an email claim. Spec 2 section 4.5.)
 12. On the wire each message carries `signed`; responses with messages carry the referenced leaf certificates; session open and receive carry the CRL number and, for a client that is behind, the CRLs and the chain.
 13. One shared client verification package serves the CLI, both MCP servers and the TUI, on server profiles only. It checks the chain to the pinned root, the CRLs, that the signed timestamp is inside the leaf's window, and that the signed sequence number and channel id match the delivery; then it discards the unsigned copy. A delivery under a channel name different from the signed one is flagged `renamed`.
-14. On failure the content is withheld, the receive result lists `unverified` entries (channel, sequence number, reason), the cursor still advances, and the agent text says to report it to the operator. A tombstoned message has no blob and is never an instruction. (Open question 16: tombstoned rows keep their content today.)
+14. On failure the content is withheld, the receive result lists `unverified` entries (channel, sequence number, reason), the cursor still advances, and the agent text says to report it to the operator. A tombstoned message has no blob and is never an instruction. (Ruling 16 below keeps the blob, because tombstoned rows keep their content today.)
 15. The threat model states in plain words what is not covered: deletion and suppression of messages, agent status text, ACLs and the administrator flag, a rolled-back CRL.
 
 Section 3, operations and tests:
 
 16. Exit 2: no pinned root, no intermediate certificate, a certificate that does not chain or does not match the key, an intermediate that is expired or on the root CRL. Exit 1: the key service does not answer at start.
 17. Intermediate renewal is `csr` and `install` again; earlier intermediates stay in the table, so history under an expired intermediate verifies and history under a revoked one does not.
-18. The registration response carries the root, the chain and the CRLs (trust on first use over the registration connection); `agentmesh-mcponly register` likewise.
+18. The registration response carries the root, the chain and the CRLs (trust on first use over the registration connection); `agentmesh-mcponly register` likewise. **Changed by Decision 19**: the discover document carries them.
 19. The health document's administrator tier reports the intermediate and leaf expiry, the CRL numbers and the last renewal failure, and warns from 30 days before the intermediate expires.
 20. `ca install` and `ca install-crl` are idempotent; CRL updates run under a Store lock with the number raised in one transaction; a crash between issuing and using a leaf leaves an unused certificate.
 21. The schema is changed in place in `0001_initial.sql`; no migration; local data is recreated (the pre-release rule).
 22. Tests: fixtures build a throwaway root in process through the root tool's package; a client verification matrix; renewal and retry on a fake clock including expiry to 503; replicas on both engines; signed append in the Store and Bus conformance suites; the wire, tool coverage, bounds, example and Arazzo gates updated; a new import rule for the verification package with selftest mutations.
 23. If go-jose were not among the 13 modules the MCP-only binary may link, verification would be written against the standard library alone; the allowlist is never extended. Finding: go-jose is on the list (`scripts/m10-exit-checks.sh:41`) and the binary links it today, so verification uses go-jose.
 
-## Plan rulings made while writing the specs (not yet seen by Eric)
+## Plan rulings that are not Eric's decisions
 
-Each is marked "(plan ruling)" in the spec that holds it. The ones that change or add to what he approved are raised as open questions below; the rest are names and bounds:
+Eric has not decided these. Each is a proposal he may overrule.
 
-- Package and table names: `internal/pki`, `internal/pki/rootca`, `internal/trust`, `internal/provenance`, the table `trust_material`, `keyprovider.FileProvider`; `internal/core/signingkeys` keeps its name as the leaf manager.
+**A ruling by the coordinating agent, on Decision 19:**
+
+- A loopback host (`127.0.0.1`, `::1`, `localhost`) may use `http` without the override switch, matching the rule the profile's `oidc.issuer` follows (`internal/profile/config.go:53-68`).
+
+**Rulings on the first draft's open questions.** Eric let the first draft's recommendation stand for each, as a plan ruling. The numbers are the first draft's open question numbers; each spec's section 11 gives the reasoning and the alternative not taken.
+
+- Ruling 3 (spec 1): the wire carries one unsigned trust number, raised with every change to a CRL or to the intermediates; clients enforce the signed number inside each CRL. This is how Decision 12's "current CRL number" is carried when there are several CRLs.
+- Ruling 4 (spec 1): one leaf CRL per intermediate key, covering that key's leaves.
+- Ruling 6 (spec 1): rotate always revokes; `revoke_previous`, the cooldown and the three `signing_key_*` settings are removed.
+- Ruling 7 (spec 1): a revoked entry stays on the CRL for the life of the intermediate key; leaf rows are deleted once expired and unreferenced.
+- Ruling 8 (spec 1): the leaves to revoke are listed from the table; a writer who removes a row first keeps that leaf off the CRL until it expires.
+- Ruling 9 (spec 1): for a key service, the operator creates the key and `ca install` records its pinned reference in the intermediate's row.
+- Ruling 10 (spec 1): the JWKS endpoint stays and serves the live leaves with `x5c`.
+- Ruling 11 (spec 1): the settings are `root_certificate_file`, `intermediate_key_file`, `intermediate_key_uri` and `leaf_validity_hours`.
+- Ruling 12 (spec 1): "reads continue" is kept and explained: on a single server no bearer outlives the expired leaf.
+- Ruling 13 (spec 1): the clock rules (a leaf's start set 60 seconds back; no signing outside the window; exact checks on the client).
+- Ruling 14 (spec 2): the server's own writes are signed `agent` with origin `server`; local mode keeps the identity row's kind.
+- Ruling 15 (spec 2): `AppendInput` carries the memory id and revision, and the Store calls a seal function between allocating the sequence number and the insert.
+- Ruling 16 (spec 2): tombstoning leaves the blob; earlier revisions verify and are labeled.
+- Ruling 18 (spec 2): `Task` carries its blob and is verified; `TaskSummary` rows are display text.
+- Ruling 19 (spec 2): the plain members stay on the wire; `display` is signed; `channel_id` joins `Message`.
+- Ruling 20 (spec 2): the first message of a response that names a leaf carries its certificate.
+- Ruling 21 (spec 2): the notices that are table rows stay unsigned display text.
+- Ruling 22 (spec 2): replay marks are per session, as Decision 3 says; a new session relies on `stale`.
+- Ruling 24 (spec 1): a process calls discover once when it opens the `Bus` of a server profile, the hooks excepted; this is how a client with no session refreshes its CRLs. It follows from Decision 19.
+- Ruling 25 (spec 2): `renamed` means history, like the other marks.
+- Ruling 26 (spec 2): the inspection webhook keeps its shape; `sender_kind` is the signed kind.
+
+**Other rulings made while writing the specs** (names and bounds; each is marked "(plan ruling)" where it appears):
+
+- The override switch of Decision 19 is named `insecure_http`: a profile member in `config.json`, the flag `-insecure-http`, and `AGENTMESH_INSECURE_HTTP=1` for the MCP-only binary's in-memory profile.
+- The discover document is answered from the server process's in-memory, verified copy of the trust material, so it still never touches the store.
+- `-accept-new-root` is a flag of `register`, `login` and `login -human`, and of `agentmesh-mcponly register` and `check`.
+- Package and table names: `internal/pki`, `internal/pki/rootca`, `internal/trust`, `internal/provenance`, the table `trust_material`, `keyprovider.FileProvider`; `internal/core/signingkeys` keeps its name as the leaf manager; the core's check of a stored message is `Core.VerifyStored`.
 - The intermediate key is ECDSA P-256 in both storage forms. A certificate's thumbprint is the SHA-256 of its DER encoding, base64url, carried as `x5t#S256`.
 - `leaf_validity_hours` is 2 to 720; `human_stale_hours` is 1 to 8760.
 - A message blob has `typ` `agentmesh-msg+jws`, so a bearer and a message signed by the same leaf cannot stand in for each other.
 - Every append reads the trust number in its transaction and fails with a retryable `unavailable` when the process is behind.
 - `max_message_kib` keeps measuring the plain message; the storage budget and the receive cut count the blob.
 - A failed message outside receive is returned as a placeholder with its reason.
+- `messages` gains `leaf_id` (for the counts of Decision 16) and `slack_ts` (for the look of Decision 20) as extracted copies.
+- The counts of Decision 16 are rows by the kind of their channel, tombstoned rows included.
+- A memory edit is a full replacement (Decision 17) when it gives subject, content, type, metadata and tags.
 
 ## Consequences
 
@@ -89,20 +136,24 @@ Each is marked "(plan ruling)" in the spec that holds it. The ones that change o
 4. A message's human status is a signed statement that rests on the sign-in or the Slack check, not on an identity row. A database writer can no longer write a message that agents take for an operator's instruction, short of also holding a leaf key.
 5. Clients do real work on every read: a signature check and a chain check per message, with certificates cached. Message storage and message-bearing responses roughly double.
 6. The wire, the Store contract, the schema, the settings and the host commands change in place, with no migration and no compatibility path (the pre-release rule of 2026-10-25). The protocol version stays `1.0.0`.
-7. A forced renewal is an emergency tool: by Decision 5 it makes everything the revoked leaves signed unverifiable (Open question 5).
+7. A forced renewal is an emergency tool (Decision 16). Memories and tasks from the revoked period can be written again whole (Decision 17), not edited piece by piece.
 8. The verifying layer sits under the `Bus`, so `internal/tui`, `internal/mcpserver`, `internal/mcpcli` and `internal/cli` keep their import rules.
+9. A client profile that points at an `http` server on another host stops working until its URL is `https` or the override switch is set (Decision 19). Today any `http` URL is accepted (`internal/profile/config.go:132-153`).
+10. The discover document grows by the trust bundle, a few kilobytes, and is fetched once by every client process that opens a server profile.
+11. The server reads its own signed messages back in two places only: before building a revision on a stored one (Decision 17) and before ingesting a Slack message (Decision 20).
 
 ## Accepted risks, in plain words
 
 1. Whoever can write the database can still act as the application's administrator: set the administrator flag, add a login key for any agent and obtain a genuine agent bearer, edit ACLs, identity rows and the `users` and `admins` lists. Replicas and restores are included (Decision 15).
-2. Whoever can write the database can add an email to the `users` list; the person who signs in with that email at the provider is then a human to every agent. The signature says "signed in at the provider with this email", not "is an authorized operator" (Open question 27).
+2. Whoever can write the database can add an email to the `users` list; the person who signs in with that email at the provider is then a human to every agent. The signature says "signed in at the provider with this email", not "is an authorized operator"; the email is shown (Decision 18).
 3. Whoever can write the database can delete, hide or delay messages, bring back an earlier signed revision of a memory or task, and plant agent status text and server notice text. None of these is signed.
-4. Whoever can write the database can hide a revocation from clients and server processes that have not seen it, until the hidden leaf expires (Decision 6), and can keep a leaf off the CRL by removing its row before a forced renewal (Open question 8).
+4. Whoever can write the database can hide a revocation from clients and server processes that have not seen it, until the hidden leaf expires (Decision 6), and can keep a leaf off the CRL by removing its row before a forced renewal (Ruling 8).
 5. A session with no state file has no `replayed` marks. A human message younger than the stale bound can be delivered again, unmarked, to a new session or to a session resumed on another host.
-6. A client pins the root from the first registration or token response it receives (trust on first use).
-7. Whoever holds the intermediate key, or may ask the key service to sign with it, can mint bearers and sign messages for anyone. Whoever can read a server process's memory has its leaf key until that leaf expires or is revoked.
-8. A bearer signed by a leaf that was just revoked is accepted by other replicas for up to 30 seconds.
-9. A forced renewal or an intermediate revocation makes everything those certificates signed unverifiable, memories and tasks included. There is no re-sign path.
+6. Whoever can write the database can delete a Slack message's rows and have the server ingest it again as a new message; only the `stale` mark bounds that (Decision 20).
+7. A client pins the root from the first discover answer it gets (Decision 19). Over HTTPS that answer comes from whoever holds a certificate for the server's name that the system's roots accept. With the override switch on, on a network that is not loopback, anyone on the path can supply a root.
+8. Whoever holds the intermediate key, or may ask the key service to sign with it, can mint bearers and sign messages for anyone. Whoever can read a server process's memory has its leaf key until that leaf expires or is revoked.
+9. A bearer signed by a leaf that was just revoked is accepted by other replicas for up to 30 seconds.
+10. A forced renewal or an intermediate revocation makes everything those certificates signed unverifiable, memories and tasks included. There is no re-sign path; content is written again whole (Decisions 16 and 17).
 
 ## What this supersedes
 
@@ -112,48 +163,21 @@ Each is marked "(plan ruling)" in the spec that holds it. The ones that change o
   - the "Key set trust addendum (2026-11-09)": superseded whole. Its three modes, the tamper protection for tables and the Kubernetes secret providers are not built. Its decision 5 (no environment-variable key source) is kept in effect by Decision 10.
   - the "Server key file addendum" and its "security review decisions" (2026-11-10): already abandoned in ADR 0012; this ADR is the replacement that section announces.
   - "How the four backends work" and the controller rulings about the backends stay true of the backends.
-- **ADR 0004**, "Signing keys addendum (Eric, 2026-10-27)": the `signing_keys` rows, the one-active index and the five methods are removed. The table `trust_material` and the two `messages` columns take their place (spec 1 section 4.5; spec 2 section 4.8).
+- **ADR 0004**, "Signing keys addendum (Eric, 2026-10-27)": the `signing_keys` rows, the one-active index and the five methods are removed. The table `trust_material` and the new `messages` columns take their place (spec 1 section 4.5; spec 2 section 4.8).
 - **ADR 0002**, where it says database read access is equivalent to the administrator flag because the signing key is a Store row (its Milestone 5 item 2 and its item 6, "Signing keys", `docs/adr/0002-authentication-and-credentials.md:197-199`, `281-287`): no private key is in the database.
 - `docs/superpowers/specs/2026-11-10-server-key-file-design.md` and `docs/superpowers/specs/2026-10-27-signing-keys-design.md` (the rotation and provider design): kept as records.
 
-ADR 0012 itself is left as written. `docs/adr/README.md` needs a row for this ADR, and ADR 0012's status line a pointer here, when Eric accepts the open questions.
+Until the specs are implemented the code is as ADR 0012 and ADR 0004 describe it, and `docs/ops/signing-keys.md` stays as it is; it is rewritten with spec 1's implementation.
 
-## Open questions for Eric
+## Open question for Eric
 
-Each is set out with options A, B and C and a recommendation in the spec named. They are numbered once across both specs.
+**Open question 28** (spec 2, section 12): how a task update supplies the whole document, which Decision 17 needs. A memory edit can give every field; a task patch changes the blocked-by list and the position only relative to the stored document (`internal/bus/tasks.go:68-84`).
+- A. Infer it from an update that sets every field.
+- B. An explicit `replace: true` on the task patch; the task keeps its id.
+- C. No replacement for tasks: delete and create again, losing the id.
+- Recommendation: B. Spec 2 is written against it.
 
-Spec 1 (hierarchy), section 11:
-
-1. How a client that never registers on this host gets the root, and where trust is stored.
-2. How a pinned root is replaced.
-3. What "the current CRL number" is when there are several CRLs.
-4. What the leaf CRL covers while two intermediate keys are in use.
-5. A forced renewal makes up to W of history unverifiable.
-6. What becomes of `revoke_previous`, the cooldown and scheduled rotation.
-7. Whether CRL entries and leaf rows can ever be removed.
-8. The list of leaves to revoke comes from the database.
-9. A key service intermediate: who creates the key and where its pinned reference lives.
-10. Whether the JWKS endpoint stays.
-11. Setting names.
-12. "Reads continue" when the leaf has expired.
-13. Clock rules.
-
-Spec 2 (signed messages), section 11:
-
-14. Sender kind and origin for writes that have no bearer.
-15. The memory id and revision are not known when `Append` would sign.
-16. Tombstones keep their content today.
-17. Revisions built from a stored row.
-18. Tasks on the wire.
-19. What is on the wire beside the blob, and `display`.
-20. Where the certificates ride when a response is a bare array.
-21. Notices that are table rows, not messages.
-22. Where the replay marks live.
-23. Slack history ingested again.
-24. How fresh the CRLs are for a read with no session.
-25. What `renamed` means to an agent.
-26. The inspection webhook.
-27. Any human who can sign in is an operator to every agent.
+The first draft's Open questions 1 to 27 are all settled: by Decisions 16 to 20, or as the plan rulings listed above.
 
 ## Alternatives not taken
 
@@ -162,3 +186,5 @@ Spec 2 (signed messages), section 11:
 - A CRL pull endpoint with next-update enforcement, and failing closed on a stale CRL: Eric chose broadcast only (Decision 6).
 - Verifying only human messages: Eric chose every message (Decision 14).
 - Signing agent statuses: left unsigned (Decision 8).
+- The root, chain and CRLs in the registration and token responses (the first draft's recommendation): Eric chose the discover document (Decision 19).
+- Clients remembering Slack timestamps to mark a repeat (the first draft's recommendation), or accepting repeats within the stale bound: Eric chose a check on the server (Decision 20).
