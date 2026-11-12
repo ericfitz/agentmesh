@@ -104,7 +104,7 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 **Criticality:** Critical
 
-Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key file design abandoned (2026-11-11)"; ADR 0019). The statements about today's code were checked against the tree at commit `dcdc943`. The mitigations marked "designed, not built" are those of ADR 0019 and its two specs (`docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md`, `docs/superpowers/specs/2026-11-11-signed-messages-design.md`); none of them is in the tree. The "designed, not built" items here and in SD2 were brought up to date on 2026-11-12 with Decisions 22 to 42; Decision 40 reduced the signed messages to human messages.
+Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key file design abandoned (2026-11-11)"; ADR 0019). The statements about today's code were checked against the tree at commit `dcdc943`. The mitigations marked "designed, not built" are those of ADR 0019 and its two specs (`docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md`, `docs/superpowers/specs/2026-11-11-signed-messages-design.md`); none of them is in the tree. The "designed, not built" items here and in SD2 were brought up to date on 2026-11-12 with Decisions 22 to 46; Decision 40 reduced the signed messages to human messages.
 
 ### Threat Model
 
@@ -136,7 +136,7 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
   - Everything in the first item above. In particular a writer can add an email to the `users` list, and whoever signs in with that email at the provider is then a human to every agent; the signature names the email but cannot say the person is an authorized operator.
   - A writer can delete, hide or delay messages, and can write or change everything that is not a human message: agents' messages, memory revisions and task documents, agent status text and server notice text (Decisions 22 and 40).
   - A writer can hide a revocation from clients that have not yet seen it. For bearers that ends when the revoked certificate expires; a human message the certificate signed keeps verifying to such a client.
-  - A human message sent after a session opened, and not yet seen by it, is delivered whenever the server hands it over. A writer who deletes the Slack bridge's rows gets a Slack message ingested again as a new human message.
+  - A human message sent after a session opened, and not yet seen by it, is delivered whenever the server hands it over. A writer who deletes the Slack bridge's rows gets a Slack message ingested again; a session drops the copy when it took the post before or opened after the post was made, and takes it otherwise (Decision 46).
 
 ---
 
@@ -169,7 +169,7 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
   - `sender_kind` would no longer come from the stored kind. The server signs `human` into a message only when the request's bearer carries the human claim, which only the browser sign-in exchange sets, or when the Slack bridge's check passed. An agent's bearer for an identity whose row was changed to `human` still signs `agent` (Decision 1). The `humans` group and the `Post` action keep reading the stored kind (Decision 15).
   - The signed message names its origin: the signed-in email, or for Slack the Slack user id, the email Slack reported and the Slack timestamp (Decision 2). The MCP receive result and the TUI show the email (Decision 18). The signature says "signed in at the provider with this email"; it does not say the person is an authorized operator.
   - Clients verify every message that claims to be from a human and drop one that fails. A session drops a human message from before it opened and one it has already taken (Decision 40, which supersedes Decision 14 and takes the place of the marks of Decision 3).
-  - Slack: the trust in the workspace's email integrity stays as it is. The `bridge_messages` table alone keeps a Slack message from being ingested twice, as today; a database writer who deletes its rows gets the message ingested again as a new human message (Decision 40 removed the check of Decision 20; ADR 0019, accepted risk 6).
+  - Slack: the trust in the workspace's email integrity stays as it is. The `bridge_messages` table alone keeps a Slack message from being ingested twice, as today; a database writer who deletes its rows gets the message ingested again as a new row (Decision 40 removed the check of Decision 20). A session's rules go by the signed Slack timestamp, so a session drops the copy of a post it has taken and any post made before it opened (Decision 46; ADR 0019, accepted risk 6).
 
 ---
 

@@ -4,15 +4,16 @@
 
 - Approved by Eric, 2026-11-11 (second draft plus Decision 21). The first draft is commit `d3f5b56`; the second folds in Eric's rulings of 2026-11-11 on that draft's open questions. Nothing here is built.
 - Third revision, 2026-11-12: it folded in Eric's rulings on the security review of the two approved specs (ADR 0019, Decisions 22 to 35).
-- **Fourth revision, 2026-11-12: rewritten around Decision 40.** Eric reduced this spec to human messages: only a message the server appends with sender kind human is signed, and clients verify only those. The decision is his, and so are Decisions 41 (the forced renewal API still needs a human administrator) and 42 (that check sits in `internal/core/access`). The text that carries them out has not been approved by him. The plan rulings it needed (section 14) are not his, and four points are open questions for him (section 12); where the text had to say something on an open point, it follows the recommendation and says so.
+- **Fourth revision, 2026-11-12: rewritten around Decision 40.** Eric reduced this spec to human messages: only a message the server appends with sender kind human is signed, and clients verify only those. The decision is his, and so are Decisions 41 (the forced renewal API still needs a human administrator) and 42 (that check sits in `internal/core/access`). The text that carries them out has not been approved by him. The plan rulings it needed (section 14) are not his.
+- Fifth revision, 2026-11-12: Eric answered the four open questions the fourth revision put to him (ADR 0019, Decisions 43 to 46). Three answers make a plan ruling his decision as it stood (Rulings 46, 48 and 49). The fourth changes the design: for a human message that came through Slack, the session rules use the signed Slack timestamp as the message's time and as its ID (Decision 46). This spec has no open question.
 - This is spec 2 of 2. **It depends on spec 1**, `docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md`: the pinned root, the intermediate, the in-memory leaf, the CRLs, the trust bundle, the discover document and the client's trust store are defined there and are not repeated here. Spec 1 ships alone; this spec cannot (Decision 13).
 - The record of decisions is ADR 0019 (`docs/adr/0019-certificate-hierarchy-and-signed-messages.md`).
 - Labels, as in spec 1:
   - **(Eric 2026-11-11, Decision N)**: one of Eric's twenty-one decisions of 2026-11-11, numbered as in ADR 0019.
-  - **(Eric 2026-11-12, Decision N)**: one of his rulings on the security review, Decisions 22 to 35, or one of his decisions of the same day on what that fold left open, Decisions 36 to 42.
+  - **(Eric 2026-11-12, Decision N)**: one of his rulings on the security review, Decisions 22 to 35, or one of his later decisions of the same day, Decisions 36 to 46.
   - **(plan ruling)**: a proposal made while writing the design. It is not Eric's decision, and he may overrule it.
-  - **Ruling N**: a numbered plan ruling. For N up to 26 it is the ruling on what the first draft called Open question N (section 11). Rulings 37 to 41 were made for the review rulings (section 13). Rulings 46 to 54 were made for Decision 40 (section 14). Rulings 30 to 36 and 42 to 45 are in spec 1. None of them is Eric's decision.
-- Decision 40 supersedes Decisions 8, 14, 17, 20, 21 and 29 and changes Decision 16. Their text is removed from this spec; ADR 0019 keeps their entries. It also leaves Decision 3 without its mechanism and Decision 24 without its purpose; Eric did not name those two, so section 12 asks (Open question 58).
+  - **Ruling N**: a numbered plan ruling. For N up to 26 it is the ruling on what the first draft called Open question N (section 11). Rulings 37 to 41 were made for the review rulings (section 13). Rulings 46 to 54 were made for Decision 40 (section 14). Rulings 30 to 36 and 42 to 45 are in spec 1. A ruling is not Eric's decision; where he has since decided the point, the ruling says so.
+- Decision 40 supersedes Decisions 8, 14, 17, 20, 21 and 29 and changes Decision 16. Their text is removed from this spec; ADR 0019 keeps their entries. Decision 3 is superseded with them, which Decision 46 confirms. Decision 24 stands, and Decision 46 gives its Slack check a purpose again.
 - Every statement about today's code was checked against the tree and carries a `path:line` citation: the earlier ones at commits `d3f5b56` and `5e133d3`, the ones added in this revision at `93bc9c4`. Nothing under `internal/`, `api/`, `scripts/` or `cmd/` changed between the three.
 
 ## 2. What this changes, in short
@@ -26,7 +27,7 @@ After this spec:
 - The server signs a message when a human sent it, and only then: the request's bearer carries the human claim, or the Slack bridge's check passed (Decisions 1, 2 and 40).
 - The signature covers who sent it, that a human did, the channel, the subject, content, type, tags and metadata, the time, the message it replies to and the message's own ID (Decision 40).
 - A client in server mode verifies every message that claims to be from a human and drops one that fails. It is not downgraded to an agent's message (Decision 40).
-- A session takes a human message once, and only when it was sent after the session opened (Decision 40).
+- A session takes a human message once, and only when it was sent after the session opened (Decision 40). For a message that came through Slack, "sent" and "once" go by the signed Slack timestamp, so a Slack post that the server ingests a second time is not taken again (Decision 46).
 - Each human message a session takes says whether it is in context: it starts a thread, or it replies to something the session received or sent (Decision 40).
 - Messages that are not from a human are not signed and not verified. They are what the database holds.
 
@@ -64,13 +65,13 @@ The third revision said here that integrity no longer rests on the database. Tha
 
 A client decides by its profile's mode and never by what a response contains. A server-mode client that receives a message claimed human without `signed` drops it, so removing the blob is not a way around the check.
 
-### 4.2 Coverage (Eric 2026-11-12, Decision 40)
+### 4.2 Coverage (Eric 2026-11-12, Decisions 40 and 43)
 
 The server signs a message when, and only when, it appends it with sender kind `human` (section 4.5). That is two cases: the request's bearer carries the human claim, or the Slack bridge's check passed for the Slack user.
 
 Not signed: every message an agent sends, the server's own writes (the task reclaim, the bridge's not-invited text), agent statuses, and the notices that are table rows. Decision 8, which had every append signed, is superseded.
 
-**Memory revisions and task documents.** Nothing is signed for being a memory revision or a task document; Decision 40 removes that. A revision that a human writes is still a message the server appends with sender kind human, and the text below signs it as one, by the same rule as any other human message. That includes the revisions a human's task update causes: the sibling re-rank writes them with the caller's name and kind (`internal/core/tasks/create.go:176-199`). That is a plan ruling, not Eric's decision (Ruling 46), and the point is Open question 55: his words can also be read as "no memory revision and no task document is signed, whoever writes it".
+**Memory revisions and task documents.** Nothing is signed for being a memory revision or a task document; Decision 40 removes that. A revision that a human writes is still a message the server appends with sender kind human, and the text below signs it as one, by the same rule as any other human message. That includes the revisions a human's task update causes: the sibling re-rank writes them with the caller's name and kind (`internal/core/tasks/create.go:176-199`). Eric decided this on 2026-11-12 (Decision 43; it had been Ruling 46 and Open question 55): one signing rule, with no exception for memory and task channels.
 
 ### 4.3 Envelope (Eric 2026-11-11, Decision 11)
 
@@ -93,7 +94,7 @@ One JSON object. Decision 40 names what it binds: the sender identity, the human
 | Member | Content | Named by Decision 40 |
 | --- | --- | --- |
 | `v` | Payload version, 1 | No; a plan ruling |
-| `seq` | The sequence number the Store assigned. It is the message's unique ID (Ruling 47) | Yes: the unique message ID |
+| `seq` | The sequence number the Store assigned. It is the message's unique ID (Ruling 47). For a message of origin `slack` the session rules use the Slack timestamp as the ID instead (section 4.11; Decision 46) | Yes: the unique message ID |
 | `channel_id` | The channel's id | Yes: the channel |
 | `channel` | The channel's name when the message was signed | Yes: the channel |
 | `sender` | The sending identity | Yes |
@@ -104,7 +105,7 @@ One JSON object. Decision 40 names what it binds: the sender identity, the human
 | `reply_to` | As stored (after the thread-root rule): the parent's sequence number | Yes |
 | `metadata` | As sent | Yes |
 | `tags` | As stored, sorted | Yes |
-| `origin` | Where the message came from (section 4.5) | No; Decisions 2 and 18, which Decision 40 does not withdraw (Ruling 54) |
+| `origin` | Where the message came from (section 4.5) | No; Decisions 2 and 18, which Decision 40 does not withdraw (Ruling 54). Decision 46 uses its Slack timestamp |
 
 A verifier refuses a payload whose `v` is not 1, whose `sender_kind` is not `human`, or that holds a member it does not know.
 
@@ -194,13 +195,13 @@ The plain members of `Message` stay on the wire. For a message that is not from 
 
 Every response that carries human messages thereby carries the certificates they name (Decision 11). The trust number and the bundle ride on the discover document, session open and receive, as spec 1 section 4.9 defines.
 
-### 4.10 Client verification (Eric 2026-11-11, Decisions 5 and 11; Eric 2026-11-12, Decisions 23 to 27, 32, 33 and 40)
+### 4.10 Client verification (Eric 2026-11-11, Decisions 5 and 11; Eric 2026-11-12, Decisions 23 to 27, 32, 33, 40 and 44)
 
 One shared package verifies for every client: the CLI, both MCP servers and the TUI, on server profiles only. Clients verify the messages that claim to be from a human and no others (Decision 40; Decision 14, which had them verify every message, is superseded).
 
 **Which messages.** A delivered message whose `sender_kind` is `human`. A message with any other kind is handed on as delivered, and a `signed` member on it is ignored. So what a client guarantees is one thing: on the paths below, a consumer never gets a message marked `human` that did not verify.
 
-**Which paths** (Ruling 48; Open question 56). Receive, history and search. The memory tools (`getMemory`, `listMemoryRevisions`) and the task tools return documents and verify nothing: a memory or a task stays readable whatever leaf signed its revisions, and who wrote a document is display text there (section 4.14).
+**Which paths** (Eric 2026-11-12, Decision 44). Receive, history and search. The memory tools (`getMemory`, `listMemoryRevisions`) and the task tools return documents and verify nothing: a memory or a task stays readable whatever leaf signed its revisions, and who wrote a document is display text there (section 4.14).
 
 **Where it sits.** Under the `Bus`, so no consumer can skip it and the TUI's import rule holds (section 3 item 16):
 
@@ -224,7 +225,7 @@ One shared package verifies for every client: the CLI, both MCP servers and the 
 | 10 | The payload's `seq` is the delivered `seq` | `wrong_seq` |
 | 11 | The payload's `channel_id` is the delivered `channel_id` | `wrong_channel` |
 
-Steps 6 to 8 are Decision 5: expiry alone never invalidates history, and revocation invalidates everything the certificate signed. The clock rules are Ruling 13 of spec 1. Which reason each of the rules of Decision 32 reports is Ruling 40. Steps 10 and 11 are what makes the signed ID and channel binding: a blob copied to another row or another channel fails them.
+Steps 6 to 8 are Decision 5: expiry alone never invalidates history, and revocation invalidates everything the certificate signed. The clock rules are Ruling 13 of spec 1. Which reason each of the rules of Decision 32 reports is Ruling 40. Steps 10 and 11 are what makes the signed ID and channel binding: a blob copied to another row or another channel fails them. Step 9 keeps the Slack timestamp honest now that the session rules use it (Decision 46): a signer cannot date a Slack-origin message later than its own `ts` plus 60 seconds, and `ts` cannot lie outside the leaf's validity period.
 
 **A client's own lag is not a failure yet** (Eric 2026-11-12, Decision 33). A message can fail steps 3 or 6 only because the client has not yet received what the server holds. A dropped message is acknowledged with its batch (section 4.12), so a genuine instruction would be lost for good. Three rules prevent that:
 
@@ -236,7 +237,7 @@ After the checks the layer builds the message from the payload alone and discard
 
 **Trust for the checks.** The layer calls discover once when it is built (spec 1 section 4.9), so a one-shot read has current CRLs and a first contact has a pin. A client that has no pinned root and cannot reach discover cannot verify anything and fails before any read.
 
-### 4.11 The session rules (Eric 2026-11-12, Decision 40)
+### 4.11 The session rules (Eric 2026-11-12, Decisions 40, 44 and 46)
 
 Verification says a human sent a message. Two questions remain for an agent, and Decision 40 answers both with state the client keeps outside the database, in the session state file: is this a replay, and is it relevant here.
 
@@ -245,9 +246,13 @@ The rules apply to a human message that verified and that a receive delivers to 
 | Rule | When | Result | Source |
 | --- | --- | --- | --- |
 | Ahead of the clock | `ts` is more than 60 seconds ahead of the client's clock | Dropped, reason `postdated` | Decision 24, which says "marks or refuses"; with the marks gone it refuses (Ruling 53) |
-| Before the session | `ts` is earlier than the session's open time | Dropped, reason `before_session` | Decision 40 |
-| Repeat | The message's ID is in the session's seen set | Dropped silently | Decision 40 |
+| Before the session | The message's time is earlier than the session's open time | Dropped, reason `before_session` | Decisions 40 and 46 |
+| Repeat | The message's ID is in the session's seen set | Dropped silently | Decisions 40 and 46 |
 | Otherwise | | Delivered, with `in_context` | Decision 40 |
+
+**The message's time and ID** (Eric 2026-11-12, Decision 46). For a message of origin `api` the time is the signed `ts` and the ID is the sequence number (Ruling 47). For a message of origin `slack` the time is the signed Slack timestamp, `origin.slack_ts`, and the ID is that timestamp together with the signed channel id. A Slack timestamp names one message of one Slack channel, and a channel has at most one bridge, which tells a Slack message it has already ingested by the same timestamp (`internal/store/sqlite/schema/0001_initial.sql:244`, `263`). So a Slack post that the server ingests a second time carries the time and the ID it had the first time, whatever its new sequence number and `ts`. A session that took the first copy drops the second as a repeat, and a session that opened after the post was made drops it as from before the session. The two kinds of ID cannot collide; section 4.13 says how the seen set keeps them apart.
+
+The first rule of the table reads `ts` for both origins, as Decision 24 has it. A Slack timestamp is at most 60 seconds later than `ts` (step 9 of section 4.10), so it is bounded with it. Why that rule stays is Ruling 53.
 
 **The open time** (Decision 40; Ruling 50). It is the `opened_at` of the session state file: the client's clock when the session was first registered (section 3 item 11). A resumed session keeps its original open time, as Decision 40 requires and as the file does today. A session with a new id is a new session with a new open time. So a human message sent before a brand-new session opened is never delivered to it as a human message. The comparison is exact, with no leeway.
 
@@ -262,22 +267,22 @@ Nothing is dropped for relevance. `in_context: false` tells the agent that the m
 
 **`renamed`** (Ruling 25, rewritten). A verified human message whose delivery names the channel differently from the signed `channel` carries `renamed: true`. It is a note about context, like `in_context`, and drops nothing. It applies on every path that verifies.
 
-**Where the session rules do not apply** (Ruling 48; Open question 56):
+**Where the session rules do not apply** (Eric 2026-11-12, Decision 44):
 
 - History and search. They return old messages by design; a human message there is verified, carries no `in_context`, and is history, not an instruction (section 4.14).
 - A `Bus` opened with the human sign-in, which is the TUI. A person reads what was said; nothing is dropped for its time or for being a repeat.
 - Local mode.
 
-**A session with no state file** (Ruling 48; Open question 56). A receive for a session of an agent identity that has no state file drops every human message with the reason `no_session_state`: with no open time and no seen set, a replay cannot be told from a first delivery. That is a session opened with `agentmesh session open` and never registered through the MCP server, and the throwaway session of `agentmesh receive` (section 3 item 12).
+**A session with no state file** (Eric 2026-11-12, Decision 44). A receive for a session of an agent identity that has no state file drops every human message with the reason `no_session_state`: with no open time and no seen set, a replay cannot be told from a first delivery. That is a session opened with `agentmesh session open` and never registered through the MCP server, and the throwaway session of `agentmesh receive` (section 3 item 12).
 
-Decision 3's marks (`replayed` and `stale`), the `postdated` mark and the setting `human_stale_hours` are not in this design: the two drops above do what `replayed` and `stale` were for. Eric did not name Decision 3 when he made Decision 40; Open question 58 asks him to confirm.
+Decision 3's marks (`replayed` and `stale`), the `postdated` mark and the setting `human_stale_hours` are not in this design: the two drops above do what `replayed` and `stale` were for. Decision 3 is superseded; Eric confirmed it on 2026-11-12 (Decision 46).
 
-### 4.12 What a drop is (Eric 2026-11-12, Decision 40)
+### 4.12 What a drop is (Eric 2026-11-12, Decisions 40 and 45)
 
 A human message that fails verification is dropped. It is not delivered as an agent's message, and it is not delivered with a warning (Decision 40: dropped, not downgraded). The same holds for the drops of section 4.11.
 
 - **Nothing of the message reaches the consumer**: no sender, subject, content, metadata or tags.
-- **A drop that is not a repeat is reported** (Ruling 49; Open question 57). The result lists it under `dropped` with the delivered channel name, the `seq` and the reason. For receive this is `ReceiveResult.Dropped`. For history and search the entry stands in the message's place (a `Message` with only `Seq`, `Channel` and `Dropped` set), and the MCP and CLI outputs gather these under `dropped`. Decision 40 says "silently" of repeats only; that the other drops are reported is a plan ruling.
+- **A drop that is not a repeat is reported** (Eric 2026-11-12, Decision 45). The result lists it under `dropped` with the delivered channel name, the `seq` and the reason. For receive this is `ReceiveResult.Dropped`. For history and search the entry stands in the message's place (a `Message` with only `Seq`, `Channel` and `Dropped` set), and the MCP and CLI outputs gather these under `dropped`. Decision 40 says "silently" of repeats only.
 - **A repeat is dropped silently** (Decision 40).
 - **The cursor still advances**: the batch token acknowledges the dropped messages with the rest, so a bad row cannot block a session. A failure that may be the client's own lag gets one more try before the drop (section 4.10; Decision 33).
 - The agent text says to tell the operator and not to act on a `dropped` entry (section 4.14). The operator sends the instruction again.
@@ -295,14 +300,17 @@ There is no way to read what a dropped message held. The human-only read of the 
 
 The three new members of the state file (Ruling 51; the names are plan rulings):
 
-- `human_seen`: the seen set. One entry per human message, its `seq` and its signed `ts`. A delivery is a repeat when both match. The time is there because a restore from backup puts the sequence counter back, and a new message must not be taken for the old one that had its number.
+- `human_seen`: the seen set. One entry per human message, of one of two kinds, and each entry says which kind it is.
+  - Origin `api`: the `seq` and the signed `ts`. A delivery is a repeat when both match. The time is there because a restore from backup puts the sequence counter back, and a new message must not be taken for the old one that had its number.
+  - Origin `slack`: the signed channel id and the Slack timestamp (Decision 46). A delivery is a repeat when both match.
+  - A message is looked up only among the entries of its own kind, and its kind is its signed `origin.source`. So a sequence number is never compared with a Slack timestamp, and the two kinds of ID cannot collide.
 - `known`: the known set, for `in_context`. The sequence numbers of the messages this session received, of any kind, and of the messages it sent. It keeps the most recent 4096.
 - `pending`: the token of the batch the session holds unacknowledged, with the human message IDs in it.
 
 How they move, for one receive:
 
 1. The answer's batch has a token. When the file's `pending` holds another token, the session has moved on from that batch: its human message IDs go into `human_seen`, and `pending` is cleared. The server makes a new token only when the earlier batch is no longer pending, and delivers a pending batch again under its own token (section 3 item 10). So this covers an acknowledgment that this process sent, one that another process sent, and one whose answer was lost.
-2. The layer verifies the batch and applies the session rules against `human_seen` as it now stands.
+2. The layer verifies the batch and applies the session rules against `human_seen` as it now stands. A second message with the same ID in one batch is a repeat of the first.
 3. It records `pending`: the answer's token, and the IDs of the human messages it is about to deliver, added to those already recorded for that token. A redelivery can show fewer messages than the first delivery did (`receive.go:379-383`), and what the consumer was once given stays recorded. It adds the sequence number of every message it is about to deliver, of any kind, to `known`.
 4. It writes the file, and only then returns the batch.
 
@@ -338,7 +346,7 @@ A verified human message in an MCP result carries `sender_kind`, `origin`, `in_c
 
 The inspection request keeps its shape (Ruling 26). Its `sender_kind` is the kind the server will store (section 4.5), no longer the identity row's. For a human message the signature is made after the digest check, in the same transaction (`internal/core/messaging/send.go:234-237`), so what is signed is what the inspector judged. The origin's email and Slack user id are not sent to the webhook.
 
-### 4.17 Slack bridge (Eric 2026-11-11, Decision 2; Eric 2026-11-12, Decision 40)
+### 4.17 Slack bridge (Eric 2026-11-11, Decision 2; Eric 2026-11-12, Decisions 40 and 46)
 
 - Inbound messages are signed `human` with origin `slack` (section 4.5). The `slack_display_name` metadata stays what it is today: text Slack reported, inside the signed payload but vouched for by nobody.
 - Outbound posts and the scope canvas read the database as today; nothing there is verified.
@@ -346,7 +354,9 @@ The inspection request keeps its shape (Ruling 26). Its `sender_kind` is the kin
 
 **Ingesting a Slack message twice.** The `bridge_messages` table alone keeps a Slack message from being ingested again, as today (section 3 item 5). The third revision added a look for a verified stored message with the same signed Slack timestamp (Decision 20). Decision 40 supersedes Decision 20, and that look, the `slack_ts` column and `Core.VerifyStored` are removed.
 
-So a Slack message whose `bridge_messages` row is gone is ingested again. It is then a new human message: a new sequence number, a new `ts`, a valid signature. A session takes it as new. Its signed origin still carries the original Slack timestamp, and nothing compares that with anything but `ts` (step 9 of section 4.10). This is listed in section 5 item 8, and Open question 58 asks whether the session rules should use the Slack timestamp.
+So a Slack message whose `bridge_messages` row is gone is ingested again, as a new row: a new sequence number, a new `ts`, a valid signature. The server does not stop that. The client does (Eric 2026-11-12, Decision 46). The second copy's signed origin carries the same Slack timestamp as the first, and for a Slack-origin message the session rules take the time and the ID from it (section 4.11). A session that took the first copy drops the second silently, and a session that opened after the post was made drops it as from before the session. Decision 24's check that the Slack timestamp is no later than `ts` plus 60 seconds has its purpose here (step 9 of section 4.10). What is left is section 5 item 8.
+
+The same rule decides what a session gets of a catch-up. A Slack post made while the bridge was not running is ingested late, with its own Slack timestamp, and a session that opened after the post was made does not take it as a human message; the drop is reported.
 
 ### 4.18 A forced renewal through the API needs a human (Eric 2026-11-12, Decisions 28, 41 and 42)
 
@@ -382,7 +392,7 @@ In plain words. The threat model lists the same once this is built. All of it is
 5. **Agent status text, server notices and other server-made text.** Statuses, the capacity, embedding and inspection notices, the receive instruction, pending counts, task list rows, a task's `blocked` and `open_blockers`, and `matched_tags` are not signed.
 6. **ACLs, the administrator flag, identity rows, login keys, the `users` and `admins` lists** (Decisions 15 and 18). In particular a database writer can add an email to the `users` list; the person who then signs in with that email at the provider is a human to every agent. The signature proves "signed in at the provider with this email", not "is an authorized operator"; the email is shown so a reader can judge. The Slack path rests on more rows (Eric 2026-11-12, Decision 31): a database writer can bind the email of any full member of the workspace in `human_bindings`, change `slack_users`, or point a `bridges` row at another Slack channel. That member's Slack posts, or a bound human's posts in the other Slack channel, are then signed `human` on the bridged channel. The signed origin names the Slack user and the email, not the workspace or the Slack channel.
 7. **A rolled-back CRL** (Decision 6): a database writer can hide a revocation from clients that have not seen it. A client keeps the revocations it has seen (Decision 27).
-8. **Slack history ingested again** (section 4.17): a database writer who deletes the bridge's rows gets Slack messages ingested again as new human messages. Nothing on the client stops them.
+8. **Slack history ingested again** (section 4.17; Decision 46): a database writer who deletes the bridge's rows gets Slack messages ingested again. A session drops a copy of a post it has taken, and any post made before it opened. A session that was open when the post was made and did not take it then takes the copy. History, search and the TUI show both copies.
 9. **Order and completeness.** The sequence number is signed on a human message, but nothing proves that no message is missing.
 10. **Secrecy.** Nothing is encrypted; the database and the server read everything.
 11. **Search ranking, embeddings and the Slack copies** are made from the database columns, not from the verified payload.
@@ -406,24 +416,25 @@ In plain words. The threat model lists the same once this is built. All of it is
 ADR 0019 holds the same list together with spec 1's.
 
 1. Everything in section 5.
-2. A forced renewal or an intermediate revocation makes every human message those certificates signed unverifiable (Decision 16, as changed by Decision 40). Clients drop them from then on: one not yet delivered is lost and has to be sent again, and in history and search they appear as `dropped` entries. The memory and task tools still read everything, and every edit still works. Under Ruling 46 the dropped messages include the revisions of memories and tasks that a human wrote under those certificates. They no longer appear in search, history or receive, and a `dropped` entry carries no memory id, so an agent that finds a memory by search does not find such a one until someone edits it again (Open question 55).
-3. A leaf key that leaked signs human messages for any sender and any email, with any time inside the leaf's validity period; a holder who can also write the database can insert them. Expiry does not end that (Decision 5). A session takes such a message when its time is not before the session's open time and its ID is new to the session, so every session opened before the leaf's "not after" stays exposed for as long as it lives. Revoking the leaf ends it. The leaf lives only in a server process's memory.
+2. A forced renewal or an intermediate revocation makes every human message those certificates signed unverifiable (Decision 16, as changed by Decision 40). Clients drop them from then on: one not yet delivered is lost and has to be sent again, and in history and search they appear as `dropped` entries. The memory and task tools still read everything, and every edit still works. The dropped messages include the revisions of memories and tasks that a human wrote under those certificates, which Decision 43 has signed. They no longer appear in search, history or receive, and a `dropped` entry carries no memory id, so an agent that finds a memory by search does not find such a one until someone edits it again. That comes with Decision 43.
+3. A leaf key that leaked signs human messages for any sender and any email, with any time inside the leaf's validity period; a holder who can also write the database can insert them. Expiry does not end that (Decision 5). A session takes such a message when its time is not before the session's open time and its ID is new to the session, so every session opened before the leaf's "not after" stays exposed for as long as it lives. For origin `slack` the time is the Slack timestamp, which the holder can set at most 60 seconds past `ts` (Decisions 24 and 46). Revoking the leaf ends it. The leaf lives only in a server process's memory.
 4. A session takes a human message at most once after it has moved on from the batch that held it. An agent that lost the message, to a context reset for example, does not get it again from receive; history has it.
-5. The session rules rest on the client's clock and on the state file. A client whose clock is behind takes human messages from shortly before the session opened; one whose clock is ahead drops genuine ones sent shortly after, and reports them. An agent's session whose state file is lost drops human messages until it registers again.
+5. The session rules rest on the client's clock and on the state file. A client whose clock is behind takes human messages from shortly before the session opened; one whose clock is ahead drops genuine ones sent shortly after, and reports them. For a Slack-origin message the other clock is Slack's. A client whose clock is more than 60 seconds behind the server's drops every human message as `postdated`, and reports each (Decision 24; Ruling 53). An agent's session whose state file is lost drops human messages until it registers again.
 6. A human message takes roughly twice the storage and twice the bytes on the wire.
 7. `in_context` and `renamed` are notes. `in_context` is computed from what the session was delivered, most of which no signature covers.
 
 ## 8. Tests
 
 - **Fixtures**: the throwaway root, intermediate and leaf of spec 1's fixture; the `inproc` run of the Bus suite runs with a signer and the verifying layer, the `local` run without, so both configurations pass the same suite.
-- **Coverage** (Decision 40): in a server-mode run, every stored row with sender kind `human` has a blob that verifies and a leaf id, and every other row has neither; an agent's send, an agent's memory edit and task update, the reclaim and the bridge's text store no blob; a human's send, memory edit and task update store one (Ruling 46).
+- **Coverage** (Decision 40): in a server-mode run, every stored row with sender kind `human` has a blob that verifies and a leaf id, and every other row has neither; an agent's send, an agent's memory edit and task update, the reclaim and the bridge's text store no blob; a human's send, memory edit and task update store one (Decision 43).
 - **Client verification matrix** (`internal/provenance` and the layer), one case per row, each ending in the named reason: altered content; altered header; wrong `seq`; wrong channel id; `ts` outside the leaf's validity period; revoked leaf; revoked intermediate; unknown root; unknown intermediate; unknown leaf certificate; missing blob on a message claimed human; a bearer offered as a message and a message offered as a bearer; an unknown payload member; payload version 2; a payload whose `sender_kind` is `agent`; a lower CRL number; a message that verifies after its leaf expired. The rows of the 2026-11-12 review rulings: a certificate supplied with the message whose SHA-256 is not the header's `x5t#S256`; `ES256` named over an Ed25519 certificate and `EdDSA` named over a P-256 one; a message signed directly by an intermediate key (a chain of two) and a chain of four; a signing certificate that is CA true; one without the digital signature usage (Decision 32, one row per rule); an intermediate under the same root with another installation's name; an intermediate without the agentmesh extended key usage and a leaf without it (Decision 23); a leaf whose lifetime is over the ceiling (Decision 25); a leaf under the other certificate of a revoked intermediate key (Decision 26); a leaf revoked on an earlier CRL and missing from the current one (Decision 27); origin `slack` with `slack_ts` 61 seconds after `ts` (`origin_time`) and 59 seconds after (accepted).
 - **Only human messages are verified** (Decision 40): an agent's message is delivered as the server answered it, with and without a `signed` member; an agent's message whose blob is a valid human payload is delivered as an agent's message; no certificate is looked up for it.
-- **Dropped, not downgraded** (Decision 40): for each reason of the matrix, receive, history and search hand the consumer no member of the message, the entry is under `dropped` with channel, `seq` and reason, and nothing is delivered with another sender kind; the batch token still acknowledges the dropped message.
+- **Dropped, not downgraded** (Decisions 40 and 45): for each reason of the matrix, receive, history and search hand the consumer no member of the message, the entry is under `dropped` with channel, `seq` and reason, and nothing is delivered with another sender kind; the batch token still acknowledges the dropped message.
 - **Session rules** (Decision 40): a human message with `ts` one millisecond before the session's open time is dropped (`before_session`) and one at the open time is delivered; a resumed session keeps its open time and a session with a new id does not; a human message delivered in an acknowledged batch and handed over again is dropped with no entry; a redelivered unacknowledged batch is delivered again; a rewind (the identity unsubscribes and subscribes again from `oldest`) drops the human messages already taken and delivers the agents' messages; the same `seq` with another signed `ts` is not a repeat; a `ts` 61 seconds ahead of the client's clock is dropped (`postdated`) and 59 seconds ahead is not (Decision 24); a session with no state file drops human messages (`no_session_state`); the TUI's `Bus` applies none of these.
+- **Slack time and ID** (Decision 46): a Slack post ingested a second time is dropped silently by a session that took the first copy, and as `before_session` by a session opened after its Slack timestamp, although its `ts` is new; a late first ingest (a catch-up) is dropped by a session opened between the Slack timestamp and the ingest, and taken once by a session open since before the post; two copies in one batch deliver one; an `api` message is not a repeat of a Slack entry whose numbers it shares, nor the reverse; the known set and `in_context` use the sequence number for both origins.
 - **`in_context`** (Decision 40): `true` with no `reply_to`; `true` for a reply to a message the session received, of either kind, and to one it sent; `false` for a reply to a message it never saw; `false`, and delivered, for a reply to a message beyond the cap; absent on history and search.
 - **State file**: the rows of section 4.13, including the two-process case, a crash before and after the write, a rewrite by the MCP server that keeps the three members, and a new session id that starts without them.
-- **Paths** (Ruling 48): `getMemory`, `listMemoryRevisions` and the task reads answer the same for a revision signed by a revoked leaf as before the revocation.
+- **Paths** (Decision 44): `getMemory`, `listMemoryRevisions` and the task reads answer the same for a revision signed by a revoked leaf as before the revocation.
 - **Trust lag** (Decision 33): a receive answer that brings a new intermediate and a human message signed under it verifies; a message under an intermediate the client has not received verifies after the one discover call; with discover unreachable it is dropped with `untrusted_chain`; an answer with several such messages makes one discover call; a discover answer without `trust` is an error.
 - **A forced renewal needs a human** (Decisions 28, 41 and 42): an administrator agent's bearer gets `forbidden` and nothing changes, with and without an idempotency key; a human administrator's bearer succeeds; a human who is not an administrator gets `forbidden`; the host command works with no bearer; `agentmesh signing-keys rotate` refuses `-identity`; the `decide` table has a row for each of the four combinations of flag and claim.
 - **Human claim**: a human bearer signs `human` with the email; an agent bearer for an identity whose row says `human` stores `agent` and no blob; a human bearer for an identity whose row says `agent` signs `human`; a human bearer without the email claim is refused; the Slack path signs origin `slack`; a human append with no origin fails its test; local mode keeps the row's kind.
@@ -431,7 +442,7 @@ ADR 0019 holds the same list together with spec 1's.
 - **Trust number check in the append**: a human append after a committed revocation fails with a retryable `unavailable` and succeeds on retry under a new leaf; an agent's append in the same state succeeds.
 - **No stored row is verified** (section 4.7): a memory edit and a task update succeed on a revision signed by a revoked leaf, and a claim and a release likewise.
 - **Forced renewal report** (Decision 16, as changed): with human messages signed by two leaves, the rotation reports `human_messages` for each revoked leaf; afterwards those messages are dropped with reason `revoked` on receive, history and search, a human's memory revision among them; every agent message reads as before, and every memory and task reads as before through its tools.
-- **Slack**: a Slack message whose `bridge_messages` row was deleted is ingested again as a new human message (section 5 item 8; the test pins what is accepted); two overlapping passes write one message, as today; a Slack message whose timestamp is more than 60 seconds ahead of the server's clock is not signed and is ingested on a later pass (Decision 24).
+- **Slack**: a Slack message whose `bridge_messages` row was deleted is ingested again as a new row, which the server does not stop and the session rules do (Decision 46; the bullet above); two overlapping passes write one message, as today; a Slack message whose timestamp is more than 60 seconds ahead of the server's clock is not signed and is ingested on a later pass (Decision 24).
 - **Leaf expired**: a human append answers 503; an agent's append with a bearer from a healthy replica succeeds; reads continue.
 - **Sizes**: the `size_bytes` column counts the blob on both engines; a 1024 KiB human message is delivered alone under the 4 MiB ceiling; receive's cut with blobs.
 - **One-shot reads**: `agentmesh history` after a revocation it has not seen drops the revoked leaf's human messages, because it called discover first.
@@ -442,7 +453,7 @@ ADR 0019 holds the same list together with spec 1's.
 
 ## 9. Gates
 
-- A new import rule, `provenance-leaf` (in `scripts/m7-exit-checks.sh`, run under `make verify`): `internal/provenance` imports the standard library, go-jose and `internal/pki` only; `internal/pki` imports the standard library only. `scripts/check-gates-selftest.sh` gains a mutation for each, and mutations that drop one verification step each (the chain check, the CRL check, the `seq` check, the channel check, the `typ` check, the thumbprint comparison of a supplied certificate, the algorithm for the key type, the Slack time check) and must fail the matrix; one that delivers a failed human message with another sender kind (it must fail the "dropped, not downgraded" test); one each that drops the open-time rule and the repeat rule; one that signs an agent's append; and one that drops the human claim from the forced renewal.
+- A new import rule, `provenance-leaf` (in `scripts/m7-exit-checks.sh`, run under `make verify`): `internal/provenance` imports the standard library, go-jose and `internal/pki` only; `internal/pki` imports the standard library only. `scripts/check-gates-selftest.sh` gains a mutation for each, and mutations that drop one verification step each (the chain check, the CRL check, the `seq` check, the channel check, the `typ` check, the thumbprint comparison of a supplied certificate, the algorithm for the key type, the Slack time check) and must fail the matrix; one that delivers a failed human message with another sender kind (it must fail the "dropped, not downgraded" test); one each that drops the open-time rule and the repeat rule; one that takes a Slack-origin message's time and ID from `ts` and `seq` (it must fail the Slack test); one that signs an agent's append; and one that drops the human claim from the forced renewal.
 - `scripts/m10-exit-checks.sh`: the MCP-only binary still links exactly the 13 allowlisted modules. go-jose is one of them, so verification is written with go-jose and the allowlist is not extended.
 - `scripts/m6-exit-checks.sh`: `internal/client` keeps its rule; the verifying layer imports no core, server or Store package. `internal/sessionstate` keeps its rule too: the new members are plain data, and the layer, not the state package, verifies. `scripts/m8-exit-checks.sh`: `internal/tui` still imports only `internal/bus` and `internal/version`.
 - The Slack import rule of `scripts/m7-exit-checks.sh` is unchanged: the bridge verifies nothing.
@@ -457,7 +468,7 @@ ADR 0019 holds the same list together with spec 1's.
 
 ## 10. Documents the plan updates
 
-With the implementation: `docs/security/threat-model-server.md` (SD1, SD2, threats 2 to 4 and 8, the glossary, and the TMI mirror), `docs/ops/signing-keys.md` (it must say that a forced renewal through the API needs a human sign-in, and that it makes the human messages of the revoked leaves undeliverable: Decisions 16, 28 and 40), `docs/ops/slack-bridge.md`, `docs/ops/inspection.md`, `docs/ops/backup.md` (a restore puts the sequence counter back; section 4.13 says why that does not make a new human message a repeat), `docs/tui.md`, `docs/journeys.md`, the `using-agentmesh` skill and `CLAUDE.md`. `docs/ops/upgrade.md` no longer needs the text Decision 29 asked for.
+With the implementation: `docs/security/threat-model-server.md` (SD1, SD2, threats 2 to 4 and 8, the glossary, and the TMI mirror), `docs/ops/signing-keys.md` (it must say that a forced renewal through the API needs a human sign-in, and that it makes the human messages of the revoked leaves undeliverable: Decisions 16, 28 and 40), `docs/ops/slack-bridge.md` (a Slack post made before an agent's session opened is not delivered to it as a human message, a catch-up included, and a post ingested twice is taken once: Decision 46), `docs/ops/inspection.md`, `docs/ops/backup.md` (a restore puts the sequence counter back; section 4.13 says why that does not make a new human message a repeat), `docs/tui.md`, `docs/journeys.md`, the `using-agentmesh` skill and `CLAUDE.md`. `docs/ops/upgrade.md` no longer needs the text Decision 29 asked for.
 
 ## 11. Plan rulings on the points the first draft left open
 
@@ -483,36 +494,16 @@ None of these is Eric's decision. The numbers are the first draft's open questio
 
 **Ruling 26: the inspection webhook keeps its shape.** Kept. `sender_kind` is the kind the server will store; the origin is not sent. Not taken: adding `origin` as version 2 of the webhook contract (ADR 0013).
 
-## 12. Open questions for Eric
+## 12. Open questions
 
-Four. Each came up while Decision 40 was folded in: it says what to build and leaves these points to a reading. The text of this spec follows the recommendation in each case and is marked where it does. The numbers continue the series; Open question 28 was settled by Decision 21 (now superseded), and Open question 29, in spec 1, by Decision 36.
+None. The fourth revision put four to Eric, and he answered them on 2026-11-12. The numbers stay in the series.
 
-**Open question 55: memory revisions and task documents that a human writes.** Decision 40 says that only messages appended with sender kind human are signed, and that the signing of memory revisions and task documents is removed. A human's memory edit or task update is both.
+- **Open question 55** (memory revisions and task documents that a human writes): option A, Decision 43. They are signed as human messages by the one signing rule, and the memory and task tools verify nothing. Not taken: no memory revision and no task document signed, with a client exception keyed on a delivered member (B), or with none (C). What A costs after a forced renewal is section 7 item 2.
+- **Open question 56** (where the rules apply): as the text had it, Decision 44. Not taken: verifying on receive alone; the session rules for the TUI; a record of its own for a session that has no state file.
+- **Open question 57** (is a drop reported): option A, Decision 45. Not taken: every drop silent (B).
+- **Open question 58** (what is left of Decisions 3 and 24, and Slack): Decision 46. Decision 3 is superseded. For a Slack-origin message the session rules use the signed Slack timestamp as the time and as the ID. Decision 24's Slack check stays and has a purpose again. Its other check, a `ts` ahead of the client's clock, stays as a drop; Eric left that to the plan (Ruling 53). Not taken: the session rules on `ts` and the sequence number for every origin, with Decision 24's checks removed.
 
-- A. It is a human message like any other: signed by the one rule of section 4.2, verified where it is delivered as a message (receive, history, search), and never verified by the memory and task tools. A human's task update then reaches the agents subscribed to the task list as a verified human message. After a forced renewal the human-written revisions of the revoked leaves are dropped from receive, history and search, and stay readable and editable through the tools. What is left of "unreadable": a memory whose current revision is one of them is not found by search until someone edits it again, and Decision 40 removes "content that a forced renewal makes unreadable". A human's task update also signs the sibling revisions its re-rank writes.
-- B. No memory revision and no task document is signed, whoever writes it. The client then has to tell a document from a message by a delivered member (`memory_id`, or the channel's kind), which is a database column, and hand a human's document on unverified; a row dressed as a document would reach an agent marked `human`.
-- C. As B, with no exception on the client: a human's document is dropped wherever human messages are verified. A human's task update then never reaches an agent as a message.
-- Recommendation: A. The text follows it (Ruling 46).
-
-**Open question 56: where the rules apply.** Decision 40 speaks of the receiving session.
-
-- Which reads verify. The text verifies on receive, history and search, and not in the memory and task tools, so that a forced renewal never makes a memory or a task unreadable. The alternative is to verify on receive alone and leave history and search as the database holds them, relying on the agent text.
-- The TUI. The text applies verification and no session rule to a `Bus` opened with the human sign-in. With the session rules the TUI, which has no state file, would show no human message that reaches it through receive.
-- A session with no state file. The text drops every human message for an agent's session that has none (`agentmesh session open` with `receive -session`). The alternative is to give such a session a record of its own.
-- Recommendation: as the text has it (Ruling 48).
-
-**Open question 57: is a drop reported.** Decision 40 says a repeat is dropped silently and a failed message is dropped, not downgraded.
-
-- A. A drop other than a repeat is reported as an entry with the channel, the sequence number and the reason, and no content; the agent tells its operator.
-- B. Every drop is silent; only the client log has it.
-- Recommendation: A. An instruction that disappears without a trace is hard for an operator to notice. The text follows it (Ruling 49).
-
-**Open question 58: what is left of Decisions 3 and 24, and Slack.** Decision 40 does not name them.
-
-- Decision 3 (the `replayed` and `stale` marks, `human_stale_hours`). The text treats it as replaced by the two drops of Decision 40 and removes the marks and the setting. Is that right?
-- Decision 24 (a Slack timestamp no later than `ts` plus 60 seconds; a `ts` ahead of the client's clock marked or refused). Both checks existed to keep the stale bound honest, and there is no stale bound now. The text keeps them, because the decision is Eric's, and turns the mark into a drop. Should they be removed?
-- Slack. With Decision 20 gone, a Slack message that is ingested again is a new human message with a new time (section 4.17). The session rules could use the Slack timestamp as the time and as the ID of a Slack-origin message; an old post ingested again would then be dropped as before the session or as a repeat. The text does not do this, because Decision 40 names the signed timestamp and removes the de-duplication by Slack timestamp.
-- Recommendation: confirm the first; remove the checks of the second unless the third is taken, in which case the Slack check has a purpose again.
+Earlier: Open question 28 was settled by Decision 21 (now superseded), and Open question 29, in spec 1, by Decision 36.
 
 ## 13. Plan rulings made while folding in the security review (2026-11-12)
 
@@ -530,22 +521,31 @@ None of these is Eric's decision. Each filled in a detail that one of his ruling
 
 ## 14. Plan rulings made while folding in Decision 40 (2026-11-12)
 
-None of these is Eric's decision. Each fills in a detail that Decision 40 needed and did not give, and he may overrule any of them. Four of them rest on a reading that section 12 puts to him. The numbers continue the series; Rulings 42 to 45 are in spec 1.
+Each filled in a detail that Decision 40 needed and did not give. Three of them Eric has since made his decisions (Rulings 46, 48 and 49: Decisions 43, 44 and 45); they are kept here for their reasoning. The others are not his, and he may overrule any of them. The numbers continue the series; Rulings 42 to 45 are in spec 1, and 55 to 58 were the open questions.
 
-**Ruling 46: one signing rule** (Open question 55). The server signs every append with sender kind human and asks nothing else: not the channel's kind, not whether the row is a revision. A human's memory edit and task update are therefore signed. Not taken: an exception for memory and task channels, which needs a rule on the client keyed on a database column.
+**Ruling 46: one signing rule.** Now Eric's Decision 43. The server signs every append with sender kind human and asks nothing else: not the channel's kind, not whether the row is a revision. A human's memory edit and task update are therefore signed. Not taken: an exception for memory and task channels, which needs a rule on the client keyed on a database column.
 
-**Ruling 47: the message ID is the sequence number.** Decision 40 asks for a unique message ID. The sequence number is one: one counter for the installation, the primary key of `messages`, and the value a `reply_to` already names (section 3 item 6). So the payload's `seq` is the ID, the client checks it against the delivered `seq` (step 10), and the parent ID and the message ID are in one number space, which is what `in_context` needs. A restore from backup puts the counter back, so the seen set keeps the signed `ts` with each number and a repeat needs both to match. Not taken: a random ID made at signing, which survives a restore by itself but is a second ID beside the one every other part of the system uses, and does not bind the blob to its row.
+**Ruling 47: the message ID is the sequence number.** Decision 40 asks for a unique message ID. The sequence number is one: one counter for the installation, the primary key of `messages`, and the value a `reply_to` already names (section 3 item 6). So the payload's `seq` is the ID, the client checks it against the delivered `seq` (step 10), and the parent ID and the message ID are in one number space, which is what `in_context` needs. A restore from backup puts the counter back, so the seen set keeps the signed `ts` with each number and a repeat needs both to match. Not taken: a random ID made at signing, which survives a restore by itself but is a second ID beside the one every other part of the system uses, and does not bind the blob to its row. A Slack-origin message has another ID for the session rules, by Decision 46 (Ruling 53).
 
-**Ruling 48: where the rules apply** (Open question 56). Verification: receive, history and search, for every consumer on a server profile. Not the memory and task tools: Decision 40 removes "a forced renewal makes memories and tasks unreadable", and with no read of a dropped message's content (Decision 29 is gone) a memory dropped by its tool could not be recovered by anyone. The exception is by path, which the client knows, and not by a member of the answer. Session rules: receive only, and not for a `Bus` opened with the human sign-in. A session of an agent identity without a state file drops human messages. Not taken: creating a state file for a session the MCP server does not own; `wait`, `watch` and the hooks find sessions by those files.
+**Ruling 48: where the rules apply.** Now Eric's Decision 44. Verification: receive, history and search, for every consumer on a server profile. Not the memory and task tools: Decision 40 removes "a forced renewal makes memories and tasks unreadable", and with no read of a dropped message's content (Decision 29 is gone) a memory dropped by its tool could not be recovered by anyone. The exception is by path, which the client knows, and not by a member of the answer. Session rules: receive only, and not for a `Bus` opened with the human sign-in. A session of an agent identity without a state file drops human messages. Not taken: creating a state file for a session the MCP server does not own; `wait`, `watch` and the hooks find sessions by those files.
 
-**Ruling 49: what a drop reports** (Open question 57). The `dropped` entry: channel, `seq`, reason. The reasons are those of section 4.10 and `postdated`, `before_session` and `no_session_state`. A repeat reports nothing. This keeps the shape of the approved ruling on a failed message (ADR 0019, approved ruling 14: an entry with channel, sequence number and reason, the cursor still advances, the agent tells the operator) under a new name.
+**Ruling 49: what a drop reports.** Now Eric's Decision 45. The `dropped` entry: channel, `seq`, reason. The reasons are those of section 4.10 and `postdated`, `before_session` and `no_session_state`. A repeat reports nothing. This keeps the shape of the approved ruling on a failed message (ADR 0019, approved ruling 14: an entry with channel, sequence number and reason, the cursor still advances, the agent tells the operator) under a new name.
 
-**Ruling 50: the open time.** The client's clock at the first registration of the session, which the state file already holds as `opened_at`. It is compared with the server-signed `ts` exactly. The two clocks differ, and no leeway repairs that: a leeway that saves a genuine message from a fast client clock also lets in a message from before the session. Decision 40's sentence is "a message sent before a brand-new session opened is never delivered as human", so the comparison errs toward dropping, and the drop is reported. Not taken: a 60-second leeway; the server's open time in the session answer, which is a database value on a resume.
+**Ruling 50: the open time.** The client's clock at the first registration of the session, which the state file already holds as `opened_at`. It is compared with the server-signed `ts` exactly. The two clocks differ, and no leeway repairs that: a leeway that saves a genuine message from a fast client clock also lets in a message from before the session. Decision 40's sentence is "a message sent before a brand-new session opened is never delivered as human", so the comparison errs toward dropping, and the drop is reported. For a Slack-origin message the time compared is the Slack timestamp (Decision 46), exactly as well. Not taken: a 60-second leeway; the server's open time in the session answer, which is a database value on a resume.
 
-**Ruling 51: the state file's new members.** `human_seen`, `known` and `pending`, as section 4.13 has them. An ID enters the seen set when the session has moved on from the batch that held it, not when the batch is delivered, so that the server's redelivery of an unacknowledged batch still works. The known set is capped at 4096 sequence numbers, because it grows with every message and only feeds a note. Not taken: marking a message seen at delivery, which turns a redelivered batch into repeats.
+**Ruling 51: the state file's new members.** `human_seen`, `known` and `pending`, as section 4.13 has them. An ID enters the seen set when the session has moved on from the batch that held it, not when the batch is delivered, so that the server's redelivery of an unacknowledged batch still works. The known set is capped at 4096 sequence numbers, because it grows with every message and only feeds a note. A seen entry is of one of two kinds (Ruling 53), and a second message with the same ID inside one batch is a repeat. Not taken: marking a message seen at delivery, which turns a redelivered batch into repeats.
 
 **Ruling 52: `in_context`.** A boolean on a human message that a receive delivers. "Received" is delivered to this session by receive, of either kind, a dropped message excepted; "sent" is a send made with this session's id. History and search set nothing. Not taken: counting what the session read through history as received; the layer would have to know which session a one-shot read belongs to.
 
-**Ruling 53: the time checks without the stale bound** (Open question 58). Decision 24's two checks stay as its text has them. Its `postdated` mark becomes a drop, because Decision 24 allows "marks or refuses" and no mark is left. The bound it restated ("history after the stale bound") is gone with Decision 3's `stale`; section 7 item 3 restates the risk for this design. The setting `human_stale_hours` and approved ruling 1 of ADR 0019 go.
+**Ruling 53: Decision 24's checks, and the Slack time and ID** (for Decisions 24 and 46). Decision 46 is Eric's: Decision 3 is superseded, the session rules use the signed Slack timestamp as the time and the ID of a Slack-origin message, and Decision 24's Slack check stays. What he left to the plan:
 
-**Ruling 54: the origin stays.** Decision 40's list of what is bound does not name the origin (the signed-in email; for Slack the user id, the reported email and the Slack timestamp). Decisions 2 and 18 put it in the blob and on the screen, and Decision 40 does not withdraw them, so it stays in the payload and is shown.
+- **The Slack time** is the Slack timestamp, seconds and microseconds, cut to milliseconds. It is compared with the open time exactly (Ruling 50).
+- **The Slack ID** is the signed channel id with the Slack timestamp as text. A Slack timestamp is unique within one Slack channel, and the signed origin does not name the Slack channel (Decision 31), so the channel id stands in for it: a channel has at most one bridge. A bridge that was pointed at another Slack channel could bring a second message with the same timestamp. With microseconds in the timestamp that is not expected, and it would cost one dropped message. An edit of a Slack message is no second message with the first one's timestamp: the bridge ingests no message that carries a subtype other than `thread_broadcast`, and an edit arrives as one (`internal/slackbridge/inbound.go:280`).
+- **Two kinds of ID in one seen set.** An entry says which kind it holds, and a lookup stays within the kind that the message's signed `origin.source` names (section 4.13). Nothing is packed into one number space, so there is nothing to collide.
+- **`in_context` and the known set** keep using sequence numbers for both origins.
+- **Decision 24's other check**, a `ts` more than 60 seconds ahead of the client's clock, stays as written, as a drop with the reason `postdated`, read against `ts` for both origins. It was a mark; Decision 24 allows "marks or refuses", and no mark is left. It no longer guards a freshness bound, because there is none. What it still does: it refuses a human message whose signer's clock runs ahead of the client's, and that is the direction in which the before-session rule fails open, because a message from before the session would then carry a time after it. Its cost: a client whose own clock is more than 60 seconds behind the server's sees every human message as dated ahead and drops them all, each reported with the reason. That cost is why the third revision made it a mark; a mark meant "history, not an instruction", so the message was not acted on then either, and with a drop the agent is still told. It does not contradict Decision 46, so it was not put to Eric again; he may overrule it.
+- The setting `human_stale_hours` and approved ruling 1 of ADR 0019 go with Decision 3.
+
+Not taken: reading the `postdated` check against the Slack timestamp for a Slack-origin message; step 9 of section 4.10 already ties that timestamp to `ts`.
+
+**Ruling 54: the origin stays.** Decision 40's list of what is bound does not name the origin (the signed-in email; for Slack the user id, the reported email and the Slack timestamp). Decisions 2 and 18 put it in the blob and on the screen, and Decision 40 does not withdraw them, so it stays in the payload and is shown. Decision 46 has since come to depend on it: the session rules read the signed `origin.source` and `origin.slack_ts`.
