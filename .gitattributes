@@ -10,3 +10,6 @@ Dockerfile* text eol=lf
 release/*.tmpl text eol=lf
 internal/slackbridge/testdata/** text eol=lf
 internal/arazzotest/testdata/** text eol=lf
+tools/catscheck/testdata/** text eol=lf
+internal/conformance/bus/testdata/** text eol=lf
+scripts/testdata/** text eol=lf
