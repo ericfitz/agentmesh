@@ -3,15 +3,17 @@
 ## 1. Status
 
 - Approved by Eric, 2026-11-11 (second draft plus Decision 21). The first draft is commit `d3f5b56`; the second folds in Eric's rulings of 2026-11-11 on that draft's open questions. Nothing here is built.
+- Third revision, 2026-11-12: it folds in Eric's rulings on the security review of the two approved specs (ADR 0019, Decisions 22 to 35). The rulings are his. The text that carries them out, and the plan rulings it needed (section 12), have not been approved by him yet.
 - This is spec 1 of 2. Spec 2, `docs/superpowers/specs/2026-11-11-signed-messages-design.md`, puts signed messages on top of this hierarchy. Spec 1 ships alone (Decision 13): it moves the server's signing keys out of the database and makes bearers verify by a certificate chain instead of by database rows.
 - The record of decisions is ADR 0019 (`docs/adr/0019-certificate-hierarchy-and-signed-messages.md`).
 - It replaces the abandoned server key file design (`docs/superpowers/specs/2026-11-10-server-key-file-design.md`; ADR 0012, "Server key file design abandoned (2026-11-11)").
 - Labels used below:
   - **(Eric 2026-11-11, Decision N)**: one of Eric's twenty-one decisions of 2026-11-11, numbered as in ADR 0019. Decisions 16 to 20 are his rulings on the first draft's open questions, Decision 21 his ruling on the second draft's Open question 28.
+  - **(Eric 2026-11-12, Decision N)**: one of his rulings on the security review, Decisions 22 to 35 in ADR 0019.
   - **(plan ruling)**: a proposal made while writing the design. Eric approved the ones that come from the three design sections of 2026-11-11 as part of those sections. The others are not his decisions, and he may overrule any of them.
-  - **Ruling N**: the plan ruling on what the first draft called Open question N. Section 11 lists them (3, 4, 6 to 13 and 24 here; 14 to 16, 18 to 22, 25 and 26 are in spec 2) with the alternative not taken. They are not Eric's decisions.
-- Neither spec has an open question.
-- Every statement about today's code was checked against the tree at commit `d3f5b56` and carries a `path:line` citation.
+  - **Ruling N**: for N up to 26, the plan ruling on what the first draft called Open question N. Section 11 lists them (3, 4, 6 to 13 and 24 here; 14 to 16, 18 to 22, 25 and 26 are in spec 2) with the alternative not taken. Rulings 30 to 36 (section 12 here; 37 to 41 are in spec 2) are the plan rulings made on 2026-11-12 for the details the review rulings did not give; they answer no open question. None of them is Eric's decision.
+- This spec has one open question: Open question 29 (section 13), the identifier of the extended key usage. Spec 2 has none.
+- Every statement about today's code was checked against the tree at commit `d3f5b56` and carries a `path:line` citation. The citations added on 2026-11-12 were checked at commit `5e133d3`; nothing under `internal/`, `api/`, `scripts/` or `cmd/` changed between the two.
 
 ## 2. What this changes, in short
 
@@ -20,11 +22,11 @@ Today the server signs bearers with a key whose public half, and by default whos
 After this spec:
 
 - A root certificate authority (CA) sits outside the server. Its certificate is pinned in the server's configuration and on every client (Eric's outline). agentmesh ships a small tool to run one (Decision 9).
-- Each installation holds one intermediate CA key, in a PEM file or a key service, with a certificate the root issued (Decisions 4 and 10).
+- Each installation holds one intermediate CA key, in a PEM file or a key service, with a certificate the root issued (Decisions 4 and 10). The certificate names the installation, and verifiers accept no other installation's (Decision 23).
 - Each server process makes its own signing key in memory at start and has the intermediate issue a short-lived leaf certificate for it. The key is never written anywhere (Decision 4).
 - Bearers are signed by the leaf and verified by the chain to the pinned root. No key and no trust decision about a key comes from the database.
 - Revocation is by certificate revocation lists (CRLs), delivered to clients inside ordinary responses (Decisions 6 and 12).
-- A client gets the root, the chain and the CRLs from the discover document and pins the root on first contact, over HTTPS by default (Decision 19).
+- A client gets the root, the chain and the CRLs from the discover document and pins the root, with the installation's name, on first contact, over HTTPS by default (Decisions 19 and 23). A profile can name the root it expects (Decision 30).
 - The `signing_keys` table, the in-database key provider and the two rotation maintenance jobs are removed.
 
 What it does not change (Decision 15): the server still reads ACLs, the administrator flag, identity rows and login keys from the database and believes them. Write access to the database stays equal to being the application's administrator, replicas and restores included.
@@ -65,8 +67,8 @@ All certificates are X.509 version 3. None carries a DNS name, an IP address or 
 | Certificate | Key | Issued by | Validity | Extensions |
 | --- | --- | --- | --- | --- |
 | Root | Any algorithm Go's `crypto/x509` verifies; the root tool makes ECDSA P-256 | Itself | Chosen by the CA; the root tool default is 3650 days | CA true; key usage certificate signing and CRL signing; subject key identifier |
-| Intermediate | ECDSA P-256 | The root | Chosen by the CA; the root tool default is 365 days | CA true, path length 0 (critical); key usage certificate signing and CRL signing (critical); subject key identifier; authority key identifier |
-| Leaf | Ed25519, made in memory by the server process | The intermediate | W, default 7 days (section 4.6) | CA false (critical); key usage digital signature (critical); subject and authority key identifiers; random 128-bit serial number |
+| Intermediate | ECDSA P-256 | The root | Chosen by the CA; the root tool default is 365 days | CA true, path length 0 (critical); key usage certificate signing and CRL signing (critical); subject key identifier; authority key identifier; the agentmesh extended key usage (below) |
+| Leaf | Ed25519, made in memory by the server process | The intermediate | W, default 7 days (section 4.6) | CA false (critical); key usage digital signature (critical); subject and authority key identifiers; random 128-bit serial number; the agentmesh extended key usage |
 
 Plan rulings:
 
@@ -75,15 +77,29 @@ Plan rulings:
 3. The intermediate must carry a subject key identifier and the CRL signing usage, because Go's `x509.CreateRevocationList` refuses an issuer without them (Go 1.27, `crypto/x509/x509.go`, `CreateRevocationList`).
 4. A leaf's "not after" is never later than its intermediate certificate's "not after".
 
-**The profile an outside CA must issue** (Decision 9) is the Intermediate row above, for the public key in the CSR that `ca csr` prints, signed with any algorithm Go's `crypto/x509` verifies, with no name constraints. The operator guide states it in these words and gives an `openssl` example.
+**The installation name** (Eric 2026-11-12, Decision 23). Several installations can sit under one root (Eric's outline), and an outside CA's root may have issued CA certificates for other purposes. So that one installation does not accept another's certificates, bearers or messages, an intermediate certificate names its installation: its subject common name is the installation's name. The server knows its own name from the setting `installation_name` (section 4.12), `ca csr` puts that name in the request, a client pins the name together with the root on first contact (section 4.10), and both verifiers accept only an intermediate whose subject common name is that name (the chain check below). The name's form, the setting's name and how the client receives it are Ruling 30. The root's administrator gives each installation under one root a name of its own; agentmesh cannot check that for an outside CA, and the operator guide says so.
+
+**The agentmesh extended key usage** (Decision 23). The intermediate and the leaf carry one extended key usage that means "agentmesh signing", so a CA certificate the same root issued for another purpose is not an agentmesh intermediate. The root does not carry it. Go's chain verification asks for the server authentication usage unless told otherwise (Go 1.27, `crypto/x509/verify.go:623-625`), so the verifiers ask the library for any usage and check this one themselves, on the intermediate and on the leaf. The shape is Ruling 31. The identifier's value is not chosen: Open question 29 (section 13).
+
+**The chain check** is one function of `internal/pki` that both verifiers call: the server for a bearer (section 4.7) and, with spec 2, every client and the server for a message (spec 2 section 4.10). A chain is accepted only when all of these hold:
+
+1. It has exactly three certificates: the leaf, one intermediate and the pinned root (Eric 2026-11-12, Decision 32).
+2. Each signature verifies, and each of the three certificates is inside its validity period at the checked time: the current time for a bearer, the signed time for a message (Ruling 13; Ruling 36 for the root).
+3. The intermediate has the profile of the table above, its subject common name is the installation name the verifier holds, and it carries the agentmesh extended key usage (Decision 23).
+4. The leaf is CA false with the digital signature usage and carries the agentmesh extended key usage (Decisions 23 and 32).
+5. The leaf's validity period, "not after" minus "not before", is no longer than 720 hours plus 60 seconds: the top of `leaf_validity_hours` plus the 60 seconds a leaf's start is set back (Eric 2026-11-12, Decision 25). A process that honors `leaf_validity_hours` never issues a longer one, so a longer one did not come from the leaf manager, and without this rule it would stay valid until the intermediate expires.
+
+Revocation is checked beside the chain check (section 4.8).
+
+**The profile an outside CA must issue** (Decision 9) is the Intermediate row above, with the installation name as the subject common name and with the agentmesh extended key usage, for the public key in the CSR that `ca csr` prints, signed with any algorithm Go's `crypto/x509` verifies, with no name constraints. Every certificate the CA issues for one key carries the same subject key identifier (Ruling 33). The operator guide states the profile in these words and gives an `openssl` example. It also says that revoking an intermediate means revoking every certificate issued for its key (Decision 26; section 4.8), and that each installation under the root gets a name of its own.
 
 ### 4.3 The root tool (Eric 2026-11-11, Decision 9)
 
 `agentmesh ca` is a small root CA for development, test fixtures and small production installations. It is part of the `agentmesh` binary only (not `agentmesh-mcponly`). It never contacts a server or a database. The command names are a plan ruling Eric approved.
 
 - `agentmesh ca init -dir DIR [-name NAME] [-days N]` makes the root key and the self-signed root certificate. It writes `DIR/root.key` (PKCS#8 PEM, mode 0600), `DIR/root.pem` and `DIR/state.json` (issued certificates, revocations, the CRL number), and prints the path of `root.pem` and its thumbprint.
-- `agentmesh ca sign -dir DIR [-days N] CSR_FILE` checks the CSR's own signature, issues an intermediate certificate with the profile of section 4.2, records it in `state.json` and prints the certificate as PEM.
-- `agentmesh ca revoke -dir DIR CERT_FILE` marks an intermediate this root issued as revoked, raises the CRL number by one, writes `DIR/root.crl` and prints the CRL as PEM. The CRL lists every intermediate ever revoked.
+- `agentmesh ca sign -dir DIR [-days N] CSR_FILE` checks the CSR's own signature, issues an intermediate certificate with the profile of section 4.2, records it in `state.json` and prints the certificate as PEM. The subject common name is the CSR's, which is the installation name (Decision 23); a CSR without one is refused. The subject key identifier is derived from the public key, so every certificate for one key carries the same one (Ruling 33). The command prints the name on stderr and says so when `state.json` already records that name for another key: that is right when one installation changes its key and wrong for a second installation. It refuses nothing on that ground (Ruling 30).
+- `agentmesh ca revoke -dir DIR CERT_FILE` marks as revoked the intermediate in `CERT_FILE` and every other certificate in `state.json` with the same public key, and names each certificate it revoked on stderr (Eric 2026-11-12, Decision 26). The new CRL's number is the time of issue in Unix milliseconds, or the previous number plus one when that is higher (Eric 2026-11-12, Decision 27; Ruling 34). It writes `DIR/root.crl` and prints the CRL as PEM. The CRL lists every intermediate ever revoked.
 
 The administrator keeps `DIR` offline (Decision 9). The package behind the tool (`internal/pki/rootca`, a plan ruling) is what test fixtures call in process.
 
@@ -92,8 +108,8 @@ State (repeat, overlap, failure):
 | Command | Second run | Two runs at once | After a failed run |
 | --- | --- | --- | --- |
 | `ca init` | Refuses (exit 2) when `DIR` already holds a root; it never overwrites a key | One wins the exclusive create of `root.key`; the other refuses | A run that died before `root.pem` was written leaves `root.key` only; `init` refuses and names the file to remove |
-| `ca sign` | Issues another certificate with a new serial number for the same CSR; both are valid until expiry or revocation | Serialized by a lock file in `DIR` | `state.json` is replaced atomically before the certificate is printed; a certificate recorded but never printed is listed by `state.json` and can be revoked |
-| `ca revoke` | The certificate is already revoked: prints the current CRL, number unchanged | Serialized by the lock file | The CRL file and `state.json` are replaced atomically, state first; a rerun completes it |
+| `ca sign` | Issues another certificate with a new serial number for the same CSR; both are valid until they expire or the key is revoked | Serialized by a lock file in `DIR` | `state.json` is replaced atomically before the certificate is printed; a certificate recorded but never printed is listed by `state.json` and can be revoked |
+| `ca revoke` | Every certificate of that key is already revoked: prints the current CRL, number unchanged | Serialized by the lock file | The CRL file and `state.json` are replaced atomically, state first; a rerun completes it |
 
 Exit codes: 0 done, 2 usage or a refused input, 1 an I/O failure.
 
@@ -108,15 +124,15 @@ Exactly one of the two settings is set. The in-database provider is deleted, and
 
 The host commands (no listener, no credential; they take `-config`, `-sqlite`, `-postgres` and `-set` like the other `server admin` commands):
 
-- `agentmesh server admin ca csr [-name NAME] [-out FILE]` prints a certificate signing request for the intermediate key.
+- `agentmesh server admin ca csr [-out FILE]` prints a certificate signing request for the intermediate key, with the setting `installation_name` as its subject common name (Decision 23). The earlier `-name` flag is gone: the setting is the one source of the name (Ruling 30).
   - File: when the key file does not exist, it creates the key (written through a temporary file and linked into place without replacing an existing file), then prints the CSR. When the file exists, it prints a CSR for that key; this is how a certificate is renewed.
   - Key service: the operator creates the key in the service first; the server never creates, deletes or schedules deletion of an external key, as today (`docs/ops/signing-keys.md`, "Trust boundary"). `ca csr` resolves the URI with `Provider.Next` and has the service sign the CSR (Ruling 9).
   - It writes nothing to the database.
-- `agentmesh server admin ca install CERT_FILE` checks the certificate and stores it. The checks: it chains to the pinned root and is inside its validity period; CA true with path length 0; certificate signing and CRL signing usages; a subject key identifier; its public key is the configured intermediate key's; it is not on the stored root CRL. Each failure names the failed check and exits 2.
+- `agentmesh server admin ca install CERT_FILE` checks the certificate and stores it. The checks: it chains to the pinned root and is inside its validity period; CA true with path length 0; certificate signing and CRL signing usages; a subject key identifier; its public key is the configured intermediate key's; its subject common name is `installation_name` and it carries the agentmesh extended key usage (Decision 23); its subject key identifier is the one that the stored certificates of the same public key carry (Ruling 33); its key is not revoked by the stored root CRL (Decision 26). Each failure names the failed check and exits 2.
 - `agentmesh server admin ca install-crl CRL_FILE` checks a root CRL (signed by the pinned root; a number above the stored root CRL's) and stores it.
-- `agentmesh server admin ca status` prints the pinned root's thumbprint, each stored intermediate (thumbprint, validity, whether it matches the configured key, whether the root CRL lists it), the CRL numbers, the trust number (section 4.8) and the unexpired leaves.
+- `agentmesh server admin ca status` prints the pinned root's thumbprint, the installation name, each stored intermediate (thumbprint, validity, whether it matches the configured key, whether the root CRL lists it), the CRL numbers, the trust number (section 4.8) and the unexpired leaves.
 
-**Renewal** of the intermediate certificate is `ca csr` and `ca install` again with the same key. Earlier intermediate certificates stay in the table, so history signed under an expired intermediate still verifies, and history under a revoked one does not (approved section 3). A running process picks the newest valid certificate for its key the next time it issues a leaf; no restart is needed.
+**Renewal** of the intermediate certificate is `ca csr` and `ca install` again with the same key. Earlier intermediate certificates stay in the table, so history signed under an expired intermediate still verifies, and history under a revoked one does not (approved section 3). Revocation is of the key: once any certificate of an intermediate key is on the root CRL, no certificate of that key verifies anything (Eric 2026-11-12, Decision 26; section 4.8). Intermediate rows are never deleted, the revoked and the expired included, because a CRL names a serial number and only the certificate says which key that is (Ruling 33). A running process picks the newest valid certificate for its key the next time it issues a leaf; no restart is needed.
 
 **Changing the intermediate key** is: point the setting at the new key, `ca csr`, `ca install`, restart every replica. During the roll, replicas with the old key keep issuing leaves under the old certificate. Ruling 4 says how the old key's leaves are cut off.
 
@@ -124,7 +140,7 @@ The host commands (no listener, no credential; they take `-config`, `-sqlite`, `
 
 ### 4.5 The Store
 
-One new table holds everything public (approved section 1): intermediate certificates, leaf certificates and CRLs. Every row is self-verifying: a certificate or CRL that does not check out against the pinned root is ignored and logged, never trusted. There is no file distribution to replicas.
+One new table holds everything public (approved section 1): intermediate certificates, leaf certificates and CRLs. Every row is self-verifying: a certificate or CRL that does not check out against the pinned root is ignored and logged, never trusted. An intermediate row that is not signed by the pinned root, names another installation or lacks the agentmesh extended key usage (rule 3 of the chain check, section 4.2) is ignored and logged the same way (Decision 23). An expired or revoked intermediate row is not ignored: it serves history, and it says which key a revoked serial number belongs to (section 4.4). There is no file distribution to replicas.
 
 `trust_material` (both engines; a plan ruling on names):
 
@@ -143,6 +159,7 @@ One new table holds everything public (approved section 1): intermediate certifi
 Rules:
 
 - At most one `root_crl` row, one `leaf_crl` row per `issuer_key` (Ruling 4), and exactly one `trust_number` row (created with the schema, value 0).
+- Intermediate rows are never deleted (section 4.4). Leaf rows are (section 4.8).
 - The Store serves these rows as facts and applies no rule to them, like every other table (ADR 0004 addendum "Access facts, not rules"). New `Tx` methods: `PutTrustCertificate`, `TrustCertificates(kind)`, `TrustCertificateByThumbprint`, `PutCRL` (replaces the row only when the new number is higher; otherwise `ErrConflict`), `CRLs`, `TrustNumber`, `BumpTrustNumber`, `ExpiredLeafCertificates(before, limit)` and `DeleteTrustCertificates(ids)`.
 - Schema: changed in place in both `0001_initial.sql` files; the schema version stays 1; no migration; local data is recreated (the pre-release rule, CLAUDE.md, Eric 2026-10-25).
 - The Store lock `trust` (`Store.Locks`, `internal/store/lock.go:11-21`) serializes every change to CRLs. A change and its trust number bump commit in one transaction (approved section 3).
@@ -158,7 +175,7 @@ Each server process holds one Ed25519 signing key, generated at start, kept in m
 1. Generate the key pair in memory.
 2. Build the certificate (section 4.2) with "not before" = now minus 60 seconds (Ruling 13) and "not after" = now plus W, cut to the intermediate's "not after".
 3. Have the intermediate key sign it: a local signature for the file, one sign call for a key service, bounded by the existing 30-second limit (`internal/core/signingkeys/service.go:27-30`).
-4. Verify the new certificate against the intermediate certificate and the pinned root. A failure here means the configured key is not the certificate's key; it is logged and counts as a failed issue.
+4. Verify the new certificate against the intermediate certificate and the pinned root with the chain check of section 4.2. A failure here means the configured key is not the certificate's key; it is logged and counts as a failed issue.
 5. Insert the leaf's row.
 6. Only then start signing with it.
 
@@ -178,11 +195,11 @@ A crash or failure between steps 3 and 6 leaves at most an unused certificate; a
 
 - A bearer is the same `at+jwt` as today, signed by the current leaf (EdDSA). Its header carries `x5t#S256`, the leaf certificate's thumbprint, and `kid` with the same value (set as extra headers the way `kid` is set today, `internal/auth/token/issuer.go:312-313`).
 - A bearer's expiry is the earlier of now plus its lifetime and the leaf's "not after". The configuration is refused (exit 2) when `token_lifetime_seconds` or an issuer's human lifetime is more than W/2, so a bearer minted by a healthy process always gets its full lifetime (approved section 1: "Bearer lifetime capped at W/2").
-- Verification, on any replica: read the thumbprint from the header; take the leaf from the process's verified set, or load its row by thumbprint (the existing single-flight reload for an unknown key, `issuer.go:198-226`); verify the chain leaf, intermediate, pinned root at the current time with the existing 60-second leeway (`issuer.go:27-28`); refuse a leaf on the leaf CRL or under an intermediate on the root CRL; then the checks of today (type, signature, issuer, audience, expiry, subject).
-- A row is never trusted for what it claims. A leaf row that does not chain to the pinned root is the same as no row. This closes threat 2: inserting a key into the database no longer makes it trusted.
+- Verification, on any replica: read the thumbprint from the header; take the leaf from the process's verified set, or load its row by thumbprint (the existing single-flight reload for an unknown key, `issuer.go:198-226`); run the chain check of section 4.2 at the current time with the existing 60-second leeway (`issuer.go:27-28`), which accepts exactly leaf, intermediate, pinned root, an intermediate named for this installation, the agentmesh usage on both and a leaf lifetime within the ceiling (Decisions 23 and 25); refuse a leaf that is revoked or whose intermediate key is revoked (section 4.8; Decisions 26 and 27); then the checks of today (type, signature, issuer, audience, expiry, subject).
+- A row is never trusted for what it claims. A leaf row that does not chain to the pinned root is the same as no row. Chaining to the root is not enough either: a leaf under another installation's intermediate, or under a CA certificate the root issued for another purpose, fails the chain check even when both rows are present (Decision 23). This closes threat 2: inserting a key into the database no longer makes it trusted.
 - Replicas: a bearer minted by one replica is accepted by another through the leaf's row and the shared intermediate. Each process reloads the trust material every 30 seconds (the existing `token.ReloadInterval`) and at once after a local change.
 
-### 4.8 Revocation (Eric 2026-11-11, Decisions 5, 6, 12 and 16; approved section 1)
+### 4.8 Revocation (Eric 2026-11-11, Decisions 5, 6, 12 and 16; Eric 2026-11-12, Decisions 25, 26 and 27; approved section 1)
 
 **Two kinds of CRL**, both standard X.509 CRLs with a CRL number:
 
@@ -191,13 +208,15 @@ A crash or failure between steps 3 and 6 leaves at most an unused certificate; a
 
 **What revocation means** (Decision 5): a revoked leaf, or a leaf under a revoked intermediate, verifies nothing, whatever it signed and whenever. Expiry alone never invalidates history: with spec 2, a message verifies when its signed time is inside its leaf's validity period.
 
+**An intermediate is revoked by key** (Eric 2026-11-12, Decision 26). After one renewal an intermediate key has two certificates, and a leaf signed by that key chains through either. A root CRL lists serial numbers. So a verifier finds, among the intermediate certificates it holds, each one whose serial number is on the root CRL, and treats that certificate's key as revoked: every intermediate certificate with the same subject key identifier is revoked with it, whichever one the CRL lists. This also covers an outside CA whose operator revokes only one of a key's certificates. A listed serial number that matches no certificate the verifier holds tells it nothing about a key, which is why `ca revoke` and the outside-CA guide revoke every certificate of the key, and why no party drops an intermediate certificate (Ruling 33).
+
 **Forced renewal.** The existing rotate operation becomes "issue a new leaf here and put every other unexpired leaf on the CRL" (approved section 1; Eric's outline: "a server API forces immediate renewal with revocation of the previous certificate"). It always revokes and is never refused for being too soon; `revoke_previous` and the cooldown are gone (Ruling 6). In the handling process:
 
-1. Check the caller is an administrator and look for a receipt of the idempotency key, as today (`internal/core/signingkeys/api.go:76-103`).
+1. Check the caller is an administrator and look for a receipt of the idempotency key, as today (`internal/core/signingkeys/api.go:76-103`). With spec 2 the caller's bearer must also carry the human claim (Eric 2026-11-12, Decision 28; spec 2 section 4.18); in this spec alone the administrator flag is the whole check.
 2. Take the Store lock `trust`. If another process holds it, answer a retryable `unavailable`.
 3. Reload the trust material.
 4. Issue a new leaf (section 4.6, steps 1 to 4).
-5. Build the next leaf CRL: every entry of the current one, plus every unexpired leaf row under this intermediate key except the new leaf; number = current + 1. Sign it with the intermediate key.
+5. Build the next leaf CRL: every entry of the stored one, every revoked serial number this process holds for the key (the union, below), and every unexpired leaf row under this intermediate key except the new leaf. Its number is the time of issue in Unix milliseconds, or the stored number plus one when that is higher (Eric 2026-11-12, Decision 27; Ruling 34), so a number does not go back after a restore. Sign it with the intermediate key.
 6. In one transaction: check the administrator again, count what each newly revoked leaf signed (below), store the receipt, insert the new leaf's row, replace the leaf CRL row, raise the trust number.
 7. After the commit: sign with the new leaf, wake the watchers (section 4.9), release the lock.
 
@@ -205,19 +224,35 @@ Other replicas see their leaf on the CRL at their next reload and issue a new on
 
 The host command `agentmesh server admin signing-key rotate` does the lock, the reload, the CRL and the transaction without a new leaf: it revokes every unexpired leaf under the configured key, and the running processes issue new ones as above.
 
+**Revoking one leaf that has no row** (Eric 2026-11-12, Decision 25). A leaf certificate can exist without a row: one whose row was removed, or one that the intermediate key was made to sign outside the leaf manager. A forced renewal lists leaves from the table and misses it, and until now the only remedy was to revoke the intermediate, at the cost of all history. The host command `agentmesh server admin signing-key revoke -cert FILE | -serial S` puts one leaf on the leaf CRL of the configured intermediate key:
+
+- Exactly one of the two flags is given. With `-cert` the certificate must be signed by the configured intermediate key (exit 2 otherwise) and its serial number is taken from it. With `-serial` (hexadecimal) the number is listed as given, because without the certificate nothing about it can be checked.
+- It takes the `trust` lock, builds the next leaf CRL as step 5 above does, and stores it and raises the trust number in one transaction, like the host form of rotate. It issues no leaf.
+- It prints one `revoked` entry with the three counts of Decision 16: those of the leaf's row when it has one, 0 when it has none.
+- A process that finds its own leaf listed issues a new one, as after a forced renewal.
+
+The details are Ruling 32.
+
 **What a forced renewal costs, and the report** (Decision 16). By Decision 5, everything the revoked leaves signed stops verifying. With spec 2 that is every message, memory revision and task document those leaves signed, from every replica, for up to W. Eric accepted this. Both forms of the command report, for each leaf they revoke, how many messages, memory revisions and task documents it had signed, so the operator sees the cost. In spec 1 alone the three counts are always 0, because nothing but bearers is signed yet; spec 2 section 4.8 says how they are counted. Revoking an intermediate does the same to everything under it. There is no re-sign path (Eric's outline: "no signing of data in the database"); spec 2 section 4.7 says how content from a revoked period is written again.
 
 **Entries and rows are kept** (Ruling 7): a revoked entry stays on the leaf CRL for the life of the intermediate key. Leaf rows are deleted once expired and, with spec 2, once no message refers to them.
 
-**The list of leaves to revoke comes from the table** (Ruling 8): a database writer who removes a leaf's row first keeps that leaf off the CRL until it expires.
+**The list of leaves to revoke comes from the table** (Ruling 8): a database writer who removes a leaf's row first keeps that leaf off the CRL until it expires. `signing-key revoke` lists such a leaf once its certificate or serial number is known (Decision 25).
 
-**Revoking an intermediate** is done with the root tool: `agentmesh ca revoke`, then `ca install-crl` on the server. A running process that finds its intermediate on the root CRL stops issuing and signing, logs it and reports it in the health document; a start in that state exits 2.
+**Revoking an intermediate** is done with the root tool: `agentmesh ca revoke`, which revokes every certificate of that key (Decision 26), then `ca install-crl` on the server. A running process that finds its intermediate key revoked stops issuing and signing, logs it and reports it in the health document; a start in that state exits 2.
 
 **Rollback inside a running server.** Each process remembers, in memory, the highest CRL number it has verified for each CRL. A stored CRL with a lower number is ignored and logged as a rollback, and the process writes its newer copy back. A restart forgets this (Decision 6: an accepted risk).
 
+**Revocations only accumulate** (Eric 2026-11-12, Decision 27). A CRL can lose entries: a restore from backup brings back an earlier leaf CRL, and the next one built on it would un-revoke whatever was revoked in between. So no verifier checks revocation against the latest CRL alone. Each keeps the union of the revoked serial numbers of every CRL it has accepted, per issuer key, and a serial number once in the union stays revoked.
+
+- A client keeps the union in its trust store, so it survives restarts (section 4.10).
+- A server process keeps it in memory. Every leaf CRL it builds lists the union it holds for that key together with the stored CRL's entries (step 5 above), which is how the union gets back into the database after a rollback. It cannot sign a root CRL, so its union of revoked intermediates lives in memory only, and a restart forgets it.
+
 **The trust number** (Ruling 3). Decision 12 speaks of "the current CRL number", but there are at least two CRLs, each with its own number, and a new intermediate certificate changes neither. The wire therefore carries one **trust number**: a counter in the `trust_number` row that goes up by one in the same transaction as every change to a CRL or to the set of intermediates. It only tells a client that there is something to fetch. What a client enforces is the signed number inside each CRL: it refuses a CRL with a lower number than the one it holds for the same issuer (Decision 12).
 
-### 4.9 Delivery to clients (Eric 2026-11-11, Decisions 6, 12 and 19)
+The server sends the bundle whenever the client's trust number differs from its own, lower or higher (Eric 2026-11-12, Decision 27; this changes Decision 12's "a client that reports an older number"). After a restore the server's counter is behind its clients', and they still need what it holds. The trust number stays a plain counter; only the CRL numbers are times (Ruling 34).
+
+### 4.9 Delivery to clients (Eric 2026-11-11, Decisions 6, 12 and 19; Eric 2026-11-12, Decisions 23, 27, 30 and 33)
 
 There is no "next update" enforcement and no state in which a client fails closed because its CRL is old (Decision 6). CRLs carry a "next update" field only because the format expects one; it is set to the issuer's "not after" and nobody enforces it.
 
@@ -226,32 +261,37 @@ There is no "next update" enforcement and no state in which a client fails close
 | Member | Content |
 | --- | --- |
 | `trust_number` | The trust number |
-| `intermediates` | Every stored intermediate certificate, base64 DER |
+| `intermediates` | Every stored intermediate certificate, the revoked and the expired included, base64 DER |
 | `root_crl` | The root CRL, base64 DER; absent when none is installed |
 | `leaf_crls` | The leaf CRLs, base64 DER; empty when no leaf was ever revoked |
 | `root` | The pinned root certificate, base64 DER; present only in the discover document |
+| `installation` | The installation name (section 4.2; Decision 23); present only in the discover document |
 
 **Where it rides:**
 
-1. **The discover document** (Decision 19). `GET /v1/discover` carries `trust`, the whole bundle with `root`. This is the one place the root travels. Registration and token responses keep their current shapes. So that discover stays the liveness probe that never touches the store (section 3 item 10), the server answers from the process's in-memory, verified copy of the trust material, the one it reloads every 30 seconds; a plan ruling. In local mode the document has no `trust`.
-2. **Session open and every receive** (Decision 12). The request carries the trust number the client holds (`trust_number`, optional, in `OpenSessionRequest` and `ReceiveRequest`). The response always carries the current `trust_number`; when the client's number is absent or lower, it also carries `trust`, the bundle without `root`.
-3. **Watch** (the doorbell, Decision 12). `watch` takes the client's `trust_number`; the server wakes the watch at once when its own number is higher, with a count of 0 and the new number in the answer. This needs a change, because a watch wakes today only for a pending message (`internal/core/delivery/watch.go:98-123`). The trust transaction publishes a hint in its process and, on Postgres, a notification, so waiting sessions on every replica look again; a replica without notifications (SQLite) notices at its 30-second reload and publishes the hint then.
+1. **The discover document** (Decision 19). `GET /v1/discover` carries `trust`, the whole bundle with `root` and `installation`. This is the one place the root and the name travel. Registration and token responses keep their current shapes. So that discover stays the liveness probe that never touches the store (section 3 item 10), the server answers from the process's in-memory, verified copy of the trust material, the one it reloads every 30 seconds; a plan ruling. In local mode the document has no `trust`.
+2. **Session open and every receive** (Decision 12). The request carries the trust number the client holds (`trust_number`, optional, in `OpenSessionRequest` and `ReceiveRequest`). The response always carries the current `trust_number`; when the client's number is absent or differs from the server's (Decision 27), it also carries `trust`, the bundle without `root` and `installation`.
+3. **Watch** (the doorbell, Decision 12). `watch` takes the client's `trust_number`; the server wakes the watch at once when its own number differs from it (Decision 27), with a count of 0 and the server's number in the answer. This needs a change, because a watch wakes today only for a pending message (`internal/core/delivery/watch.go:98-123`). The trust transaction publishes a hint in its process and, on Postgres, a notification, so waiting sessions on every replica look again; a replica without notifications (SQLite) notices at its 30-second reload and publishes the hint then.
 
 A client woken this way calls receive, which brings the bundle. `agentmesh wait` exits 0 for it as for a message; a parked session stays silent and catches up on its next receive.
 
 **When a client calls discover** (Ruling 24, which follows from Decision 19). A process calls discover once when it opens the `Bus` of a server profile. That covers first contact, a client with no session (a one-shot `history`, `search` or `memories get` refreshes its CRLs this way), and a long-lived process at its start; after that a session's receives keep it current. The three hooks are the exception: they read no content and must answer within 500 ms, so they do not call discover. When discover cannot be reached and the client already holds a pin, it goes on with what it holds (Decision 6: no failing closed on old CRLs). With no pin it cannot go on.
 
+**A discover answer without `trust` is an error for a server profile** (Eric 2026-11-12, Decision 33). The command fails and says the server sent no trust material, with or without a pin. This is not the unreachable case: a server that answers always has a bundle, so an answer without one is not from an agentmesh server in server mode.
+
 **What the client does with a bundle:**
 
-1. Root (discover only): with no pinned root for the profile, pin the one received (first contact). With a pinned root, a different `root` is an error: the client stops, names both thumbprints and names the flag `-accept-new-root` (section 4.10). It never replaces a pin silently.
-2. Intermediates: keep each one that chains to the pinned root.
-3. Root CRL: accept when signed by the pinned root and its number is not below the held one; refuse a lower number (Decision 12).
-4. Leaf CRLs: accept each when signed by a kept intermediate that is not on the root CRL and its number is not below the held one for that issuer key; refuse a lower number.
-5. Remember the trust number only after the above succeeded.
+1. Root and installation name (discover only): with no pinned root for the profile, pin the root received together with `installation` (first contact). When the profile names an expected root (`root_thumbprint`, section 4.10), the received root's thumbprint must equal it; otherwise the client stops and pins nothing (Decision 30). With a pinned root, a different `root` or a different `installation` is an error: the client stops, names both thumbprints or both names, and names the flag `-accept-new-root` (section 4.10). It never replaces a pin silently.
+2. Intermediates: keep each one that is signed by the pinned root and meets rule 3 of the chain check of section 4.2: the profile, the pinned installation name and the extended key usage (Decision 23). Its validity period and its revocation are not tested here, because an expired intermediate still serves history and a revoked one says which key is revoked. The client never drops one it has kept (Decision 26).
+3. Root CRL: accept when signed by the pinned root and its number is not below the held one; refuse a lower number (Decision 12). Add its serial numbers to the kept revocations (Decision 27).
+4. Leaf CRLs: accept each when signed by a kept intermediate whose key is not revoked and its number is not below the held one for that issuer key; refuse a lower number. Add its serial numbers to the kept revocations of that key.
+5. Record the bundle's trust number in place of the held one, higher or lower, once the steps above have run (Decision 27). A CRL refused for a lower number does not prevent this: it is reported once, and the number only says whether there is something to fetch.
+
+With spec 2 the client applies a bundle before it verifies the messages of the same answer (Decision 33; spec 2 section 4.10).
 
 A refused CRL is written to the client log (`<data dir>/logs/`) with both numbers; spec 2 also shows it in the receive result.
 
-### 4.10 The client: HTTPS, the pin and the trust store (Eric 2026-11-11, Decision 19)
+### 4.10 The client: HTTPS, the pin and the trust store (Eric 2026-11-11, Decision 19; Eric 2026-11-12, Decisions 23, 27, 30 and 34)
 
 **HTTPS is required by default for a server profile.** The first contact pins the root from whatever answers at the profile's `server` URL, so that connection has to be to the right server. Today any `http` URL is accepted (section 3 item 11). The new rule for the profile's `server`:
 
@@ -267,11 +307,26 @@ A refused CRL is written to the client log (`<data dir>/logs/`) with both number
 
 Every command that runs with the switch on logs one line saying the connection is not protected.
 
-**The pin.** A client with no pinned root for its profile pins the root from discover on first contact and prints the thumbprint. A different root later is an error until the operator runs `register` or `login` (in `agentmesh-mcponly`: `register` or `check`) with `-accept-new-root`, which prints the old and new thumbprints and replaces the pin, the stored chain and the stored CRLs (Decision 19). Once a client pins a new root, history signed under the old root no longer verifies for it, so a root should live long; the root tool's default is ten years.
+**The pin.** A client with no pinned root for its profile pins the root and the installation name from discover on first contact and prints the thumbprint and the name (Decisions 19 and 23). A different root or a different name later is an error until the operator runs `register` or `login` (in `agentmesh-mcponly`: `register` or `check`) with `-accept-new-root`, which prints the old and new thumbprints and names and replaces the pin, the stored chain, the stored CRLs and the kept revocations (Decision 19).
+
+**The pin is the certificate** (Eric 2026-11-12, Decision 34). Any root renewal is a new root to every client, a renewal that keeps the key included: each client needs `-accept-new-root`. What happens to history then depends on the new certificate (Ruling 36):
+
+- A new root with another key: history signed under the old root no longer verifies for a client that has pinned the new one.
+- A root renewed with the same key and subject name: the earlier intermediates chain to the new certificate, so history still verifies where its signed time is inside the new certificate's validity period. A renewed certificate that starts no later than the old one keeps all history; one that starts later loses the history before its start.
+
+When the root expires, bearers stop, because a bearer's chain is checked at the current time, and a server process stops issuing and signing as it does for an expired intermediate (section 4.15). Messages signed before the expiry keep verifying, because a message's chain is checked at its signed time. The way out is a new root and `-accept-new-root` on every client, so a root should live long: the root tool's default is ten years, and an outside CA's root may live far less.
+
+**An expected root** (Eric 2026-11-12, Decision 30). First contact pins whatever root the answer carries. A client that keeps its configuration directory makes one first contact; a client that starts with an empty one every time (the MCP-only binary in a container or a CI job) makes one at every start. So a profile can name the root it expects by its thumbprint, the value `ca init` and `ca status` print. Like `insecure_http` it has three forms:
+
+- the profile member `"root_thumbprint": "<thumbprint>"` in `config.json`;
+- the flag `-root-thumbprint T` on `agentmesh register` and `agentmesh-mcponly register`, which writes that member when it creates the profile;
+- for the profile `agentmesh-mcponly` holds in memory when `-server` is not defined in `config.json`: the flag `-root-thumbprint T` or the variable `AGENTMESH_ROOT_THUMBPRINT`.
+
+When it is set, a root is pinned only when its thumbprint equals it, on first contact and with `-accept-new-root`, and a held pin that differs from it is the root-mismatch error. Discover stays the source of the certificate, so Decision 19 holds. It names the root only; the installation name is still taken from the first answer (Ruling 35).
 
 **The trust store.** Per profile, in a directory of its own (Decision 19):
 
-`<config dir>/trust/<profile>/` (mode 0700; files 0600): `root.pem` (the pin), `intermediates.pem`, `root.crl`, `leaf-<issuer key>.crl`, and `state.json` (the trust number and the server URL the pin belongs to). Spec 2 adds `leaves.pem`, a cache of leaf certificates that verified.
+`<config dir>/trust/<profile>/` (mode 0700; files 0600): `root.pem` (the pin), `intermediates.pem`, `root.crl`, `leaf-<issuer key>.crl`, `revoked.json` (the kept revocations, Decision 27; Ruling 34), and `state.json` (the trust number, the installation name and the server URL the pin belongs to). Spec 2 adds `leaves.pem`, a cache of leaf certificates that verified.
 
 - It is per profile, not per identity: the root belongs to the server. It is not in the credential directory, where every file counts as an identity (section 3 item 12).
 - Every process of the profile shares it (the MCP server, `wait`, the hooks, one-shot commands, the TUI). Writes take a lock file in the directory and replace files atomically, as `internal/sessionstate` does (`internal/sessionstate/state.go:83-97`, `138`).
@@ -279,7 +334,7 @@ Every command that runs with the switch on logs one line saying the connection i
 - Package `internal/trust` (a plan ruling) holds it and imports the standard library, `internal/filelock` and `internal/pki` only.
 - The plumbing sits under the `Bus`: `internal/client` wraps the remote `Bus` of a server profile in a layer that calls discover when it is built, sends the held trust number on session open, receive and watch, and stores each bundle that comes back. The consumers (`internal/cli`, `internal/mcpserver`, `internal/mcpcli`, `internal/tui`) do not change. Spec 2 adds verification to the same layer.
 
-State: writing the same bundle twice changes nothing. Two processes writing at once are serialized by the lock; the later one re-reads and keeps the higher numbers. Two processes making first contact at once both pin; the second finds the first's pin, compares, and either agrees or reports the mismatch. A crash leaves the previous files (atomic replace).
+State: writing the same bundle twice changes nothing. Two processes writing at once are serialized by the lock; the later one re-reads and keeps the higher CRL numbers, the union of the kept revocations and the trust number it received last. Two processes making first contact at once both pin; the second finds the first's pin, compares, and either agrees or reports the mismatch. A crash leaves the previous files (atomic replace).
 
 ### 4.11 Wire changes (`api/openapi.yaml`)
 
@@ -288,10 +343,10 @@ The protocol version stays `1.0.0` (CLAUDE.md, Eric 2026-10-27). The operation c
 | Element | Change |
 | --- | --- |
 | `TrustBundle` | New schema (section 4.9) |
-| `Discovery` | Gains `trust` (the bundle with `root`; present from a server, absent in local mode). The description of `discover` still says it never touches the store |
+| `Discovery` | Gains `trust` (the bundle with `root` and `installation`; present from a server, absent in local mode). The description of `discover` still says it never touches the store |
 | `Registration`, `AccessToken` | Unchanged (Decision 19) |
 | `OpenSessionRequest`, `ReceiveRequest` | Gain `trust_number` (optional integer, 0 to 2^53) |
-| `Session`, `ReceiveResult` | Gain `trust_number` (present from a server) and `trust` (when the client is behind) |
+| `Session`, `ReceiveResult` | Gain `trust_number` (present from a server) and `trust` (when the client's number is absent or differs; Decision 27) |
 | `watch` (a new query parameter) and `Wake` | Gain `trust_number` |
 | `SigningKey` | Now describes a leaf certificate: `thumbprint`, `serial`, `issuer_thumbprint`, `not_before`, `not_after`, `state` (`current`, `previous`, `other`, `revoked`). The members `kid`, `provider`, `provider_ref`, `algorithm`, `created_at`, `retired_at`, `remove_after` go |
 | `SigningKeyList` | The unexpired leaves, this process's current leaf first, plus `trust_number` |
@@ -310,38 +365,42 @@ Server (Ruling 11):
 | `intermediate_key_file` | Path of the intermediate key (PKCS#8 PEM, owner-only) | None; exactly one of this and the next |
 | `intermediate_key_uri` | Key service URI of the intermediate key | None |
 | `leaf_validity_hours` | W | 168; 2 to 720 |
+| `installation_name` | The installation's name: the subject common name of its intermediate certificates (section 4.2; Decision 23, Ruling 30) | None; required; 1 to 64 characters |
 
 Removed: `signing_key_uri`, `signing_key_rotation_hours`, `signing_key_rotation_cooldown_seconds`. Each setting is read from the file, then `AGENTMESH_SERVER_<NAME>`, then `-set`, like the others. An error message names a key service key by `keyprovider.KeyName`, never by its URI (`internal/keyprovider/keyprovider.go:151-168`).
 
-Client: the profile member `insecure_http` (boolean, default false; section 4.10).
+Client: the profile members `insecure_http` (boolean, default false; section 4.10) and `root_thumbprint` (a certificate thumbprint, default none; section 4.10; Decision 30).
 
 ### 4.13 Commands
 
-- New: `agentmesh ca init | sign | revoke` (section 4.3); `agentmesh server admin ca csr | install | install-crl | status` (section 4.4).
+- New: `agentmesh ca init | sign | revoke` (section 4.3); `agentmesh server admin ca csr | install | install-crl | status` (section 4.4); `agentmesh server admin signing-key revoke -cert FILE | -serial S` (section 4.8; Decision 25).
 - Changed: `agentmesh server admin signing-key list | rotate` and the client's `agentmesh signing-keys list | rotate` keep their names; `rotate` loses `-revoke-previous` and prints the per-leaf counts; `list` prints leaves.
-- `agentmesh register`, `login` and `login -human`, and `agentmesh-mcponly register` and `check`, take `-accept-new-root`. `agentmesh register` and every `agentmesh-mcponly` command take `-insecure-http` (section 4.10).
-- Any command that makes first contact prints the pinned root's thumbprint once.
+- `agentmesh register`, `login` and `login -human`, and `agentmesh-mcponly register` and `check`, take `-accept-new-root`. `agentmesh register` and every `agentmesh-mcponly` command take `-insecure-http` and `-root-thumbprint` (section 4.10).
+- Any command that makes first contact prints the pinned root's thumbprint and the installation name once.
 
 ### 4.14 Health (approved section 3)
 
 The administrator tier of `GET /v1/health` gains a `signing` object, built by `internal/core/health` from the answering process's leaf manager:
 
+- the installation name;
 - the intermediate in use: thumbprint, "not after", days left;
 - the current leaf: thumbprint, "not before", "not after", when the next renewal is due;
 - the trust number and each CRL's number;
 - the last renewal failure: when and a short message (redacted and capped by the backend, as today), cleared by the next success.
 
-The status is `degraded` (still HTTP 200) when the intermediate expires within 30 days, when the last renewal failed, when the leaf has expired, or when the intermediate is on the root CRL. The probe and identity tiers show none of it.
+The status is `degraded` (still HTTP 200) when the intermediate expires within 30 days, when the last renewal failed, when the leaf has expired, when the intermediate's key is revoked, or when the root has expired. The probe and identity tiers show none of it.
 
 ### 4.15 Start-up and failure states
 
 | State at start | Result |
 | --- | --- |
 | `root_certificate_file` unset, unreadable or not one CA certificate | Exit 2 |
+| The pinned root has expired (Decision 34) | Exit 2 |
+| `installation_name` unset or not a valid name (Ruling 30) | Exit 2 |
 | Neither or both of `intermediate_key_file` and `intermediate_key_uri` | Exit 2 |
 | Key file missing, not owner-only or not an ECDSA P-256 key | Exit 2 |
-| No stored intermediate certificate that matches the configured key and chains to the root | Exit 2; the message names `agentmesh server admin ca csr` and `ca install` |
-| The matching intermediate has expired or is on the stored root CRL | Exit 2 |
+| No stored intermediate certificate that matches the configured key, is signed by the pinned root and meets rule 3 of the chain check of section 4.2 (`installation_name` and the extended key usage among it) | Exit 2; the message names `agentmesh server admin ca csr` and `ca install` |
+| The matching intermediate has expired, or its key is revoked by the stored root CRL | Exit 2 |
 | A backend scheme that is not in this build | Exit 2, with the build tag, as today (`internal/server/cmd/keyprovider.go:31-34`) |
 | The key service does not answer while the first leaf is issued | Exit 1 |
 | `token_lifetime_seconds` or a human lifetime above W/2 | Exit 2 |
@@ -352,15 +411,17 @@ The status is `degraded` (still HTTP 200) when the intermediate expires within 3
 | Renewal fails | Retry schedule of section 4.6; health `degraded` |
 | Leaf expired, no renewal | Retryable 503 on the token endpoint and on appends; health `degraded` |
 | Own leaf found on the leaf CRL | Issue a new leaf at once |
-| Intermediate found expired or on the root CRL | Stop issuing and signing; retryable 503 on the token endpoint and on appends; health `degraded`; an error log line every reload |
+| Intermediate or root found expired, or the intermediate's key found revoked | Stop issuing and signing; retryable 503 on the token endpoint and on appends; health `degraded`; an error log line every reload |
 | A stored certificate or CRL fails verification | Ignored, logged with its thumbprint; never a 500 (the no-500 rule, ADR 0001 addendum) |
 
 | Client state | Result |
 | --- | --- |
 | A server profile with an `http` URL that is not loopback and no `insecure_http` | Exit 2, naming the switch |
 | No pin and discover cannot be reached | The command fails as it does today when the server cannot be reached |
-| The root in discover differs from the pin | Exit 2, naming both thumbprints and `-accept-new-root` |
+| The root or the installation name in discover differs from the pin | Exit 2, naming both values and `-accept-new-root` |
+| The root that would be pinned, or the held pin, does not match `root_thumbprint` | Exit 2, naming both thumbprints; nothing is pinned or replaced |
 | A pin, and discover cannot be reached | The client goes on with the trust it holds |
+| Discover answers without `trust` | The command fails and says so, with or without a pin (Decision 33) |
 
 ### 4.16 Removed
 
@@ -382,38 +443,49 @@ The status is `degraded` (still HTTP 200) when the intermediate expires within 3
 | Leaf renewal | Not repeated: the timer is set from the current leaf | One timer per process | Retry schedule; the current leaf keeps signing until it expires |
 | Forced renewal (API) | Same idempotency key: the first answer, counts included, and nothing changes. No key: another renewal that also revokes the leaf the first one issued | Serialized by the `trust` lock; the loser answers a retryable `unavailable` and, retried, runs after the winner | Failed before the transaction: a lost, unused leaf. The transaction is atomic. The lock is a lease on SQLite and a connection-bound lock on Postgres, so a dead holder frees it |
 | Forced renewal (host command) | Revokes whatever leaves are unexpired at that moment, including ones issued since the first run | Serialized by the `trust` lock | One transaction |
+| `signing-key revoke` | The serial number is already listed: no change, exit 0, trust number unchanged | Serialized by the `trust` lock | One transaction |
 | Client first contact | The pin exists: compare, do not replace | The second process finds the first's pin | Nothing pinned until the root file is in place (atomic replace) |
 | `-accept-new-root` | The new root is already the pin: no change | Lock file | Atomic replace of the pin, then the chain and CRLs; a rerun completes it |
-| Client stores a bundle | No change | Lock file; higher numbers win | Atomic replace; the previous files stay |
+| Client stores a bundle | No change | Lock file; higher CRL numbers win and the kept revocations are merged | Atomic replace; the previous files stay |
+
+**After a restore from backup** (Eric 2026-11-12, Decision 27). The stored CRLs and the trust number are the backup's.
+
+- A client that holds a different trust number gets the bundle. It refuses the older CRLs once, with a log line, keeps the revocations it has seen and records the server's trust number.
+- The next leaf CRL the server builds has a higher number than any issued before, because numbers are times, so clients accept it. It lists what the stored CRL lists and what the building process has seen; a leaf revoked after the backup and seen by no running server process is missing from it, and only the clients that saw its revocation still refuse it.
+- So the operator installs the latest root CRL again (`ca install-crl`) and, when a forced renewal was run after the backup was taken, runs one again. `docs/ops/backup.md` says so (section 9).
+- A second restore of the same backup is the same case again.
 
 ## 6. Accepted risks
 
-In plain words; ADR 0019 holds the same list.
+In plain words; ADR 0019 holds the same list, under Eric's general ruling of 2026-11-12 (Decision 22): a database writer is effectively an administrator of the agentmesh server, and the server is not defended against its administrator.
 
 1. Whoever can write the database can still act as the application's administrator: set the administrator flag, add a login key for any agent, edit ACLs, the `users` and `admins` lists and identity rows (Decision 15). This design does not try to stop that.
-2. Whoever can write the database can hide a revocation from clients and server processes that have not seen it yet, by putting back an older CRL or a lower trust number. A restarted server process forgets what it had seen. The harm ends when the hidden leaf expires, at most W after it was issued (Decision 6).
-3. Whoever can write the database can remove a leaf's row before a forced renewal, so that leaf is not put on the CRL. It still expires within W (Ruling 8).
-4. A client pins the root from the first discover answer it gets (Decision 19). Over HTTPS the answer comes from whoever holds a certificate for the server's name that the system's roots accept. With `insecure_http` on a network that is not loopback, anyone on the path can supply a root of their own; the switch is for local testing.
-5. Whoever holds the intermediate key file, or may ask the key service to sign with the intermediate key, can issue leaves and so mint bearers for any identity. The file needs the care the database credential gets today.
-6. Whoever can read a server process's memory has its leaf key until the leaf expires or is revoked.
+2. Whoever can write the database can hide a revocation from clients and server processes that have not seen it yet, by putting back an older CRL. A restarted server process forgets what it had seen; a client does not (Decision 27). For bearers the harm ends when the hidden leaf expires, at most W after it was issued (Decision 6). With spec 2 it does not end there for messages: to a party that has not seen the revocation, whatever the leaf signed with a time inside its validity period keeps verifying, and only its human messages become history, at the stale bound (Decision 24; spec 2 section 7).
+3. Whoever can write the database can remove a leaf's row before a forced renewal, so that leaf is not put on the CRL. It still expires within W (Ruling 8), and `signing-key revoke` lists it once its certificate or serial number is known (Decision 25).
+4. A client pins the root and the installation name from the first discover answer it gets (Decisions 19 and 23). Over HTTPS the answer comes from whoever holds a certificate for the server's name that the system's roots accept. With `insecure_http` on a network that is not loopback, anyone on the path can supply a root of their own; the switch is for local testing. A profile that names an expected root pins no other root (Decision 30); without one, every start of a client that keeps no configuration directory is a first contact.
+5. Whoever holds the intermediate key file, or may ask the key service to sign with the intermediate key, can issue leaves and so mint bearers for any identity. The file needs the care the database credential gets today. With the file form the key is also within reach of the server process itself: the process reads the file, so whoever can read that process's memory or act as its OS user has the intermediate key and not only a leaf key (Decision 35).
+6. Whoever can read a server process's memory has its leaf key. It mints bearers until the leaf expires or is revoked. What it can do with messages is spec 2 section 7 item 3 (Decision 24).
 7. A bearer signed by a leaf that was just revoked is accepted by other replicas for up to 30 seconds.
 8. A forced renewal makes everything the revoked leaves signed unverifiable (Decision 16).
+9. Any root renewal is a new root to every client, a renewal with the same key included: each client needs `-accept-new-root`. When the root expires, bearers stop until a new root is in place and every client has accepted it (Decision 34).
 
 ## 7. Tests
 
 - **Fixtures** build a throwaway root in process through `internal/pki/rootca`, issue an intermediate into a temporary key file and install it (approved section 3). One helper serves `internal/server`, `internal/server/cmd`, `internal/e2e`, the inproc Bus suite and `TestAuthEndToEnd`. `scripts/cats-harness.sh up` and `scripts/docker-smoke.sh` run the real commands (`ca init`, `ca csr`, `ca sign`, `ca install`). Every fixture server listens on loopback, so no test needs `insecure_http` except the ones that test it.
-- **`internal/pki`**: the certificate profiles; chain verification (good chain, wrong root, expired intermediate at the checked time, path length, missing usages); CRL creation and checks (signature, numbers, a CRL from another issuer).
-- **Root tool**: each row of the table in section 4.3, including the refusal to overwrite.
-- **Host commands**: each check of `ca install` and `ca install-crl` fails with its own message and exit 2; the repeat rows of section 5.
+- **`internal/pki`**: the certificate profiles; chain verification (good chain, wrong root, expired intermediate at the checked time, path length, missing usages); the chain check of section 4.2, one case per rule: a chain of two and of four certificates, an intermediate with another installation's name, an intermediate without the agentmesh extended key usage, a leaf without it, a leaf that is CA true, a leaf valid one second longer than 720 hours plus 60 seconds and one valid exactly that long, a root that is expired or not yet valid at the checked time; CRL creation and checks (signature, numbers, a CRL from another issuer); CRL numbers that are times and never go back, with the clock set back; revocation by key: a leaf under either certificate of a key is refused when the root CRL lists one of them; the union: a serial number listed by an earlier CRL and missing from the current one is still revoked.
+- **Root tool**: each row of the table in section 4.3, including the refusal to overwrite; `ca sign` keeps the CSR's name, refuses a CSR without one and gives two certificates of one key the same subject key identifier; `ca revoke` revokes every certificate of the key and names them.
+- **Host commands**: each check of `ca install` (the installation name, the extended key usage and the subject key identifier among them) and `ca install-crl` fails with its own message and exit 2; `ca csr` carries `installation_name`; `signing-key revoke` with `-cert` (a leaf of the configured key, a certificate of another key refused), with `-serial`, for a leaf with a row and without one, with both flags and with neither; the repeat rows of section 5.
 - **Start-up**: each row of the first table in section 4.15 with its exit code.
 - **Leaf manager on a fake clock**: renewal at W/2; the retry times after a failure (one eighth of the time left, one-minute floor); expiry leading to 503 on the token endpoint; recovery on the next success; the clock-outside-validity case.
-- **Bearers**: a bearer from a leaf whose row is missing, altered, self-signed, under another root, expired or revoked is refused; a forged row is not trusted (the mutation that replaces threat 2's test); the expiry cap; the W/2 configuration check.
+- **Bearers**: a bearer from a leaf whose row is missing, altered, self-signed, under another root, expired or revoked is refused; a forged row is not trusted (the mutation that replaces threat 2's test); a bearer from a leaf under a second installation's intermediate (the same root, another name) is refused with both rows present, and so is one under a CA certificate without the agentmesh usage and one from a leaf whose lifetime is over the ceiling; the expiry cap; the W/2 configuration check.
 - **Replicas on both engines** (`TestReplicas*`): a bearer from one replica is accepted by the other; a forced renewal on one makes the other issue a new leaf and refuse the old bearer within the reload interval; two forced renewals at once.
 - **Forced renewal report**: one `revoked` entry per leaf with the three counts (0 in this spec); the same key replays the same answer.
 - **Discover**: carries the bundle with `root` from a server and none in local mode; answers 200 with the bundle while the store is closed, from the in-memory copy (a new test of what the operation's description promises, `api/openapi.yaml:125`).
-- **In-band delivery**: session open and receive with a lower, equal and absent `trust_number`; a watch that wakes on a trust number change with no message.
+- **In-band delivery**: session open and receive with a lower, equal, higher and absent `trust_number`; a watch that wakes on a trust number change in either direction with no message.
+- **Restore and rollback** (Decision 27): with the stored leaf CRL and the trust number put back to earlier values, a client that holds the later ones still gets the bundle, refuses the older CRL once, keeps its revocations and records the server's number; the next forced renewal's CRL has a higher number than the client holds and is accepted; a leaf revoked before the rollback and missing from the new CRL is still refused by that client; a server process that saw the revocation puts it into the next CRL it builds.
+- **Root expiry** on a fake clock (Decision 34): bearers are refused, the process stops issuing and signing, health is `degraded`, and a start exits 2.
 - **Profile rule**: `https` accepted; `http` to `127.0.0.1`, `::1` and `localhost` accepted; `http` to another host refused with the switch named; accepted with each of the three forms of `insecure_http`; an unknown value of `AGENTMESH_INSECURE_HTTP` refused.
-- **Client trust store**: first contact pins and prints; a different root is refused and nothing is overwritten; `-accept-new-root` replaces pin, chain and CRLs; a lower CRL number is refused and logged; two processes at first contact; two writers; a crash between files; discover unreachable with and without a pin; the hooks make no discover call.
+- **Client trust store**: first contact pins the root and the installation name and prints both; a different root is refused and nothing is overwritten; a different installation name under the same root is refused the same way; an intermediate with another name in a bundle is not kept; `root_thumbprint` in each of its three forms: a matching root is pinned, another is refused and nothing is pinned, `-accept-new-root` to a root that does not match is refused, a held pin that differs is an error; a discover answer without `trust` fails with and without a pin; `-accept-new-root` replaces pin, chain, CRLs and kept revocations; a lower CRL number is refused and logged; two processes at first contact; two writers; a crash between files; discover unreachable with and without a pin; the hooks make no discover call.
 - **Key service intermediate**: the existing fakes (`internal/keyprovider/kmsfake`) issue leaves and CRLs; the outage paths (exit 1 at start, retry while running); `make vet-tags`.
 - **No 500**: a tampered `trust_material` row in each kind answers a declared status.
 
@@ -428,23 +500,23 @@ In plain words; ADR 0019 holds the same list.
 - `TestHelpExamples` and `internal/mcpcli/help.go`: the help texts that show an `http` server keep a loopback one or show the switch.
 - `scripts/m7-exit-checks.sh`: the `keyprovider-leaf` rule loses the store provider and gains `FileProvider`; a new rule `pki-leaf`: `internal/pki` and `internal/pki/rootca` import the standard library only (and `rootca` imports `internal/pki`); `internal/trust` imports the standard library, `internal/filelock` and `internal/pki` only.
 - `scripts/m10-exit-checks.sh`: the module list of the MCP-only binary stays at 13; no change to the allowlist.
-- `scripts/check-gates-selftest.sh`: one mutation per new import rule; one that makes bearer verification trust a row without checking its chain (it must fail the forged-row test); one that drops the loopback test from the profile rule (it must fail the profile tests).
+- `scripts/check-gates-selftest.sh`: one mutation per new import rule; one that makes bearer verification trust a row without checking its chain (it must fail the forged-row test); one for each rule of the chain check that Decisions 23, 25 and 26 add (the installation name comparison, the extended key usage on the intermediate and on the leaf, the leaf lifetime ceiling, revocation by key), each of which must fail its `internal/pki` case; one that sends the bundle only to a client whose number is lower (it must fail the restore test); one that drops the loopback test from the profile rule (it must fail the profile tests).
 - `make verify`, `ci.yml` and `windows.yml` green; the file mode check of the key file follows the existing owner-only rule on Windows (`internal/fileacl`).
 
 ## 9. Documents the plan updates
 
-- `docs/ops/signing-keys.md` is rewritten when this spec is implemented, not before: the hierarchy, the outside-CA profile, the four backends as stores of the intermediate key, forced renewal and what it costs. Until then it describes the code as it is.
-- Also with the implementation: `docs/ops/configuration.md`, `docs/ops/deploy.md`, `docs/ops/admin-bootstrap.md`, `docs/ops/backup.md` (the database holds no private key), `docs/ops/health.md`, `docs/ops/upgrade.md`, `docs/install.md` (HTTPS and the switch), `CLAUDE.md` (commands and design notes), the threat model (SD1, SD3, SD6 and threats 1, 2, 6 and 15 once built) and its TMI mirror.
+- `docs/ops/signing-keys.md` is rewritten when this spec is implemented, not before: the hierarchy, the outside-CA profile, the four backends as stores of the intermediate key, forced renewal and what it costs. Until then it describes the code as it is. It must also say: that each installation under one root needs a name of its own (Decision 23); that an outside CA issues the name, the extended key usage and the same subject key identifier for every certificate of a key; that revoking an intermediate means revoking every certificate issued for its key (Decision 26); what `signing-key revoke` is for (Decision 25); and that any root renewal, a same-key renewal included, needs `-accept-new-root` on every client, with what root expiry does (Decision 34).
+- Also with the implementation: `docs/ops/configuration.md`, `docs/ops/deploy.md`, `docs/ops/admin-bootstrap.md`, `docs/ops/backup.md` (the database holds no private key; a restore puts back the CRLs and the trust number of the backup, so after one the operator installs the latest root CRL again and, when a forced renewal was run after the backup was taken, runs one again: Decision 27), `docs/ops/health.md`, `docs/ops/upgrade.md`, `docs/install.md` (HTTPS and the switch; `root_thumbprint`, above all for a client that keeps no configuration directory: Decision 30), `CLAUDE.md` (commands and design notes), the threat model (SD1, SD3, SD6 and threats 1, 2, 6 and 15 once built) and its TMI mirror.
 
 ## 10. What spec 2 adds to this
 
-Spec 2 uses the leaf to sign every message, adds columns to `messages`, narrows the `expired leaf removal` job, fills the counts of the forced renewal report, and gives clients the verification step. It needs everything in sections 4.2 to 4.10.
+Spec 2 uses the leaf to sign every message, adds columns to `messages`, narrows the `expired leaf removal` job, fills the counts of the forced renewal report, and gives clients the verification step. It needs everything in sections 4.2 to 4.10. It also makes the forced renewal's API form require the human claim (Decision 28) and adds three client rules for trust that lags behind (Decision 33).
 
 ## 11. Plan rulings on the points the first draft left open
 
 None of these is Eric's decision. Each stands as the first draft's recommendation; Eric may overrule any of them. The numbers are the first draft's open question numbers. Numbers 1, 2 and 5 are missing because Eric decided them (Decisions 19 and 16).
 
-**Ruling 3: one trust number.** The wire carries one unsigned trust number, raised with every change to a CRL or to the intermediates; clients enforce the signed number inside each CRL. Not taken: carrying each CRL's own number; or one installation-wide leaf CRL reissued on every change so that its number could serve, which fails when the only intermediate is the thing being revoked, because nothing can sign the reissue. It fits Decision 19: discover carries the same number in its bundle.
+**Ruling 3: one trust number.** The wire carries one unsigned trust number, raised with every change to a CRL or to the intermediates; clients enforce the signed number inside each CRL. Not taken: carrying each CRL's own number; or one installation-wide leaf CRL reissued on every change so that its number could serve, which fails when the only intermediate is the thing being revoked, because nothing can sign the reissue. It fits Decision 19: discover carries the same number in its bundle. **Changed by Decision 27**: the server sends the bundle when the two numbers differ, not only when the client's is lower.
 
 **Ruling 4: one leaf CRL per intermediate key.** Standard scope: a leaf CRL lists the leaves of the key that signs it. A forced renewal revokes the leaves under the acting process's key and reports any others as not covered. While two intermediate keys are in use (a key change in progress), the old key's leaves are cut off by revoking the old intermediate with the root tool, or expire within W. Not taken: one list for the installation signed by whichever key acts; a stolen old key could then sign a newer list that un-revokes leaves of the new key.
 
@@ -452,7 +524,7 @@ None of these is Eric's decision. Each stands as the first draft's recommendatio
 
 **Ruling 7: entries stay, rows go when unused.** A revoked entry stays on the leaf CRL for the life of the intermediate key, because removing it would make that leaf's history verify again, against Decision 5. An entry is about 40 bytes. Leaf rows are deleted once expired and, with spec 2, once no message refers to them. Not taken: dropping an entry once the database holds nothing the leaf signed; the CRL would then depend on database contents.
 
-**Ruling 8: the leaves to revoke are listed from the table.** A writer who removes a leaf's row first keeps it off the CRL until it expires; accepted (section 6 item 3). Not taken: a "revoked before" time in the CRL as a private extension, which needs no table but is not standard and races between replicas with different clocks.
+**Ruling 8: the leaves to revoke are listed from the table.** A writer who removes a leaf's row first keeps it off the CRL until it expires; accepted (section 6 item 3). Decision 25 adds `signing-key revoke` for a leaf that has no row. Not taken: a "revoked before" time in the CRL as a private extension, which needs no table but is not standard and races between replicas with different clocks.
 
 **Ruling 9: a key service intermediate.** The operator creates the key; `ca csr` resolves the URI and has the service sign the CSR; `ca install` records the resolved reference in the intermediate's row; every leaf is checked against the intermediate certificate before use, which also covers `awskms`, the one backend that does not verify after signing (ADR 0012, controller ruling 3). Not taken: no stored reference, with every process resolving the URI at start; adding a key version in the service would then stop the server until `ca csr` and `ca install` were run again.
 
@@ -462,6 +534,32 @@ None of these is Eric's decision. Each stands as the first draft's recommendatio
 
 **Ruling 12: "reads continue" when the leaf has expired.** The approved section says that with an expired, unrenewed leaf "writes and token exchange answer a retryable 503; reads continue". Every bearer a process signed expires no later than its leaf (section 4.7). So on a single server no bearer is left to read with, and on several replicas reads continue only with bearers from the healthy ones. The rule is kept and the operator guide says this plainly: a single server whose renewals fail for W/2 stops serving authenticated requests until a renewal succeeds, with health `degraded` from the first failure. Not taken: judging a bearer by whether it was issued inside its leaf's validity period and dropping the expiry cap.
 
-**Ruling 13: clock rules.** No rule compares one replica's clock with another's for messages: a process signs with its own leaf, issued by its own clock. A leaf's "not before" is set 60 seconds back (the existing leeway). A process does not sign when its own clock is outside its leaf's validity period; it issues a new leaf. A chain is checked at the signed time for a message and at the current time, with the 60-second leeway, for a bearer. A CRL's signer is checked at the CRL's "this update" time. Clients apply no leeway to a message's time. Not taken: a 60-second allowance on the client for messages; the signer guarantees the time is inside, so the verifier can be exact.
+**Ruling 13: clock rules.** No rule compares one replica's clock with another's for messages: a process signs with its own leaf, issued by its own clock. A leaf's "not before" is set 60 seconds back (the existing leeway). A process does not sign when its own clock is outside its leaf's validity period; it issues a new leaf. A chain is checked at the signed time for a message and at the current time, with the 60-second leeway, for a bearer. A CRL's signer is checked at the CRL's "this update" time. Clients apply no leeway to a message's time. Not taken: a 60-second allowance on the client for messages; the signer guarantees the time is inside, so the verifier can be exact. The two comparisons Decision 24 adds are between different clocks and do take the 60 seconds (spec 2, Ruling 37).
 
 **Ruling 24 (stated in section 4.9; it follows from Decision 19): a process calls discover once when it opens the `Bus` of a server profile,** the hooks excepted. This is how a client with no session refreshes its CRLs.
+
+## 12. Plan rulings made while folding in the security review (2026-11-12)
+
+None of these is Eric's decision. Each fills in a detail that one of his rulings on the review needed and did not give, and he may overrule any of them. The numbers continue the series and answer no open question; 29 is the open question of section 13, and Rulings 37 to 41 are in spec 2.
+
+**Ruling 30: the installation name** (for Decision 23). The server setting is `installation_name`: required in server mode, no default, 1 to 64 characters (the limit X.520 puts on a common name) of lowercase letters, digits, `.` and `-`, beginning with a letter or a digit. It is the one source of the name: `ca csr` puts it in the request as the subject common name and loses its `-name` flag, so the request and the server cannot disagree. A verifier compares the subject common name byte for byte and ignores any other subject attribute an outside CA adds. The client receives the name as `installation` in the discover document's trust bundle, pins it in `state.json` beside the root, and treats a different name later as it treats a different root: the same error, cleared by the same flag. That the names under one root differ is the root administrator's care: `ca sign` prints the name and says when `state.json` already records it for another key, and refuses nothing, because one installation changing its key looks the same. Not taken: a default name, with which two installations under one root would be the same installation without anybody choosing it; a `-name` flag on `ca csr` checked against the setting.
+
+**Ruling 31: the shape of the extended key usage** (for Decision 23). One usage, the same on the intermediate and the leaf, absent from the root. The extension need not be marked critical; the verifiers require the usage whether it is or not, and a certificate that carries only the "any" usage does not have it. They check it themselves: Go's verification is called with the "any" usage, because it asks for server authentication by default (`crypto/x509/verify.go:623-625`), and the intermediate and the leaf are then compared with one constant in `internal/pki`. Every arc of the identifier must be below 2^31, because Go's parser refuses a certificate that holds a larger one (`vendor/golang.org/x/crypto/cryptobyte/asn1.go:421-431`, `readBase128Int`). The value is Open question 29.
+
+**Ruling 32: the leaf lifetime ceiling and `signing-key revoke`** (for Decision 25). The ceiling is a constant, 720 hours plus 60 seconds, and not the server's `leaf_validity_hours`: a client does not know that setting, and one rule serves both verifiers. It is measured as "not after" minus "not before". `signing-key revoke` always writes to the leaf CRL of the configured intermediate key; a leaf of another key is cut off by revoking that key (Ruling 4). The serial number is hexadecimal, as `signing-key list` prints it. With `-serial` nothing ties the number to a certificate: a wrong number revokes nothing or, at worst, one live leaf, whose process then issues a new one. The counts are those of the leaf's row and 0 for a leaf with no row, because spec 2 counts by the row a message refers to. Not taken: revoking by thumbprint alone, which a CRL cannot express.
+
+**Ruling 33: revocation by key** (for Decision 26). Two intermediate certificates are of one key when their subject key identifiers are equal, which is how `trust_material.issuer_key` already names a key. For that to hold, the root tool derives the identifier from the public key, the outside-CA profile asks for the same identifier on every certificate of a key, and `ca install` refuses a certificate whose identifier differs from that of the stored certificates with the same public key. Intermediate certificates are never deleted from the table, never left out of the bundle and never dropped by a client, the revoked and the expired included: a CRL names a serial number, and only the certificate says which key that is. Not taken: comparing public keys in every verifier in place of the identifiers.
+
+**Ruling 34: CRL numbers, the kept revocations and the trust number** (for Decision 27). A CRL that agentmesh issues, the server's leaf CRL or the root tool's root CRL, takes as its number the larger of the time of issue in Unix milliseconds and the previous number plus one. An outside CA numbers its root CRL as it likes; only "not lower" is asked of it. The trust number stays a counter that goes up by one. It is compared for equality only, and a client records the one it received last. The client's kept revocations are one file of the trust store, `revoked.json`: for each issuer key identifier the revoked leaf serial numbers, and for the root the revoked intermediate serial numbers. `-accept-new-root` clears it with the rest. A CRL refused for a lower number adds nothing to it. Not taken: a time-based trust number; comparing for equality makes it unnecessary.
+
+**Ruling 35: the expected root** (for Decision 30). The value is the thumbprint of section 4.2 plan ruling 2, as the tools print it. It is checked whenever a root would be pinned (first contact and `-accept-new-root`), and a held pin that differs from it is the root-mismatch error, so the setting and the pin cannot disagree unnoticed. It names the root only. The installation name of Decision 23 is still pinned from the first answer: on first contact a client with an expected root accepts the name of any installation that has an intermediate under that root. Not taken: an expected installation name in further forms; Eric's ruling gives three forms, for the root.
+
+**Ruling 36: the root's validity period is part of the chain check** (for Decision 34). The chain check tests every certificate of the chain at the checked time, the root included, as Go's `crypto/x509` does (`crypto/x509/verify.go:451-470`, `isValid`, called for each certificate of a candidate chain at line 764). The statements of section 4.10 follow from it: when the root expires bearers stop and messages signed before the expiry keep verifying; under a root renewed with the same key, history verifies where its signed time is inside the new certificate's validity period. A server process treats an expired root as it treats an expired intermediate. Not taken: leaving the root's own validity period unchecked, as a trust anchor's may be; bearers would then outlive the root, which is not what Eric ruled.
+
+## 13. Open question for Eric
+
+**Open question 29: the identifier of the agentmesh extended key usage** (Decision 23; Ruling 31). An extended key usage is named by an object identifier, and an identifier has to sit under an arc that its publisher controls. The tree holds none (a search for the private enterprise arc, `1.3.6.1.4.1`, finds nothing). An identifier made from a UUID under the `2.25` arc needs no registration, but Go refuses an arc of 2^31 or more, so it cannot be used.
+
+- A. Register a Private Enterprise Number with IANA for the publisher and use `1.3.6.1.4.1.<number>.1.1`.
+- B. Use an arc the publisher already holds, if there is one.
+- Recommendation: A, unless B exists. The value is one constant in `internal/pki` and one line of the outside-CA profile, and nothing else in either spec depends on it: the plan for this spec can be written before it is known, and the implementation cannot ship without it.
