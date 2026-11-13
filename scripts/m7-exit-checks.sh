@@ -230,6 +230,7 @@ import_check() {
 	check_allowlist keyprovider-leaf ./internal/keyprovider/kmsfake "$MOD/internal/keyprovider" "$MOD/internal/auth/keys" github.com/go-jose/go-jose/v4
 	# The certificate profiles are a leaf over the standard library alone.
 	check_allowlist pki-leaf ./internal/pki "$MOD/internal/pki"
+	check_allowlist pki-leaf ./internal/pki/rootca "$MOD/internal/pki"
 	local tags
 	for tags in "" "$M7_TAGS"; do
 		TAGS="$tags"
