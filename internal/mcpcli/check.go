@@ -40,8 +40,17 @@ func target(cmdName string, o client.Options, stderr io.Writer) (server string, 
 	case sel.Defined && want != "" && want != sel.Profile.Server:
 		return exit(fmt.Errorf("profile %q uses server %s; -server %s disagrees", sel.Name, sel.Profile.Server, o.Server))
 	case sel.Defined:
+		if err := client.CheckTrustOptions(o, sel.Profile); err != nil {
+			return exit(err)
+		}
 		return sel.Profile.Server, -1
 	case want != "":
+		// The in-memory profile of an undefined -server: the server URL rule
+		// (https, or loopback http, or -insecure-http) holds before any request.
+		p := profile.Profile{Name: sel.Name, Mode: profile.ModeServer, Server: want, InsecureHTTP: o.InsecureHTTP, RootThumbprint: o.RootThumbprint, Installation: o.Installation}
+		if err := p.Validate(); err != nil {
+			return exit(fmt.Errorf("profile %q: %w", sel.Name, err))
+		}
 		return want, -1
 	case sel.Name == "default":
 		return exit(client.NoLocalModeError(sel.Name))

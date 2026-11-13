@@ -132,7 +132,7 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 		return out, serverDisagreesError(p, o.Server)
 	}
 	if !creating {
-		if err := checkTrustOptions(o, p); err != nil {
+		if err := CheckTrustOptions(o, p); err != nil {
 			return out, err
 		}
 	}

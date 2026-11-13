@@ -1,10 +1,13 @@
 package mcpcli
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
@@ -244,5 +247,38 @@ func TestOwnerOnlyFixWindowsText(t *testing.T) {
 	got := fileacl.WindowsFix(`C:\k`)
 	if !strings.Contains(got, "${env:USERNAME}") || !strings.Contains(got, "%USERNAME%") {
 		t.Errorf("WindowsFix = %q", got)
+	}
+}
+
+// The server URL rule holds before any request: no connection is made.
+func TestCheckRefusesCleartextBeforeAnyRequest(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	var conns atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conns.Add(1)
+			_ = c.Close()
+		}
+	}()
+	environ, _ := testEnviron(t)
+	// 127.0.0.2 is not one of the three loopback names, so the rule refuses it
+	// at once; without the rule check would dial it (and hang until its timeout).
+	port := ln.Addr().(*net.TCPAddr).Port
+	for _, host := range []string{"http://elsewhere:1", fmt.Sprintf("http://127.0.0.2:%d", port)} {
+		code, out, errs := run([]string{"check", "-server", host}, environ)
+		if code != 2 || out != "" || !strings.Contains(errs, "-insecure-http") {
+			t.Errorf("%s: code %d, stdout %q, stderr %q", host, code, out, errs)
+		}
+	}
+	if n := conns.Load(); n != 0 {
+		t.Errorf("%d connections were made", n)
 	}
 }

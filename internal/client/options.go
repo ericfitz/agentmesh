@@ -187,7 +187,7 @@ func resolveProfile(cfg profile.Config, name string, o Options) (profile.Profile
 		if err != nil {
 			return profile.Profile{}, resolveErr(err)
 		}
-		if err := checkTrustOptions(o, p); err != nil {
+		if err := CheckTrustOptions(o, p); err != nil {
 			return profile.Profile{}, err
 		}
 		return p, nil
@@ -205,17 +205,17 @@ func resolveProfile(cfg profile.Config, name string, o Options) (profile.Profile
 	case serverDisagrees(p, server):
 		return profile.Profile{}, serverDisagreesError(p, server)
 	}
-	if err := checkTrustOptions(o, p); err != nil {
+	if err := CheckTrustOptions(o, p); err != nil {
 		return profile.Profile{}, err
 	}
 	return p, nil
 }
 
-// checkTrustOptions refuses a trust option that disagrees with the defined
+// CheckTrustOptions refuses a trust option that disagrees with the defined
 // profile p (Plan ruling 29): another root_thumbprint or installation, or
 // -insecure-http on a profile without insecure_http. An unset option agrees
-// with anything. It and RegisterIdentity share it.
-func checkTrustOptions(o Options, p profile.Profile) error {
+// with anything. Resolve, RegisterIdentity and the mcpcli target step share it.
+func CheckTrustOptions(o Options, p profile.Profile) error {
 	if p.Mode == profile.ModeLocal && (o.InsecureHTTP || o.RootThumbprint != "" || o.Installation != "") {
 		return resolveErr(fmt.Errorf("-insecure-http, -root-thumbprint and -installation apply to server profiles; profile %q is local", p.Name))
 	}
