@@ -8,37 +8,32 @@
 
 **Tech Stack:** Go 1.27 (`CGO_ENABLED=0`), `crypto/x509` (certificates, CSRs, CRLs), go-jose v4 (already linked by both binaries), oapi-codegen output in `internal/gen` (never edited by hand), SQLite (`modernc.org/sqlite`) and Postgres (`pgx`) through `internal/store/sqlstore`, bash gate scripts (`set -euo pipefail`, shellcheck-clean).
 
-**Spec:** `docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md` (spec 1, fourth revision; "section N" below means a section of it). Decisions and rulings: `docs/adr/0019-certificate-hierarchy-and-signed-messages.md` (Decisions 1 to 46; "Decision N" and "Ruling N" below are its numbers). Spec 2 (`docs/superpowers/specs/2026-11-11-signed-messages-design.md`) is read only for what this plan must leave room for; none of it is built here (Decision 13). Superseded and not built: `docs/superpowers/specs/2026-11-10-server-key-file-design.md` and the key file addenda of ADR 0012. Checked against the tree at `5b09d27`.
+**Spec:** `docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md` (spec 1, fourth revision; "section N" below means a section of it). Decisions and rulings: `docs/adr/0019-certificate-hierarchy-and-signed-messages.md` (Decisions 1 to 49; "Decision N" and "Ruling N" below are its numbers). Spec 2 (`docs/superpowers/specs/2026-11-11-signed-messages-design.md`) is read only for what this plan must leave room for; none of it is built here (Decision 13). Superseded and not built: `docs/superpowers/specs/2026-11-10-server-key-file-design.md` and the key file addenda of ADR 0012. Checked against the tree at `5b09d27`; amended on 2026-11-12 for Decisions 47 to 49 and for the 21 findings of the pre-flight scan (`.superpowers/sdd/2026-11-12-adr-0019-spec-1-certificate-hierarchy/preflight-scan.md`, a machine-local file), each checked against the tree at `2ecdd9c`.
 
 ## Open questions for Eric
 
 **Answered by Eric on 2026-11-12 (ADR 0019, Decisions 47 to 49):** Question 1, option A (build on the branch with the stand-in; Plan ruling 1 is now Decision 47); Question 3, option A (Plan ruling 12 is now Decision 48); Question 4, approved (Decision 49; spec 1 section 1 already says so, so Task 36 leaves its status lines alone). Question 2 stays open and blocks Task 37 only.
 
-1. **May the work be built on a branch with a stand-in enterprise number, behind a gate that refuses to land it?** Three texts say no stand-in: Decision 36 ("no placeholder value is accepted in the code in its place"), Ruling 42 ("no implementation of this spec lands on `main` before IANA has assigned the number", and "Not taken: building with a stand-in and replacing it later"), and section 8 ("No commit that adds the constant is made before ADR 0019 records the assigned number"). The dispatch for this plan asks for the opposite on one point: one named constant with a placeholder that a gate refuses to ship, so everything else can be built now. That instruction came from the coordinating agent and is not Eric's approval. The plan is written for it (Plan ruling 1), because the alternative needs no plan change beyond deleting Task 2 and folding Task 37 into Task 1:
-   - **A (what the plan assumes):** build now on the branch `adr-0019-spec-1`, never on `main`. The constant holds 32473, the number RFC 5612 reserves for documentation, which section 8's own test refuses. No certificate is committed as a fixture (every test makes its own), so the later change is one constant. `make pen-check` fails while the stand-in is there; it runs in CI on `main` and joins `make verify` in Task 37. The branch merges only after Task 37.
-   - **B:** hold all execution until the number is assigned. Nothing is built; the plan waits.
-2. **The assigned Private Enterprise Number.** Task 37 needs the number IANA assigns to Trojan Unicorn Ventures, and ADR 0019 has to record it first (Ruling 42).
-3. **Which stored intermediate does a process with a key service use after a key change inside that service?** The spec does not say. A process signs by the reference `ca install` pinned and does not resolve the URI at start (Ruling 9), and a pinned reference cannot always be traced back to the configured URI (`awskms` resolves an alias to a key identifier; `hashivault` pins `NAME/VERSION`, `internal/keyprovider/hashivault/hashivault.go:220`). The plan takes **A** (Plan ruling 12) and Task 17 builds it; it is one function to change:
-   - **A:** the newest valid stored intermediate whose `key_ref` has the configured URI's scheme. A replica restarted with the old URI during a key change then moves to the new key at once, or exits 1 when its service account may not use that key.
-   - **B:** resolve the URI at every start and match by public key, as the file form does. Adding a key version in the service then stops every start until `ca csr` and `ca install` are run again, which is the alternative Ruling 9 did not take.
-   - **C:** record the configured URI's printable name beside the reference and match on it. That adds to the `trust_material` row section 4.5 fixes.
-4. **Status lines of spec 1.** Its section 1 still says the text of the third and fourth revisions "have not been approved by him yet", while the dispatch calls the spec approved. Task 36 updates those lines only on Eric's word.
+1. **Answered (Decision 47).** The work is built now on the branch `adr-0019-spec-1`, never on `main`, with the stand-in 32473, which `make pen-check` refuses; the branch merges only after Task 37. This changes Decision 36, Ruling 42 and section 8 on that one point, and what they protect stands: nothing of spec 1 lands on `main`, and no release carries a stand-in. Not taken: holding all execution until IANA assigns the number.
+2. **Open: the assigned Private Enterprise Number.** Task 37 needs the number IANA assigns to Trojan Unicorn Ventures, and ADR 0019 has to record it first (Ruling 42). It blocks Task 37, and through it Task 38 and the merge; nothing else.
+3. **Answered (Decision 48).** With a key service, a process signs with the newest valid stored intermediate whose pinned key reference has the configured URI's scheme. Ruling 9 stands: the key version is pinned at `ca install`. Plan ruling 12 states the rule and Task 12 builds it. Not taken: resolving the URI at every start and matching by public key; recording the URI's printable name beside the reference.
+4. **Answered (Decision 49).** Eric approved the text of spec 1's third and fourth revisions. The plan rulings of the spec's sections 12 and 13 stay rulings he may overrule. Section 1 of the spec says so on each revision's line.
 
 ## Global Constraints
 
-- **Frozen:** Eric's Decisions 1 to 46 (ADR 0019) and the spec's text. The spec's own plan rulings (Rulings 3 to 13, 24, 30 to 36, 42 to 45) are followed as written. Where the spec is silent this plan makes a numbered plan ruling below; none of them is Eric's and he may overrule any. A gap found during execution is reported as a design change, not guessed.
+- **Frozen:** Eric's Decisions 1 to 49 (ADR 0019) and the spec's text, which Decision 49 approved. The spec's own plan rulings (Rulings 3 to 13, 24, 30 to 36, 42 to 45) are followed as written. Where the spec is silent this plan makes a numbered plan ruling below. Plan rulings 1 and 12 are Eric's now (Decisions 47 and 48); none of the others is his, and he may overrule any of those. A gap found during execution is reported as a design change, not guessed.
 - **Pre-release rule (Eric, 2026-10-25):** schema, wire, settings and formats change in place. No migration, no shim, no compatibility path, no deprecation. The schema version stays 1 and the protocol version stays `1.0.0`; the operation count stays 57 (8 open, 49 protected).
-- **Branch:** every task commits to `adr-0019-spec-1`. Nothing merges to `main` and nothing is pushed to `main` before Task 37 and Task 38 are done (Open question 1). This overrides the "work lands directly on `main`" line of `CLAUDE.md` for this plan only.
+- **Branch:** every task commits to `adr-0019-spec-1`. Nothing merges to `main` and nothing is pushed to `main` before Task 37 and Task 38 are done (Decision 47). This overrides the "work lands directly on `main`" line of `CLAUDE.md` for this plan only.
 - **Closing a task:** each task ends with `go vet ./... && make fmt-check && make lint && make vet-cross` (the last one vets Windows, which no local test run covers), then `make verify` (needs Docker; a run that skips the Postgres suites is not a pass), and shows the last 15 lines of its output. A task that changes a file under `scripts/`, `.github/` or the `Makefile` also runs `make release-lint`. Then one commit in the `type(scope): subject (ADR 0019)` style, ending with the attribution lines the session reminder gives. No task pushes.
-- **Checkpoints for CI and Windows.** `ci.yml` runs on pushes to `main` and on pull requests, `windows.yml` on pushes to `main`; this plan opens no pull request, so nothing on the branch reaches CI or a Windows runner by itself. Task 2 adds `workflow_dispatch` to `ci.yml` (`windows.yml` has it). After Tasks 11, 26 and 32 the controller stops and asks Eric: `Approve: push branch adr-0019-spec-1 to origin and run ci.yml and windows.yml on it`. A red job is fixed before the next task starts.
+- **Checkpoints for CI and Windows.** `ci.yml` runs on pushes to `main` and on pull requests, `windows.yml` on pushes to `main`; this plan opens no pull request, so nothing on the branch reaches CI or a Windows runner by itself. Task 2 adds `workflow_dispatch` to `ci.yml` (`windows.yml` has it). After Tasks 11, 26 and 32 the controller stops and asks Eric: `Approve: push branch adr-0019-spec-1 to origin and run ci.yml and windows.yml on it`. A red job is fixed before the next task starts. If `gh workflow run ci.yml --ref adr-0019-spec-1` cannot dispatch the workflow on the branch (`ci.yml` on `main` has no `workflow_dispatch` trigger yet, and GitHub may refuse one that only the branch's copy has; `windows.yml` has it on `main`), the controller asks Eric how CI is to run on the branch and picks no other way itself. One step is not expected to be green everywhere: the `make pen-check` step of the `pen-gate` job is skipped on a run of the branch and is red on any pull request into `main` until Task 37. That is the gate working (Decision 47), not a job to fix.
 - **No committed certificates, keys or CRLs.** Every test and fixture makes its own through `internal/pki`, `internal/pki/rootca` or `internal/trusttest`. A PEM or DER file under `testdata/` is a review rejection (it would pin the stand-in identifier).
-- **One chain check.** Only `pki.VerifyChain` (and its two halves, `pki.CheckChain` and `Verified.ValidAt`) decides whether a chain is accepted (section 4.2). No other code compares an installation name, an extended key usage or a leaf lifetime.
+- **One chain check.** Only `pki.VerifyChain` (and its two halves, `pki.CheckChain` and `Verified.ValidAt`) decides whether a chain is accepted (section 4.2). No other code compares an installation name, an extended key usage or a leaf lifetime: `ca install` and the row loader reach those comparisons through `pki.CheckIntermediate`, the code `CheckChain` itself runs, and report its messages (Tasks 3 and 12).
 - **Rows are facts.** The Store applies no rule to `trust_material` (ADR 0004 addendum "Access facts, not rules"); a row that fails verification is ignored and logged with its thumbprint, never trusted and never a 500 (the no-500 rule).
 - **Import rules to keep:** `internal/pki` and `internal/pki/rootca` import the standard library only (`rootca` also `internal/pki`); `internal/trust` imports the standard library, `internal/filelock` and `internal/pki` only; `internal/keyprovider` stays inside its allowlist; `internal/auth/token` imports the standard library, go-jose and `internal/auth/keys` only (Plan ruling 3); `internal/tui`, `internal/mcpserver`, `internal/mcpcli` and `internal/cli` keep their rules (the layer sits under the `Bus`); the MCP-only binary still links exactly 13 modules.
 - **Never edit `internal/gen` by hand.** Every change to `api/openapi.yaml` is followed by `make generate` in the same task. `api/arazzo.yaml` `info.version` stays `1.0.0`.
 - **The pre-commit hook** (`.githooks/pre-commit`) fuzzes the changed paths of a staged non-documentation `api/openapi.yaml` change through `scripts/cats-harness.sh`. Tasks 15 and 27 commit such changes. A finding no rule explains is fixed, or the controller adds a rule with its reason through the `cats:*` skills; `--no-verify` is not used.
 - **Selftest anchors.** `scripts/check-gates-selftest.sh` block 14 anchors on the line `if err := tok.Claims(key.Public, &c); err != nil {` of `internal/auth/token/issuer.go`, block 15 on `if !p.Admin {` of `internal/core/access/decide.go`, and the m7 probes of block 22 on the `keyprovider-leaf` and `keyprovider-consumers` rule names. Those lines and names stay as they are; a task that must change one changes the selftest in the same commit. The selftest tests `HEAD` and is not part of `make verify`, so Task 35 runs it whole.
-- **`TestAccessRuleSites`** (`internal/core/access/sites_test.go`) is not touched: no task reads `Admin`, `Creator`, `Owner`, `Scope` or a `Kind` outside `access`. The administrator check of the forced renewal stays `Core.RequireServerAdmin`.
+- **`TestAccessRuleSites`** (`internal/core/access/sites_test.go`) gains exactly one allowlist entry, in Task 12, the task that introduces the `trust` lock: `"internal/core/signingkeys/trust.go withLock": {"Owner": 1}`, with the comment `this replica's lock owner name`, as the entries of `maintenance/service.go` and `slackbridge/runner.go` have. The test counts every selector named `Owner` in non-test code outside `access`, whatever it is used for, and the lock is taken for `Core.Owner`. `Trust.withLock` reads `t.Owner` once into a local and is the only function of this plan that takes, renews or releases that lock, so no later task adds a site or raises the count; a task that finds it needs another `Owner` selector stops and reports it. No task reads `Admin`, `Creator`, `Scope` or a `Kind` outside `access`. The administrator check of the forced renewal stays `Core.RequireServerAdmin`.
 - **Windows:** `windows.yml` must be green. File modes mean nothing there: an owner-only check goes through `internal/fileacl`, an atomic replace through a temporary file and `os.Rename`, a lock through `internal/filelock` (or, in `rootca`, an exclusively created lock file). Tests that assert a Unix mode sit in `_unix_test.go` files.
 - **Shell:** gate scripts stay `set -euo pipefail` and shellcheck-clean, with the `deps_violation=<pkg> imports <imp>` output contract.
 - American English everywhere.
@@ -46,7 +41,9 @@
 
 ## Rulings made by this plan (Eric may overrule)
 
-1. **The stand-in and its gate** (the default of Open question 1). `pki.PrivateEnterpriseNumber` is 32473 until Task 37. `scripts/pen-gate.sh` (`make pen-check`) exits 1 while the constant is 0 or 32473 or the identifier is not `1.3.6.1.4.1.<n>.1.1`; it has a selftest and a mutation. It runs as the CI job `pen-gate` only when the ref is `main`, so a run of the workflow on the branch is not red for the branch's whole life, and Task 37 adds it to `make verify`. Not taken: a Go test that fails on the stand-in from Task 1 (every task's `make verify` would be red); a release preflight (release tags are cut from `main`, where the CI job and, after Task 37, `make verify` fire).
+Rulings 1 and 12 became Eric's on 2026-11-12 (Decisions 47 and 48) and are frozen with his other decisions; they keep their numbers so that the references below stay valid. Rulings 2 to 11 and 13 to 33 are the plan's, and he may overrule any of them. Rulings 30 to 33 came with the pre-flight scan, and ruling 26 was rewritten by it.
+
+1. **The stand-in and its gate** (Eric's: Decision 47). `pki.PrivateEnterpriseNumber` is 32473 until Task 37. `scripts/pen-gate.sh` (`make pen-check`) exits 1 while the constant is 0 or 32473 or the identifier is not `1.3.6.1.4.1.<n>.1.1`; it has a selftest and a mutation. It runs as a step of the CI job `pen-gate` on a push to `main` and on a pull request into `main`, and not on a run of the branch, so the workflow on the branch is not red for the branch's whole life; Task 37 adds it to `make verify`, and Task 38 step 3 is the stop before the merge (Decision 47: the branch cannot merge until the assigned number is in). Not taken: a Go test that fails on the stand-in from Task 1 (every task's `make verify` would be red); a release preflight (release tags are cut from `main`, where the CI job and, after Task 37, `make verify` fire).
 2. **The chain is verified once and its validity period is cached.** `pki.VerifyChain` is `pki.CheckChain` followed by `Verified.ValidAt`: `CheckChain` checks the signatures, the profiles, the name, the usage and the lifetime ceiling, and returns `pki.Verified` with the period in which all three certificates are valid: the latest "not before" and the earliest "not after" of leaf, intermediate and root (Ruling 36 puts the root in it). The server verifies a leaf row once per reload cycle that first sees it, and the issuer tests `Verified.ValidAt(now, 60 s)` for every bearer; revocation is evaluated again at every reload. This is "the chain check at the current time" of section 4.7 without two ECDSA verifications per request. A `pki` test proves `VerifyChain(at)` succeeds exactly when `ValidAt(at)` holds. The tests that must still bite: root expiry on the fake clock (Task 19) and the forged-row mutation (Task 35).
 3. **`internal/auth/token` does not import `internal/pki`.** `token.Key` carries the DER chain (leaf, then intermediate) and the validity period; the issuer needs nothing else. The package keeps its three-import rule.
 4. **The subject key identifier** is the first 20 bytes of the SHA-256 of the key's DER `SubjectPublicKeyInfo` (`pki.SubjectKeyID`). `trust_material.issuer_key` and every map keyed by "issuer key" use its lowercase hexadecimal form. A serial number is written in lowercase hexadecimal without leading zeros.
@@ -57,7 +54,7 @@
 9. **The server-mode SQLite file mode check stays** (`internal/store/sqlite/sqlite.go:39,86,147`): whoever can write the file is the administrator (Decision 15). Its message no longer says the file holds the signing key; it says the file is the server's database.
 10. **Required settings are checked at the start, not in `Validate`.** `config.Validate` checks the shape of the five new settings when they are set. `Config.RequireTrust()` is what makes them required; the server start and the `ca` and `signing-key` host commands call it. `users`, `admins`, `enrollment` and the other host commands run without trust settings, as they do today.
 11. **`keyprovider.FileProvider` reads through a function it is given.** The owner-only check (Unix mode 0600 or narrower; `fileacl.CheckOwnerOnly` on Windows) lives in `internal/server/cmd`, because the `keyprovider-leaf` allowlist has no `internal/fileacl`.
-12. **Which stored intermediate "matches the configured key":** for the file form, one whose public key is the file's key; for a key service, one whose `key_ref` is not empty and has the configured URI's scheme (Ruling 9: a process signs by the pinned reference and does not resolve the URI at start). Among those that are valid now, the one with the latest "not before" is used. The key service half is option A of Open question 3: it is a default, and what it does during a key change inside one service is stated there.
+12. **Which stored intermediate "matches the configured key"** (Eric's: Decision 48): for the file form, one whose public key is the file's key; for a key service, one whose `key_ref` is not empty and has the configured URI's scheme (Ruling 9: a process signs by the pinned reference and does not resolve the URI at start). Among those that are valid now, the one with the latest "not before" is used. The key service half is Decision 48: a replica restarted with the old URI during a key change inside the service moves to the new key at once, or exits 1 when its service account may not use that key. A pinned reference is a key URI and its scheme is the backend's `Provider.Name()`, so the match needs neither the configured URI nor a call to the service. Two functions of Task 12 hold the rule, `Trust.Configured` and `Trust.Pick`; `ca status` (Task 13) and the manager (Task 17) call them and repeat none of it.
 13. **The manager is driven by `Step`.** `Manager.Step(ctx)` does whatever is due (reload, renewal, retry) and returns when to call it next; `Manager.Run` loops over it with a real timer. The fake-clock tests call `Step`.
 14. **A transitional adapter for the two signing key operations** (Task 15): the wire, the Bus types, the handlers, the remote client and the CLI take their final shape while the old key set still serves them: `internal/core/signingkeys/api.go` is reduced to an adapter that answers from the old rows in the new shape. Task 23 moves the server to the manager's forms and Task 24 deletes the file.
 15. **In-band answers come from one in-memory snapshot.** Discover, session open, receive and watch read `TrustSource.Bundle()`, the manager's verified copy, never the Store; the trust number of an answer is the bundle's. On a hint that carries no message the manager reads the stored trust number (at most once a second) and reloads when it differs from the one it holds, which is how a Postgres notification reaches a replica "sooner" (section 4.8).
@@ -71,14 +68,18 @@
 23. **`TestAuthEndToEnd` keeps its 12 leaf names** (`scripts/m5-exit-checks.sh` pins the count); their bodies move to the hierarchy. The bearer matrix of section 7 is `TestBearerMatrix` in `internal/core/signingkeys`, and the forged-row mutation targets it.
 24. **A forced renewal revokes the leaf that signed the caller's own bearer.** The answer is delivered; the caller's next request is a 401 and the CLI's transport refreshes once. Every test that holds a raw bearer exchanges again after a rotation: the Arazzo workflow ends with a token exchange, `TestRequestExamples` runs `rotateSigningKey` as its last row.
 25. **Containers.** `scripts/docker-smoke.sh` bootstraps inside the image with the shipped tool (`ca init`, `server admin ca csr`, `ca sign`, `server admin ca install`) into the data volume; `deploy/docker-compose.yml` and `deploy/example.env` name the three settings and mount the root certificate and the key file.
-26. **Two fixtures with one shape.** `internal/trusttest` is a non-test package (several packages' tests import it) that the m4 rule keeps out of both binaries, like `internal/respcheck`. It does not import `internal/server/cmd` (that package's tests import it). It does import `internal/core/signingkeys`, whose own tests are `package signingkeys` and so cannot import it (an import cycle): that package has a fixture of its own in `helpers_test.go`, with the same methods unexported (`newFixture`, `sibling`, `renew`, `revokeIntermediate`, `trust`, `install`, `manager`, `leaf`). Where Tasks 12 and 17 to 20 say `Fixture.X` about a test of `internal/core/signingkeys`, they mean that one.
+26. **One fixture, and external tests for `signingkeys`.** `internal/trusttest` is a non-test package (several packages' tests import it) that the m4 rule keeps out of both binaries, like `internal/respcheck`. It does not import `internal/server/cmd` (that package's tests import it). It does import `internal/core` and `internal/core/signingkeys` (`Fixture.Trust`, `Install`, `Manager` and `Leaf` return or use their types), so the new tests of `internal/core/signingkeys` are an external test package, `package signingkeys_test`: Go lets such a package import one that imports the package under test, where an in-package test file would be an import cycle. The one thing those tests need from inside the package, the hook that counts chain verifications, reaches them through `export_test.go`. There is no second copy of the fixture inside the package. Task 12 creates `internal/trusttest`, because its tests are the first to need it; Task 14 adds `Sets` and the fixture's own tests; Tasks 17 and 19 add `Manager` and `Leaf`. The fixture is made at a time the test names (`trusttest.New(t, now)`), because some suites run on a fake clock that starts in 2023.
 27. **`TrustCertificateByThumbprint` takes the kind**, because a thumbprint is unique per kind (section 4.5).
 28. **Leaves a forced renewal does not cover** (Ruling 4: those under another intermediate key) are named in a log line by the API form and on standard error, as `not-covered <thumbprint>`, by the host form. The wire answer has no member for them.
 29. **A flag that disagrees with a defined profile** (`-insecure-http`, `-root-thumbprint`, `-installation` against a profile that `config.json` defines with another value) is exit 2, as `-server` is today (`internal/client/resolve_test.go:263`).
+30. **The `trust` lock.** One function takes, renews and releases it: `Trust.withLock` (Task 12). Its lease is `LockTTL = 4 * SignTimeout`, two minutes: a forced renewal signs twice (a leaf and a CRL, each bounded by `SignTimeout`) and reloads, and a lease of 60 seconds could end before its transaction, after which a second operator's CRL could drop entries (Decision 27). The forced renewal also renews the lease just before that transaction and gives up when it has lost the lock. `Store.TryLock` renews for the same owner (`internal/store/lock.go:14`), so `withLock` keeps the callers of one process apart itself and answers the second the same retryable `unavailable`.
+31. **Certificate members of a JWK.** `JWK` is also the schema of `RegisterRequest.public_key_jwk`, so the two members Task 27 adds are request fields and need bounds: `x5c` holds at most 2 items of at most `keys.MaxJWKCertificateBytes` (4096) characters each (a P-256 intermediate signed by a 4096-bit RSA root measured 930 bytes of DER, 1,240 characters in base64), `x5t#S256` at most `keys.MaxJWKMemberBytes`. Register answers `validation` to a key that carries either one: a submitted key is a bare key.
+32. **`pki.CheckRoot`** is what "one CA certificate" means for `root_certificate_file` (section 4.15): basic constraints valid with CA true, and certificate signing among its key usages when it states any (a root without that extension passes, as `crypto/x509` treats it). Any key type the library verifies; no agentmesh usage and no path length rule, because an outside CA's root must pass (section 4.2); no validity period, which the start checks by itself.
+33. **The manager's two mutexes, and who issues.** One mutex guards its `Memory`, its snapshot of the material and its leaves, and is never held while the intermediate key signs (a key service may take `SignTimeout`, and every request's key lookup would wait behind it). The other is held for the whole of each operation that issues a leaf. Only `Step` (a renewal, a retry, the new leaf after the manager's own was revoked) and `RotateSigningKey` issue. `Reload` never does: when it finds the manager's own leaf revoked, it stops signing with it and wakes `Run`, whose next `Step` issues. So `LoadKeys`, which runs on a request's goroutine, never waits for a signature, and `RotateSigningKey` can reload while it holds the issuing mutex.
 
 ## Task sizes
 
-Tasks 15, 22 and 23 are the widest (many files, mechanical edits, one commit each because the tree does not compile or the suites do not pass in between). The controller gives each of them a fresh implementer with nothing else in its context, and escalates effort before splitting: none of the three has a green intermediate state to split at.
+Tasks 15, 22, 23, 24 and 27 are the widest (many files, mechanical edits, one commit each because the tree does not compile or the suites do not pass in between). The controller gives each of them a fresh implementer with nothing else in its context, and escalates effort before splitting: none of the five has a green intermediate state to split at.
 
 ## Transitional states
 
@@ -121,7 +122,7 @@ New packages:
 | `internal/pki/` (`eku.go`, `names.go`, `profile.go`, `pem.go`, `chain.go`, `crl.go`, `revocations.go`) | The identifier, thumbprints, names, the three certificate profiles, PEM parsing, the chain check, CRLs, the kept revocations |
 | `internal/pki/rootca/` (`rootca.go`, `state.go`, `lock.go`) | The root tool's rules: init, sign, revoke, `state.json` |
 | `internal/trust/` (`store.go`, `pin.go`, `apply.go`) | The client's per-profile trust store |
-| `internal/trusttest/` (`trusttest.go`) | The test fixture: a throwaway root, an intermediate key file, an installed intermediate, a manager |
+| `internal/trusttest/` (`trusttest.go`; created in Task 12) | The one test fixture: a throwaway root, an intermediate key file, an installed intermediate, a manager, all made at the clock the test gives it |
 
 New files in existing packages:
 
@@ -137,7 +138,7 @@ New files in existing packages:
 | `internal/client/trust.go` | The layer under the `Bus` |
 | `scripts/pen-gate.sh`, `scripts/pen-gate-selftest.sh` | The enterprise number gate and its selftest |
 
-Rewritten or deleted: `internal/core/signingkeys/service.go`, `schedule.go`, `keyring.go`, `api.go` and their tests (Task 24); `internal/store/signing.go`, `internal/store/sqlstore/signing.go`, `internal/conformance/store/signing_test.go` (Task 26); `internal/server/cmd/keyprovider.go` becomes `trust.go` (Task 23).
+Rewritten or deleted: `internal/core/signingkeys/service.go`, `schedule.go`, `keyring.go`, `api.go` and their tests (Task 24); `internal/store/signing.go`, `internal/store/sqlstore/signing.go`, `internal/conformance/store/signing_test.go` (Task 26); Task 13 creates `internal/server/cmd/trust.go`; Task 24 moves `keyBackends` into it and deletes `internal/server/cmd/keyprovider.go`.
 
 ---
 
@@ -178,9 +179,16 @@ func ParseCertificatePEM(b []byte) (*x509.Certificate, error)
 func ParseRequestPEM(b []byte) (*x509.CertificateRequest, error)
 func ParseCRLPEM(b []byte) (*x509.RevocationList, error)
 func EncodePEM(blockType string, der []byte) []byte // "CERTIFICATE", "CERTIFICATE REQUEST", "X509 CRL"
+
+// ErrRequestKey: the request's key is not ECDSA P-256. IssueIntermediate wraps it, so the root tool
+// can tell a refused input (exit 2) from a failure (exit 1).
+var ErrRequestKey error
+// CheckRoot is what root_certificate_file must hold (Plan ruling 32): a CA certificate that may sign
+// certificates, of any key type. It checks no time.
+func CheckRoot(c *x509.Certificate) error
 ```
 
-Profiles (section 4.2, exact): root: CA true, key usage certificate signing and CRL signing, subject key identifier, no extended key usage. Intermediate: CA true, `MaxPathLen` 0 with `MaxPathLenZero` (basic constraints critical), key usage certificate signing and CRL signing (critical), subject and authority key identifiers, the agentmesh usage, subject CN copied from the CSR, key ECDSA P-256 (another key is an error). Leaf: CA false (critical), key usage digital signature (critical), both key identifiers, a random 128-bit serial number, the agentmesh usage, "not before" `now - LeafBackdate`, "not after" `now + validity` cut to the intermediate's "not after". No certificate carries a DNS name, an IP address or a TLS usage.
+Profiles (section 4.2, exact): root: CA true, key usage certificate signing and CRL signing, subject key identifier, no extended key usage. Intermediate: CA true, `MaxPathLen` 0 with `MaxPathLenZero` (basic constraints critical), key usage certificate signing and CRL signing (critical), subject and authority key identifiers, the agentmesh usage, subject CN copied from the CSR, key ECDSA P-256 (another key is an error that wraps `ErrRequestKey`). Leaf: CA false (critical), key usage digital signature (critical), both key identifiers, a random 128-bit serial number, the agentmesh usage, "not before" `now - LeafBackdate`, "not after" `now + validity` cut to the intermediate's "not after". No certificate carries a DNS name, an IP address or a TLS usage.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -190,13 +198,17 @@ Profiles (section 4.2, exact): root: CA true, key usage certificate signing and 
 
 `TestValidInstallationName`: accepted `a`, `prod-1`, `eu.west-2`, `0lab` and 64 times `a`; refused the empty string, 65 times `a`, `Prod`, `-a`, `.a`, `a_b`, `a b`, `é`.
 
-`TestRootProfile`, `TestIntermediateProfile`, `TestLeafProfile`: one assertion per item of the profile list above, on the parsed certificate; `TestIntermediateProfile` also refuses a CSR with an RSA key and one with a P-384 key.
+`TestRootProfile`, `TestIntermediateProfile`, `TestLeafProfile`: one assertion per item of the profile list above, on the parsed certificate; `TestIntermediateProfile` also refuses a CSR with an RSA key and one with a P-384 key, each with `errors.Is(err, ErrRequestKey)`.
 
 `TestLeafNotAfterCut`: an intermediate that expires in 1 hour and a validity of 168 hours give a leaf whose "not after" equals the intermediate's.
 
 `TestSubjectKeyID`: 20 bytes, equal to the first 20 bytes of `sha256.Sum256(x509.MarshalPKIXPublicKey(pub))`; two intermediates issued for one CSR key carry the same identifier and different serial numbers.
 
 `TestParsePEM` (Review Focus 4): each of the three parsers accepts a block with LF and with CRLF line endings, and refuses, with an error that says what it found: DER bytes ("not PEM"), two blocks ("2 PEM blocks; want one"), a block of another type (the type named), trailing text after the block.
+
+`TestParseRequest`: a good request returns its name; one whose signature does not verify (a byte of the signature flipped), one with an empty CN and one with the CN `Prod` are refused, each with its own message. This is where a bad CSR signature is caught: it never reaches `rootca.Sign`.
+
+`TestCheckRoot` (Plan ruling 32): the root `NewRoot` makes passes; so do an RSA root and a root without a key usage extension, both made with the standard library; a certificate with CA false, and a CA whose key usage lacks certificate signing, are refused; an expired root passes (no time is checked).
 
 Run: `go test ./internal/pki/ 2>&1 | tail -20`. Expected: the package does not compile.
 
@@ -214,12 +226,12 @@ Run: `go test ./internal/pki/ && bash scripts/m7-exit-checks.sh --deps-only | ta
 
 **Files:**
 - Create: `scripts/pen-gate.sh`, `scripts/pen-gate-selftest.sh`
-- Modify: `Makefile` (targets `pen-check` and `pen-selftest`, both in `.PHONY`), `.github/workflows/ci.yml` (job `pen-gate`; the trigger `workflow_dispatch:` beside `push` and `pull_request`, so the controller can run the workflow on the branch at a checkpoint)
+- Modify: `Makefile` (targets `pen-check` and `pen-selftest`, both in `.PHONY`), `.github/workflows/ci.yml` (job `pen-gate`; the trigger `workflow_dispatch:` beside `push` and `pull_request`, so the controller can run the workflow on the branch at a checkpoint; if GitHub refuses to dispatch it there, the controller asks Eric: Global Constraints)
 
 **Interfaces (Produces):**
 - `bash scripts/pen-gate.sh [--file F]`: reads `internal/pki/eku.go` (or `F`). It needs exactly one line `const PrivateEnterpriseNumber = <digits>`. Exit 0 and `pen-gate: ok <n>` when `n` is none of 0 and 32473 and is below 2147483648; otherwise exit 1 and one line `pen-gate: FAIL <reason>` on standard error, where the reason for 32473 is `32473 is the documentation number (RFC 5612); the assigned number is not in yet (ADR 0019, Decision 36)`. A missing file or a missing or repeated line is exit 1 with its own reason.
 - `bash scripts/pen-gate-selftest.sh`: runs the gate on six files it writes under `mktemp -d` (0, 32473, 2147483648, no constant, the constant twice, 99999), checks each exit code and reason, removes the directory, and prints `pen-gate-selftest: 6 run, 6 passed` or the names that failed (exit 1).
-- CI job `pen-gate`: step 1 `make pen-selftest` on every push; step 2 `make pen-check` with `if: github.ref == 'refs/heads/main'`.
+- CI job `pen-gate`: step 1 `make pen-selftest` on every run; step 2 `make pen-check` with `if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')`. A pull request runs on `refs/pull/N/merge`, so the first half alone would skip the gate there and the stand-in would be caught only after it reached `main`. Step 2 is therefore red on every pull request into `main` until Task 37, and skipped on a dispatched run of the branch (Decision 47; Plan ruling 1).
 
 - [ ] **Step 1: Write the selftest first**, run it, and see it fail because `scripts/pen-gate.sh` does not exist.
 
@@ -270,6 +282,8 @@ Every refusal wraps exactly one of the eight errors. The order of the checks, wh
 5. The library's own verification, for the signatures and the path rules: `leaf.Verify(x509.VerifyOptions{Roots: <root>, Intermediates: <intermediate>, CurrentTime: <the period's NotBefore>, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})`; a failure is `ErrChainSignature` (Ruling 31: the library is asked for any usage and the usage is checked in steps 2 and 3).
 6. `VerifyChain` only: `!ValidAt(at, leeway)`: `ErrChainTime`.
 
+`CheckIntermediate` is also what `ca install` reports: Task 12 wraps its error and writes no text of its own for these cases. So each of its refusals has a fixed message, checked in this order, each wrapping the error step 2 names: `does not chain to the pinned root`; `is not a CA with path length 0` (not a CA, invalid basic constraints, or another path length); `lacks the certificate signing or the CRL signing usage`; `has no subject key identifier`; `its key is not ECDSA P-256`; `names installation %q, expected %q` (the certificate's name, then the caller's; the same function runs on the client, so the text does not say "this server"); `lacks the agentmesh extended key usage`.
+
 - [ ] **Step 1: Write the failing tests**
 
 `TestVerifyChain`, one subtest per rule, each asserting `errors.Is` against the named error: `good` (nil, and the period is the intersection); `two-certificates` and `four-certificates` (`presented` of length 1 and 3: `ErrChainLength`); `wrong-root` (`ErrChainSignature`); `leaf-signed-by-another-key` (`ErrChainSignature`); `intermediate-path-length-1`, `intermediate-not-ca`, `intermediate-without-crl-sign`, `intermediate-without-ski` (`ErrIntermediateProfile`); `other-installation` (the same root, CN `other`: `ErrInstallation`); `intermediate-without-usage` and `leaf-without-usage` (`ErrExtKeyUsage`); `leaf-any-usage-only` (`ErrExtKeyUsage`); `leaf-is-ca` and `leaf-without-digital-signature` (`ErrLeafProfile`); `leaf-lifetime-at-ceiling` (720 h + 60 s exactly: nil) and `leaf-lifetime-over` (one second more: `ErrLeafLifetime`); `intermediate-expired-at-time`, `root-expired-at-time`, `root-not-yet-valid` (`ErrChainTime`); `leeway` (a leaf expired 30 s ago passes with a leeway of 60 s and fails with 0).
@@ -278,7 +292,9 @@ Every refusal wraps exactly one of the eight errors. The order of the checks, wh
 
 `TestCheckIntermediateIgnoresTime`: an expired intermediate passes `CheckIntermediate` (an expired one still serves history, section 4.9 step 2).
 
-Run: `go test ./internal/pki/ -run 'TestVerifyChain|TestValidAt|TestCheckIntermediate' 2>&1 | tail -20`. Expected: compile failure (`VerifyChain` undefined).
+`TestCheckIntermediateMessages`: one certificate per refusal of the list above (seven); each error wraps the named error and ends with the message; a certificate with two faults reports the one that comes first in the list.
+
+Run: `go test ./internal/pki/ -run 'TestVerifyChain|TestValidAt|TestCheckIntermediate' 2>&1 | tail -20` (the pattern covers both `TestCheckIntermediate` tests). Expected: compile failure (`VerifyChain` undefined).
 
 - [ ] **Step 2: Implement `chain.go`** in the order above. Four lines appear exactly once in the file, each on one line, because Task 35's mutations anchor on them: `if c.Subject.CommonName != installation {`, `if !HasAgentmeshUsage(c) {` (the intermediate), `if !HasAgentmeshUsage(leaf) {` and `if leaf.NotAfter.Sub(leaf.NotBefore) > MaxLeafLifetime {`.
 
@@ -369,7 +385,7 @@ Files in `dir`: `root.key` (PKCS#8 PEM, created with `O_CREATE|O_EXCL` at mode 0
 
 `TestInit`: writes the three files; the certificate has the root profile and `days` of validity; the thumbprint returned is `pki.Thumbprint` of it. `TestInitRefusesExistingRoot`: a second `Init` is `ErrRefused` and `root.key` is byte for byte unchanged. `TestInitAfterDeadRun`: a directory holding `root.key` alone is `ErrRefused` with the file named in the message.
 
-`TestSign`: the certificate passes `pki.CheckIntermediate` for the CSR's name; `state.json` records it; a CSR with a bad signature (`ParseRequest` fails upstream) and a call with a CSR whose CN is empty are `ErrRefused`. `TestSignTwice`: the same CSR twice gives two serial numbers and one subject key identifier (a renewal needs no flag). `TestSignNameTaken` (Decision 37): a CSR with a recorded name and another key is `ErrRefused`, the message names `-same-installation` and the recorded key's identifier, and `state.json` is byte for byte unchanged; with `sameInstallation` it is issued; the flag given for a new name, or for the recorded key, changes nothing; a name whose only certificate is revoked or expired is still taken.
+`TestSign`: the certificate passes `pki.CheckIntermediate` for the CSR's name; `state.json` records it; a call with a CSR whose CN is empty, and one with a CSR whose key is RSA or P-384 (`pki.ErrRequestKey` from `IssueIntermediate`), are `ErrRefused`, and `state.json` is byte for byte unchanged. (A CSR with a bad signature cannot reach `Sign`: `pki.ParseRequest` refuses it, Task 1's `TestParseRequest`.) `TestSignTwice`: the same CSR twice gives two serial numbers and one subject key identifier (a renewal needs no flag). `TestSignNameTaken` (Decision 37): a CSR with a recorded name and another key is `ErrRefused`, the message names `-same-installation` and the recorded key's identifier, and `state.json` is byte for byte unchanged; with `sameInstallation` it is issued; the flag given for a new name, or for the recorded key, changes nothing; a name whose only certificate is revoked or expired is still taken.
 
 `TestRevoke`: after two certificates for key K and one for key L, revoking one of K's lists both of K's thumbprints, the CRL lists both serial numbers and not L's, `root.crl` holds it, and the CRL number is `pki.NextNumber(now, previous)`; `TestRevokeTwice`: the second call returns the same CRL bytes, an empty `revoked` and an unchanged number; `TestRevokeClockBack`: a second, different revocation with `now` one hour earlier gets the previous number plus one; `TestRevokeUnknown`: a certificate the tool never issued is `ErrRefused`.
 
@@ -379,7 +395,7 @@ Files in `dir`: `root.key` (PKCS#8 PEM, created with `O_CREATE|O_EXCL` at mode 0
 
 Run: `go test ./internal/pki/rootca/ 2>&1 | tail`. Expected: compile failure.
 
-- [ ] **Step 2: Implement.** One lock for the whole of `Sign` and of `Revoke`; `Init` relies on the exclusive create of `root.key`. The name refusal is the line `if taken && !sameInstallation {`, exactly once in `rootca.go` (Task 35 anchors on it).
+- [ ] **Step 2: Implement.** One lock for the whole of `Sign` and of `Revoke`; `Init` relies on the exclusive create of `root.key`. `Sign` returns `ErrRefused` wrapping the cause when `IssueIntermediate` fails with `pki.ErrRequestKey`, so a request with the wrong key type is a refused input (exit 2 in Task 6), not a failure (exit 1). The name refusal is the line `if taken && !sameInstallation {`, exactly once in `rootca.go` (Task 35 anchors on it).
 
 - [ ] **Step 3: Run** `go test -race ./internal/pki/rootca/ && bash scripts/m7-exit-checks.sh --deps-only | tail -1`. Expected: `ok`, `deps_ok=1`.
 
@@ -404,7 +420,7 @@ State (Definition of Done D): section 4.3's table, each row a test above. A kill
   - `ca revoke -dir DIR CERT_FILE`: the CRL as PEM on standard output; one `revoked <thumbprint>` line per certificate on standard error.
   - `-dir` is required. The command opens no profile, no server and no database, and takes neither `-profile` nor `-identity`.
 
-- [ ] **Step 1: Write the failing tests**: `TestCAInitSignRevoke` (the three commands in order in `t.TempDir()`; the printed certificate parses and passes `pki.CheckIntermediate`; the printed CRL lists it); `TestCASignRefusals` (a second key under a recorded name: exit 2 and `-same-installation` in standard error; with the flag: exit 0); `TestCAInputs` (Review Focus 4: a CRLF CSR file is accepted; a DER file and a file with two blocks are exit 2 with the parser's message); `TestCAUsage` (no subcommand, an unknown one, a missing `-dir`, a missing file argument: exit 2 with the usage line); `TestCAInitTwice` (exit 2).
+- [ ] **Step 1: Write the failing tests**: `TestCAInitSignRevoke` (the three commands in order in `t.TempDir()`; the printed certificate parses and passes `pki.CheckIntermediate`; the printed CRL lists it); `TestCASignRefusals` (a second key under a recorded name: exit 2 and `-same-installation` in standard error; with the flag: exit 0; a CSR with an RSA key: exit 2 and the key type in standard error); `TestCAInputs` (Review Focus 4: a CRLF CSR file is accepted; a DER file, a file with two blocks and a CSR whose signature does not verify are exit 2 with the parser's message); `TestCAUsage` (no subcommand, an unknown one, a missing `-dir`, a missing file argument: exit 2 with the usage line); `TestCAInitTwice` (exit 2).
 
 Run: `go test ./internal/cli/ -run '^TestCA' 2>&1 | tail`. Expected: compile failure.
 
@@ -459,7 +475,7 @@ Run: `go test ./internal/keyprovider/ -run 'TestFileProvider|TestCreateKeyFile' 
 
 **Files:**
 - Create: `internal/store/trust.go`, `internal/store/sqlstore/trust.go`, `internal/conformance/store/trust_test.go`
-- Modify: `internal/store/store.go` (`Tx` embeds `TrustMaterial`), `internal/store/sqlite/schema/0001_initial.sql`, `internal/store/postgres/schema/0001_initial.sql`, `internal/store/meta.go` (the `ResetData` comment names `trust_material`), `internal/store/sqlstore/meta.go` if `ResetData` lists tables, `internal/conformance/store/reset_test.go`, `open_test.go:363` (the table list), `store_test.go` (the read-only method list)
+- Modify: `internal/store/store.go` (`Tx` embeds `TrustMaterial`), `internal/store/sqlite/schema/0001_initial.sql`, `internal/store/postgres/schema/0001_initial.sql`, `internal/store/meta.go` (the `ResetData` and `ResetRegistry` comments at lines 23 and 34 name `trust_material` among what is kept), `internal/store/sqlstore/meta.go` if `ResetData` lists tables, `internal/conformance/store/reset_test.go`, `open_test.go:363` (the table list), `store_test.go` (the read-only method list)
 
 **Interfaces (Produces):**
 
@@ -534,7 +550,7 @@ INSERT INTO trust_material (kind, der, created_at) VALUES ('trust_number', x'', 
 
 The schema version stays 1; no migration (the pre-release rule). The SQL filters on `kind` only, which `TestAccessRuleSites` does not watch.
 
-- [ ] **Step 1: Write the failing suite** in `internal/conformance/store/trust_test.go` (it runs on both engines like its neighbors): `TestTrustCertificates` (put, list by kind in id order, by thumbprint, the duplicate `ErrConflict`, each `ErrInvalid` case, ids that grow); `TestPutCRL` (insert; a higher number replaces; an equal and a lower number are `ErrConflict` and leave the row; one row per issuer key; one root CRL); `TestTrustNumber` (a new store reads 0; `BumpTrustNumber(1000)` is 1000; `BumpTrustNumber(500)` is 1001, the clock set back; a value above `1<<31` such as 1767225600000 is stored and read back; two concurrent transactions never return the same number); `TestExpiredLeaves` (only leaves with `NotAfter < before`, at most `limit`, never an intermediate); `TestDeleteTrustCertificates` (deletes leaves; an intermediate id is `ErrInvalid` and nothing goes); `TestResetKeepsTrustMaterial` in `reset_test.go`. Add the six read methods to the stub check in `store_test.go` and `trust_material` to `open_test.go:363`.
+- [ ] **Step 1: Write the failing suite** in `internal/conformance/store/trust_test.go` (it runs on both engines like its neighbors): `TestTrustCertificates` (put, list by kind in id order, by thumbprint, the duplicate `ErrConflict`, each `ErrInvalid` case, ids that grow); `TestPutCRL` (insert; a higher number replaces; an equal and a lower number are `ErrConflict` and leave the row; one row per issuer key; one root CRL); `TestTrustNumber` (a new store reads 0; `BumpTrustNumber(1000)` is 1000; `BumpTrustNumber(500)` is 1001, the clock set back; a value above `1<<31` such as 1767225600000 is stored and read back; two concurrent transactions never return the same number); `TestExpiredLeaves` (only leaves with `NotAfter < before`, at most `limit`, never an intermediate); `TestDeleteTrustCertificates` (deletes leaves; an intermediate id is `ErrInvalid` and nothing goes); `TestResetKeepsTrustMaterial` and `TestResetRegistryKeepsTrustMaterial` in `reset_test.go` (after `ResetData`, and after `ResetData` followed by `ResetRegistry`, an intermediate, a leaf, both CRL kinds and the trust number are as they were). Add the five read methods (`TrustCertificates`, `TrustCertificateByThumbprint`, `CRLs`, `TrustNumber`, `ExpiredLeafCertificates`) to the stub check in `store_test.go` and `trust_material` to `open_test.go:363`.
 
 Run: `go test -count=1 ./internal/conformance/store/ -run 'Trust|PutCRL|ExpiredLeaves' 2>&1 | tail`. Expected: compile failure.
 
@@ -623,7 +639,7 @@ Run: `go test ./internal/profile/ ./internal/client/ ./internal/mcpcli/ ./intern
 **Files:**
 - Create: `internal/trust/store.go`, `pin.go`, `apply.go`
 - Test: `internal/trust/store_test.go`, `pin_test.go`, `apply_test.go`, `mode_unix_test.go`
-- Modify: `scripts/m7-exit-checks.sh` (rule `trust-leaf`: `check_allowlist trust-leaf ./internal/trust "$MOD/internal/trust" "$MOD/internal/filelock" "$MOD/internal/pki"`, plus `golang.org/x/sys` if the rule's Windows pass reports it through `internal/filelock`; the comment says why)
+- Modify: `scripts/m7-exit-checks.sh` (rule `trust-leaf`: `check_allowlist trust-leaf ./internal/trust "$MOD/internal/trust" "$MOD/internal/filelock" "$MOD/internal/pki"`; the rule lists the dependencies of the platform it runs on, where `internal/filelock` imports no `golang.org/x/sys`, and the comment says so)
 
 **Interfaces (Produces):**
 
@@ -710,10 +726,12 @@ State (Definition of Done D): section 5's last three rows, each a test above.
 
 **Files:**
 - Create: `internal/core/signingkeys/trust.go`, `material.go`, `install.go`
-- Test: `internal/core/signingkeys/material_test.go`, `install_test.go`, `helpers_test.go` (new helpers go here: `service_test.go` is deleted in Task 24). `helpers_test.go` holds the package's own fixture (Plan ruling 26): `newFixture(t)` makes a throwaway root through `rootca`, an intermediate key file with `keyprovider.CreateKeyFile` and the signed intermediate, with the methods `sibling(name)`, `renew(days)`, `revokeIntermediate()`, `trust(c)` and `install(c)`; Tasks 17 and 19 add `manager(c)` and `leaf(c, now, validity)`
+- Create: `internal/trusttest/trusttest.go` (Plan ruling 26: this task's tests are the first to need the fixture, so the package starts here; Task 14 adds `Sets` and the fixture's own tests)
+- Test: `internal/core/signingkeys/material_test.go`, `install_test.go`, `pick_test.go` and `helpers_test.go`, all `package signingkeys_test`, an external test package, so they may import `internal/trusttest`; `internal/core/signingkeys/export_test.go` (`package signingkeys`: it exports the hook that counts chain verifications to those tests, and nothing else). `helpers_test.go` holds what is not the fixture: a SQLite store in `t.TempDir()`, a core on a fake clock, a log capture. The package's old tests stay `package signingkeys`, untouched, until Task 24 deletes them
+- Modify: `internal/core/access/sites_test.go` (the one allowlist entry the Global Constraints name: `"internal/core/signingkeys/trust.go withLock": {"Owner": 1}`), `scripts/m4-exit-checks.sh` (four lines beside `internal/respcheck`: neither `.` nor `./cmd/agentmesh-mcponly` imports `internal/trusttest`; the header comment)
 
 **Interfaces:**
-- Consumes: Tasks 1, 3, 4 (`pki`), Task 7 (`keyprovider.FileProvider`), Task 8 (the `Tx` methods).
+- Consumes: Tasks 1, 3, 4 (`pki`), Task 5 (`rootca`, in the fixture), Task 7 (`keyprovider.FileProvider`, `CreateKeyFile`), Task 8 (the `Tx` methods).
 - Produces:
 
 ```go
@@ -723,18 +741,26 @@ type Trust struct {
 	*core.Core
 	Root         *x509.Certificate
 	Installation string
-	Provider     keyprovider.Provider // nil where nothing signs (list, status)
+	Provider     keyprovider.Provider // nil where nothing signs and nothing is matched against the configured key (signing-key list)
 }
 
 const LockName = "trust"            // the Store lock that serializes every change (section 4.5)
 const SignTimeout = 30 * time.Second // bounds one use of the intermediate key (the value of NextTimeout today)
+const LockTTL = 4 * SignTimeout      // the lease of the trust lock (Plan ruling 30)
+
+// withLock runs fn while this caller holds the trust lock, in this process and in the Store, and
+// releases it afterwards. Held by another owner, or by another caller in this process: a retryable
+// unavailable, and fn does not run. renew extends the lease to now+LockTTL and fails with the same
+// error when the lock was lost.
+func (t Trust) withLock(ctx context.Context, fn func(renew func(context.Context) error) error) error
 
 // CryptoSigner adapts a keyprovider.Signer to crypto.Signer under ctx, for x509.Create*.
 func CryptoSigner(ctx context.Context, s keyprovider.Signer) crypto.Signer
 
 // Memory is what one process remembers between loads (section 4.8): the highest number it has
 // verified for each CRL with that CRL's bytes, the kept revocations, and the chains it has already
-// verified. The zero value is ready; it is not safe for concurrent use.
+// verified. The zero value is ready; it is not safe for concurrent use (the manager guards its own
+// with a mutex, Task 17; a host command uses a fresh one).
 type Memory struct{ /* unexported */ }
 
 type Leaf struct {
@@ -759,33 +785,89 @@ type Material struct {
 // not verify is ignored and logged once with its kind and thumbprint; only a Store failure is an error.
 func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error)
 
+// Configured reports whether a stored intermediate matches the configured key (Decision 48).
+// File form (Provider.Name() is keyprovider.NameFile): the certificate's public key is the key
+// file's (one Provider.Next, a file read, bounded by SignTimeout). Key service: keyRef is not empty
+// and keyprovider.SchemeOf(keyRef) is Provider.Name(); the service is not called. A nil Provider is
+// an error.
+func (t Trust) Configured(ctx context.Context, cert *x509.Certificate, keyRef string) (bool, error)
+
+// Picked is the stored intermediates that match the configured key, and the one to sign with.
+type Picked struct {
+	Configured []*x509.Certificate // every one Configured accepts, in row order
+	Use        *x509.Certificate   // of those valid at the core's clock, the one with the latest "not before"; nil: none
+	KeyRef     string              // Use's key_ref; "" with the file form
+}
+
+// Pick is the one place that chooses the intermediate a process signs with (Decision 48). It reads
+// the key file once, whatever the number of rows.
+func (t Trust) Pick(ctx context.Context, m Material) (Picked, error)
+
 var ErrCheck = errors.New("signingkeys: check failed") // a refused install; the host command exits 2
 
 func (t Trust) InstallIntermediate(ctx context.Context, cert *x509.Certificate) (changed bool, err error)
 func (t Trust) InstallRootCRL(ctx context.Context, crl *x509.RevocationList) (changed bool, err error)
 ```
 
+```go
+package trusttest // test support; never linked into a binary (the m4 rule). It does not import internal/server/cmd.
+
+type Fixture struct {
+	Dir          string    // t.TempDir(): the root tool's directory and the files below
+	RootFile     string    // root.pem
+	KeyFile      string    // the intermediate key, PKCS#8 PEM, mode 0600
+	CertFile     string    // the intermediate certificate, PEM
+	Installation string    // "test-installation"
+	Now          time.Time // the time New was given, or the time it read
+	Root         *x509.Certificate
+	Intermediate *x509.Certificate
+}
+
+// New makes a root, an intermediate key file and the signed intermediate. now is the clock of the
+// test (a fake clock's start); the zero time means time.Now(). Root and intermediate are valid from
+// one hour before now (rootca.Init and rootca.Sign are called with that time) for 3650 and 365 days.
+func New(t testing.TB, now time.Time) *Fixture
+// Sibling is another installation under the same root: its own key, key file and name.
+func (f *Fixture) Sibling(t testing.TB, installation string) *Fixture
+func (f *Fixture) Trust(c *core.Core) signingkeys.Trust // Root, Installation, a FileProvider that reads with os.ReadFile
+func (f *Fixture) Install(t testing.TB, c *core.Core)   // Trust(c).InstallIntermediate(f.Intermediate); fatal on error
+// Renew issues another certificate for the same key, valid from at for days. RevokeIntermediate
+// returns the root CRL, dated at, that revokes the key. A zero at means f.Now.
+func (f *Fixture) Renew(t testing.TB, at time.Time, days int) *x509.Certificate
+func (f *Fixture) RevokeIntermediate(t testing.TB, at time.Time) *x509.RevocationList
+```
+
+The fixture takes its clock from the caller because some suites run on a fake clock that starts in the past (`internal/server/testenv_test.go:22`, November 2023): certificates made at the real time are not yet valid there, and a manager would stop with `ErrChainTime`. Every test that builds a manager or an issuer on a fake clock makes its fixture with that clock's time; a test on the real clock passes the zero time.
+
 `Load`, exactly: an intermediate row is kept when its `thumbprint` column is `pki.Thumbprint(der)` and `pki.CheckIntermediate` passes; expiry and revocation do not drop it. The root CRL must pass `pki.CheckCRL(crl, Root)`; a leaf CRL must pass it against a kept intermediate of its `issuer_key` whose key is not revoked. A CRL whose number is below the one in `mem` is ignored, logged as a rollback, and the newer one from `mem` goes into `Rollback`; otherwise `mem` takes its number and bytes and its serial numbers join the union. A leaf row is verified with `pki.CheckChain` (no time, so the result does not depend on the clock) against each kept intermediate certificate of its issuer key; the result with the latest `NotAfter` is kept. `mem` caches results by leaf thumbprint and intermediate thumbprint, so a later load verifies only pairs it has not seen. `Leaf.Revoked` is `Revoked.LeafRevoked`.
 
-`InstallIntermediate`, the checks in order, each wrapping `ErrCheck` with its own text (section 4.4): `does not chain to the pinned root`; `is not valid now`; `is not a CA with path length 0`; `lacks the certificate signing or the CRL signing usage`; `has no subject key identifier`; `its public key is not the configured intermediate key` (`Provider.Next`, bounded by `SignTimeout`); `names installation %q, this server is %q`; `lacks the agentmesh extended key usage`; `its subject key identifier differs from the stored certificates of the same key` (Ruling 33); `its key is revoked by the stored root CRL` (Decision 26). Then, under the `trust` lock (`Store.TryLock(ctx, LockName, t.Owner, now, now+60 s)`; held elsewhere: a retryable `unavailable`), one transaction: the thumbprint is already stored: `changed` false and nothing else; otherwise `PutTrustCertificate` (with `KeyRef` the `Ref` that `Next` returned) and `BumpTrustNumber(now)`.
+`withLock` (Plan ruling 30) is the only code of this plan that calls `Store.TryLock` or `Store.Unlock` with `LockName`; the two installs here, the rollback write-back of Task 19 and the two revocation forms of Task 20 all go through it. It reads the owner once, `owner := t.Owner`, and uses the local from then on (in `renew` and for the release too): that is the one `Owner` selector `TestAccessRuleSites` allows this function, and a second one fails the test. The lease is `now` to `now + LockTTL` on the core's clock. `Store.TryLock` renews for the same owner (`internal/store/lock.go:14`), so the Store lock alone does not keep two callers of one process apart: `withLock` first enters a package-level set of the owner names that hold the lock in this process, and a second caller with the same owner gets the retryable `unavailable` that a caller in another process gets.
 
-`InstallRootCRL`: `pki.CheckCRL(crl, Root)` or `ErrCheck` (`is not signed by the pinned root`); the same thumbprint as the stored root CRL: `changed` false; a number not above the stored one: `ErrCheck` (`number %d is not above the stored %d`); else, under the lock, one transaction with `PutCRL` and `BumpTrustNumber(now)`.
+`InstallIntermediate`, the checks in order, each wrapping `ErrCheck` (section 4.4): (1) `pki.CheckIntermediate(cert, Root, Installation)`, its error wrapped as it is (`fmt.Errorf("%w: %w", ErrCheck, err)`), so the seven messages are Task 3's, the `pki` error stays reachable through `errors.Is`, and `install.go` compares no name, usage or profile itself (Global Constraints, "One chain check"); (2) `is not valid now`; (3) `its public key is not the configured intermediate key` (`Provider.Next`, bounded by `SignTimeout`); (4) `its subject key identifier differs from the stored certificates of the same key` (Ruling 33); (5) `its key is revoked by the stored root CRL` (Decision 26). Section 4.4 lists the validity period beside the chain; here it comes after the profile, the name and the usage, because those are one call, and each failure still names its check. Then, under the `trust` lock (`withLock`; held elsewhere: a retryable `unavailable`), one transaction: the thumbprint is already stored: `changed` false and nothing else; otherwise `PutTrustCertificate` (with `KeyRef` the `Ref` that `Next` returned) and `BumpTrustNumber(now)`.
 
-- [ ] **Step 1: Write the failing tests**
+`InstallRootCRL`: `pki.CheckCRL(crl, Root)` or `ErrCheck` (`is not signed by the pinned root`); the same thumbprint as the stored root CRL: `changed` false; a number not above the stored one: `ErrCheck` (`number %d is not above the stored %d`); else, under the lock (`withLock`), one transaction with `PutCRL` and `BumpTrustNumber(now)`.
 
-`TestLoadVerifiesRows`, one subtest per tampered row, each asserting the row is absent from `Material`, one log line names its thumbprint and `Load` returns no error: an intermediate signed by another root; one with another installation's name; one without the agentmesh usage; a `thumbprint` column that is not the DER's; garbage DER in each of the four kinds; a self-signed leaf; a leaf under an ignored intermediate; a leaf valid one second over the ceiling; a leaf CRL signed by another key. And kept: an expired intermediate; an expired leaf (in `Leaves`, its period in the past).
+- [ ] **Step 1: Write the fixture and the failing tests**
 
-`TestLoadRevocationByKey` (two certificates of one key, the root CRL lists one: every leaf of the key has `Revoked` true); `TestLoadUnion` (a leaf revoked by an earlier load stays revoked when the stored CRL no longer lists it); `TestLoadRollback` (after a load that saw leaf CRL number 2000, the row is put back to number 1000: the entry stays revoked, `Rollback` holds the 2000 CRL, the log says `rollback`); `TestLoadCachesVerification` (a second `Load` over the same rows makes no call to `pki.CheckChain`, counted through a package-level test hook).
+`internal/trusttest/trusttest.go` as above (it does not compile until Step 2 gives it `signingkeys.Trust`).
 
-`TestInstallIntermediate`: one subtest per check above with its text and `errors.Is(err, ErrCheck)`; a good certificate adds the row and raises the trust number; the same certificate again: `changed` false, the number unchanged; two calls at once end with one row. `TestInstallIntermediateKeyService` (with `kmsfake`): the row's `key_ref` is the reference `Next` returned. `TestInstallRootCRL`: accepted; the same again unchanged; a lower number and another root's CRL refused.
+`TestLoadVerifiesRows`, one subtest per tampered row, each asserting the row is absent from `Material`, one log line names its thumbprint and `Load` returns no error: an intermediate signed by another root; one with another installation's name (`Fixture.Sibling`); one without the agentmesh usage; a `thumbprint` column that is not the DER's; garbage DER in each of the four kinds; a self-signed leaf; a leaf under an ignored intermediate; a leaf valid one second over the ceiling; a leaf CRL signed by another key. And kept: an expired intermediate; an expired leaf (in `Leaves`, its period in the past).
 
-Run: `go test ./internal/core/signingkeys/ -run 'TestLoad|TestInstall' 2>&1 | tail`. Expected: compile failure.
+`TestLoadRevocationByKey` (two certificates of one key, the root CRL lists one: every leaf of the key has `Revoked` true); `TestLoadUnion` (a leaf revoked by an earlier load stays revoked when the stored CRL no longer lists it); `TestLoadRollback` (after a load that saw leaf CRL number 2000, the row is put back to number 1000: the entry stays revoked, `Rollback` holds the 2000 CRL, the log says `rollback`); `TestLoadCachesVerification` (a second `Load` over the same rows makes no call to `pki.CheckChain`, counted through the hook `export_test.go` exports).
 
-- [ ] **Step 2: Implement.** The chain of a leaf row is checked on this line, exactly once in `material.go` and on one line (Task 35's mutation anchors on it): `v, err := pki.CheckChain([]*x509.Certificate{leaf, im}, t.Root, t.Installation)`. **Step 3: Run** `go test -race ./internal/core/signingkeys/`. Expected: `ok` (the old tests of the package still pass; nothing of theirs changed).
+`TestConfigured`: the file form: a certificate of the key file's key is true, one of another key false, a nil `Provider` and an unreadable key file are errors; a key service (`kmsfake`): an empty `key_ref` is false, a reference with the fake's scheme true and one with another scheme false, and the fake's call count does not move. `TestPick`, in both forms: no matching certificate: `Configured` empty and `Use` nil; two valid ones: the later "not before" (the second made with `Fixture.Renew` at a later time); the newest not yet valid, or expired: the other one; all expired: `Use` nil and `Configured` lists them; with `kmsfake`, `KeyRef` is the picked row's.
 
-- [ ] **Step 4: Close the task.** Commit: `feat(signingkeys): the verified view of trust_material and the two installs (ADR 0019 sections 4.4, 4.5)`.
+`TestInstallIntermediate`: one subtest per check with `errors.Is(err, ErrCheck)`: the seven of `pki.CheckIntermediate`, each with Task 3's message and its `pki` error, and the four of `install.go` with the texts above; a good certificate adds the row and raises the trust number; the same certificate again: `changed` false, the number unchanged; two calls at once end with one row (one installs; the other answers a retryable `unavailable`, or `changed` false when it ran after the first). `TestInstallIntermediateKeyService` (with `kmsfake`): the row's `key_ref` is the reference `Next` returned. `TestInstallRootCRL`: accepted; the same again unchanged; a lower number and another root's CRL refused. `TestTrustLockHeld`: with the Store lock taken by another owner on a second handle of the same database, `InstallIntermediate` and `InstallRootCRL` answer a retryable `unavailable` and store nothing; once the fake clock is past that lease (what a killed holder leaves on SQLite) they succeed. The second handle matters: a handle remembers a lock taken on it and refuses another owner before any SQL (`internal/store/sqlstore/lock.go:28`), so a lock the test took on its own handle would never end by the clock.
 
-State (Definition of Done D): section 5's rows for `ca install` and `ca install-crl`, each a test above.
+Run: `go test ./internal/core/signingkeys/ -run 'TestLoad|TestInstall|TestConfigured|TestPick|TestTrustLock' 2>&1 | tail`. Expected: compile failure.
+
+- [ ] **Step 2: Implement.** The chain of a leaf row is checked on this line, exactly once in `material.go` and on one line (Task 35's mutation anchors on it): `v, err := pki.CheckChain([]*x509.Certificate{leaf, im}, t.Root, t.Installation)`. Add the allowlist entry to `sites_test.go` with the comment `this replica's lock owner name`, and the `internal/trusttest` lines to `scripts/m4-exit-checks.sh`.
+
+- [ ] **Step 3: Run** `go test -race ./internal/core/signingkeys/ ./internal/trusttest/ && go test ./internal/core/access/ -run TestAccessRuleSites && bash scripts/m4-exit-checks.sh --deps-only | tail -1`. Expected: `ok` for `signingkeys` and for `access`, `[no test files]` for `internal/trusttest` (it only has to build here; its tests are Task 14), and `deps_ok=1`. The old tests of `signingkeys` still pass; nothing of theirs changed.
+
+- [ ] **Step 4: Close the task** (`make release-lint` included: a script changed). Commit: `feat(signingkeys): the verified view of trust_material and the two installs (ADR 0019 sections 4.4, 4.5)`; files `internal/core/signingkeys internal/trusttest internal/core/access/sites_test.go scripts/m4-exit-checks.sh`.
+
+State (Definition of Done D): section 5's rows for `ca install` and `ca install-crl`, each a test above. The `trust` lock: a second run while the first holds it answers a retryable `unavailable`; a holder that was killed leaves a lease that ends after `LockTTL` on SQLite and with its connection on Postgres (`TestTrustLockHeld`).
 
 ---
 
@@ -794,17 +876,18 @@ State (Definition of Done D): section 5's rows for `ca install` and `ca install-
 **Files:**
 - Create: `internal/server/cmd/trust.go`, `keyfile.go`, `ca.go`
 - Test: `internal/server/cmd/ca_test.go`, `keyfile_unix_test.go`, `keyfile_windows_test.go`
-- Modify: `internal/server/cmd/admin.go` (`case "ca"`; `adminSubcommands` gains `ca (csr, install, install-crl, status)`; `hostEnv` gains `Trust func(sign bool) (signingkeys.Trust, error)`)
+- Modify: `internal/server/cmd/admin.go` (`case "ca"`; `adminSubcommands` gains `ca (csr, install, install-crl, status)`; `hostEnv` gains `Trust func(sign bool) (signingkeys.Trust, error)`; `sign` false leaves `Provider` nil)
 
 **Interfaces:**
-- Consumes: Task 9 (`Config.RequireTrust`), Task 12 (`Trust`), Task 7.
+- Consumes: Task 1 (`pki.CheckRoot`), Task 9 (`Config.RequireTrust`), Task 12 (`Trust`, `Trust.Configured`), Task 7.
 - Produces (package `cmd`):
 
 ```go
 // readOwnerOnly reads a regular file that only its owner can read or write: Unix mode 0600 or
 // narrower, fileacl.CheckOwnerOnly on Windows. The error names the path and the fix.
 func readOwnerOnly(path string) ([]byte, error)
-// openRoot reads root_certificate_file: one PEM certificate with the root profile of section 4.2.
+// openRoot reads root_certificate_file: one PEM certificate that passes pki.CheckRoot (Plan ruling
+// 32). An outside CA's root, an RSA one included, passes; a certificate that is not a CA does not.
 func openRoot(cfg config.Config) (*x509.Certificate, error)
 // openIntermediateProvider is the FileProvider of intermediate_key_file, or the backend of
 // intermediate_key_uri from keyBackends (a scheme not in this build names its build tag, as today).
@@ -816,11 +899,11 @@ Commands (each calls `cfg.RequireTrust()` first; a failed requirement, a failed 
 - `ca csr [-out FILE]`: with the file form and no key file, `keyprovider.CreateKeyFile`; then `Provider.Next`, `Provider.Signer`, `pki.NewRequest(CryptoSigner(...), cfg.InstallationName)`; the CSR as PEM on standard output or in `FILE`. It writes nothing to the database. With a key service it never creates a key.
 - `ca install CERT_FILE`: prints `installed <thumbprint> installation <name> until <RFC 3339>` or `unchanged <thumbprint>`.
 - `ca install-crl CRL_FILE`: prints `installed root-crl <number>` or `unchanged root-crl <number>`.
-- `ca status`: one line per item, in this order: `root <thumbprint> until <RFC 3339>`; `installation <name>`; per stored intermediate `intermediate <thumbprint> <not before> <not after> key=<configured|other> revoked=<yes|no>`; `root-crl <number>` or `root-crl none`; per leaf CRL `leaf-crl <issuer key> <number>`; `trust-number <n>`; per unexpired leaf `leaf <thumbprint> serial <hex> until <RFC 3339>`. With the file form "configured" is decided without the key service; with a key service it follows Plan ruling 12.
+- `ca status`: one line per item, in this order: `root <thumbprint> until <RFC 3339>`; `installation <name>`; per stored intermediate `intermediate <thumbprint> <not before> <not after> key=<configured|other> revoked=<yes|no>`; `root-crl <number>` or `root-crl none`; per leaf CRL `leaf-crl <issuer key> <number>`; `trust-number <n>`; per unexpired leaf `leaf <thumbprint> serial <hex> until <RFC 3339>`. `key=configured` is `Trust.Configured` for that row (Task 12; Decision 48); the command writes no rule of its own. It opens the provider for it (`hostEnv.Trust(true)`; each backend's `New` makes no network call, as its comment says): the file form compares the certificate's key with the key file's, and a key service compares the scheme of the row's `key_ref` and is not called. With the file form and at least one stored intermediate, a key file that cannot be read is exit 2 naming the file, as at the start.
 
 - [ ] **Step 1: Write the failing tests** (through `RunAdmin` with `-sqlite` in `t.TempDir()` and `-set`; the root comes from `rootca` in process)
 
-`TestCACsr` (the key file is created at mode 0600; a second run prints a CSR for the same public key; the CN is `installation_name`; `-out` writes the file; no `trust_material` row changes); `TestCACsrKeyService` (a `kmsfake` registered in `keyBackends` for the test: the CSR verifies under the fake's key, and the fake holds no new key); `TestCAInstall` (each check of Task 12 is exit 2 with its text on standard error; the good case prints `installed`; again prints `unchanged` with exit 0 and the same trust number); `TestCAInstallCRL` (installed; unchanged; a lower number exit 2); `TestCAStatus` (the lines above for a store with one intermediate, one root CRL and no leaf); `TestCARequiresTrustSettings` (without `installation_name`: exit 2 naming the setting; without both key settings: exit 2); `TestCAInputs` (Review Focus 4: a CRLF certificate file is accepted; a DER file and a file with two certificates are exit 2); `TestOpenRoot` (an unreadable file, two certificates, a certificate that is not a CA: each an error naming `root_certificate_file`).
+`TestCACsr` (the key file is created at mode 0600; a second run prints a CSR for the same public key; the CN is `installation_name`; `-out` writes the file; no `trust_material` row changes); `TestCACsrKeyService` (a `kmsfake` registered in `keyBackends` for the test: the CSR verifies under the fake's key, and the fake holds no new key); `TestCAInstall` (each check of `InstallIntermediate`, the seven of `pki.CheckIntermediate` among them, is exit 2 with its text on standard error; the good case prints `installed`; again prints `unchanged` with exit 0 and the same trust number); `TestCAInstallCRL` (installed; unchanged; a lower number exit 2); `TestCAStatus` (the lines above for a store with one intermediate, one root CRL and no leaf; a second intermediate of another key reads `key=other`; with a `kmsfake` in `keyBackends`, `key=configured` follows the scheme of the row's `key_ref` and the fake's call count does not move; with the file form and a stored intermediate, a missing key file is exit 2 naming it); `TestCARequiresTrustSettings` (without `installation_name`: exit 2 naming the setting; without both key settings: exit 2); `TestCAInputs` (Review Focus 4: a CRLF certificate file is accepted; a DER file and a file with two certificates are exit 2); `TestOpenRoot` (an unreadable file, two certificates, a certificate that is not a CA: each an error naming `root_certificate_file`; an RSA root made with the standard library is accepted).
 
 `keyfile_unix_test.go`: mode 0644 and 0640 refused with `chmod 600` in the text; 0600 and 0400 read; a directory refused. `keyfile_windows_test.go`: an ACL that grants another account is refused (the helpers of `internal/fileacl/acltest`).
 
@@ -834,47 +917,29 @@ Run: `go test ./internal/server/cmd/ -run 'TestCA|TestOpenRoot|TestReadOwnerOnly
 
 ---
 
-### Task 14: `internal/trusttest`: one fixture for every package's tests
+### Task 14: `internal/trusttest`: `Sets`, and the fixture's own tests
+
+Task 12 created the package, because its tests were the first to need the fixture (Plan ruling 26). This task gives it what the server fixtures of Task 22 need and tests the fixture itself (Definition of Done C: a harness has tests of its own).
 
 **Files:**
-- Create: `internal/trusttest/trusttest.go`, `internal/trusttest/trusttest_test.go`
-- Modify: `scripts/m4-exit-checks.sh` (four lines beside `internal/respcheck`: neither `.` nor `./cmd/agentmesh-mcponly` imports `internal/trusttest`; the header comment)
+- Modify: `internal/trusttest/trusttest.go` (`Sets`)
+- Create: `internal/trusttest/trusttest_test.go`
 
 **Interfaces:**
-- Consumes: Tasks 5, 7, 12 (whose `helpers_test.go` fixture this one mirrors, exported, for every other package).
+- Consumes: Task 12 (the fixture: `New(t, now)`, `Sibling`, `Trust`, `Install`, `Renew`, `RevokeIntermediate`).
 - Produces:
 
 ```go
-package trusttest // test support; never linked into a binary (the m4 rule). It does not import internal/server/cmd.
-
-type Fixture struct {
-	Dir          string // t.TempDir(): the root tool's directory and the files below
-	RootFile     string // root.pem
-	KeyFile      string // the intermediate key, PKCS#8 PEM, mode 0600
-	CertFile     string // the intermediate certificate, PEM
-	Installation string // "test-installation"
-	Root         *x509.Certificate
-	Intermediate *x509.Certificate
-}
-
-func New(t testing.TB) *Fixture
-// Sibling is another installation under the same root: its own key, key file and name.
-func (f *Fixture) Sibling(t testing.TB, installation string) *Fixture
 // Sets is the three settings as arguments: "-set", "root_certificate_file=...", "-set",
 // "intermediate_key_file=...", "-set", "installation_name=...".
 func (f *Fixture) Sets() []string
-func (f *Fixture) Trust(c *core.Core) signingkeys.Trust // Root, Installation, a FileProvider that reads with os.ReadFile
-func (f *Fixture) Install(t testing.TB, c *core.Core)   // Trust(c).InstallIntermediate(f.Intermediate); fatal on error
-// Renew issues another certificate for the same key; RevokeIntermediate returns the root CRL that revokes the key.
-func (f *Fixture) Renew(t testing.TB, days int) *x509.Certificate
-func (f *Fixture) RevokeIntermediate(t testing.TB) *x509.RevocationList
 ```
 
-Task 17 adds `(*Fixture).Manager`.
+Tasks 17 and 19 add `(*Fixture).Manager` and `(*Fixture).Leaf`.
 
-- [ ] **Step 1: Write the failing test** `TestFixture`: `New` gives a certificate that passes `pki.CheckIntermediate`; `Install` on a SQLite store leaves one intermediate row; `Sibling("other")` chains to the same root with another key; `Sets` has six elements.
-- [ ] **Step 2: Implement.** **Step 3: Run** `go test ./internal/trusttest/ && bash scripts/m4-exit-checks.sh --deps-only | tail -1`. Expected: `ok`, `deps_ok=1`.
-- [ ] **Step 4: Close the task.** Commit: `test(trusttest): the shared trust fixture (ADR 0019 section 7)`.
+- [ ] **Step 1: Write the failing tests.** `TestFixture`: `New(t, time.Time{})` gives a certificate that passes `pki.CheckIntermediate` and is valid at the real time; `Install` on a SQLite store leaves one intermediate row; `Sibling("other")` chains to the same root with another key; `Sets` has six elements: three `-set` and the two files and the name of the fixture. `TestFixtureClock`: `New(t, at)` for an instant in November 2023 gives a root and an intermediate that are valid at that instant and one hour before it and not valid two hours before it, and `Fixture.Now` is that instant; `Renew(t, at.Add(24*time.Hour), 30)` has a "not before" one day later, the same subject key identifier and another serial number; the CRL of `RevokeIntermediate(t, at)` passes `pki.CheckCRL` against the root and lists every certificate of the key.
+- [ ] **Step 2: Implement `Sets`.** **Step 3: Run** `go test ./internal/trusttest/ && bash scripts/m4-exit-checks.sh --deps-only | tail -1`. Expected: `ok`, `deps_ok=1`.
+- [ ] **Step 4: Close the task.** Commit: `test(trusttest): Sets and the fixture's own tests (ADR 0019 section 7)`.
 
 ---
 
@@ -885,9 +950,10 @@ Task 17 adds `(*Fixture).Manager`.
 This is the expand step of Plan ruling 14: wire, Bus, handlers, remote client and CLI change once, now. Until Task 23 the old key set answers through `internal/core/signingkeys/api.go`, rewritten here as a thin adapter; Task 24 deletes it.
 
 **Files:**
-- Modify: `api/openapi.yaml` (`SigningKey` at 5282, `SigningKeyList` at 5326, `SigningKeyRotation` at 5354, a new `RevokedLeaf`, `rotateSigningKey` at 2495 loses `revoke_previous`; descriptions and examples for each), then `make generate`
+- Modify: `api/openapi.yaml` (`SigningKey` at 5282, `SigningKeyList` at 5326, `SigningKeyRotation` at 5354, a new `RevokedLeaf`, `rotateSigningKey` at 2495 loses `revoke_previous` and the cooldown sentence of its description at 2503, which names `signing_key_rotation_cooldown_seconds`; descriptions and examples for each), then `make generate`
 - Modify: `internal/bus/signingkeys.go`, `internal/bus/admin.go:79-80`, `internal/server/signing_keys.go`, `internal/bus/remote/signingkeys.go`, `internal/bus/local/signingkeys.go`, `internal/cli/signingkeys.go` (`rotate` loses `-revoke-previous`), `internal/core/signingkeys/api.go`
-- Modify (tests and gates): `internal/server/signing_keys_test.go`, `internal/server/convert_requests_test.go`, `internal/server/wire_roundtrip_test.go`, `internal/server/status_table_test.go`, `internal/bus/remote/signingkeys_test.go`, `internal/cli/signingkeys_test.go`, `internal/conformance/bus/auth_test.go` (subtest `signing-key-rotation`), `internal/conformance/bus/replicas_test.go` (`TestReplicasSigningKeyRotation`), `api/arazzo.yaml` (workflow `signing-key-rotation`), `internal/e2e/zz_examples_test.go`, `api/cats-false-positives.yaml` (any rule that names `revoke_previous` or the cooldown conflict)
+- Modify (tests and gates): `internal/server/signing_keys_test.go`, `internal/server/convert_requests_test.go`, `internal/server/wire_roundtrip_test.go`, `internal/server/status_table_test.go`, `internal/bus/remote/signingkeys_test.go`, `internal/cli/signingkeys_test.go`, `internal/conformance/bus/auth_test.go` (subtest `signing-key-rotation`), `internal/conformance/bus/replicas_test.go` (`TestReplicasSigningKeyRotation`), `api/arazzo.yaml` (workflow `signing-key-rotation`: its steps, a second input `exchange_assertion`, and its description at 1487-1493, which names the cooldown setting), `internal/e2e/workflows_test.go` (the caller of that workflow; Step 1), `internal/e2e/zz_examples_test.go`, `api/cats-false-positives.yaml` (the rule `ROTATION_COOLDOWN_409` at 117-119 goes; `NO_REQUEST_BODY_IGNORED` loses its `revoke_previous` remark)
+- Modify (a test of the old key set that must compile until Task 24 deletes it, because it shares a package with `auth_test.go`): `internal/conformance/bus/signingkeys_test.go`. The replay subtest at 180-216 compares its two answers with `reflect.DeepEqual` (`SigningKeyRotation` now holds a slice, so `!=` does not compile), reads `Current.Thumbprint` where it read `Active.KID`, and expects one active row and none retiring, because the adapter always revokes. The third call of `TestSigningKeysUnavailable`, at 240-241, passes `RevokePrevious: true` and goes. Line 156 uses the core's `signingkeys.RotateInput`, which stays until Task 24. `signingkeys_external_test.go` uses only the core's `Service.Rotate` and needs no edit
 
 **Interfaces (Produces):**
 
@@ -917,7 +983,8 @@ type SigningKeyRotation struct {
 	Revoked     []RevokedLeaf
 	TrustNumber int64
 }
-// bus.Admin and server.SigningKeys:
+// bus.Admin. server.SigningKeys has the same two with the administrator's name after ctx, as today
+// (internal/server/signing_keys.go:14):
 ListSigningKeys(ctx) (SigningKeyList, error)
 RotateSigningKey(ctx, in RotateSigningKeyInput) (SigningKeyRotation, error)
 ```
@@ -926,7 +993,7 @@ Wire members (section 4.11): `SigningKey`: `thumbprint`, `serial`, `issuer_thumb
 
 The adapter in `api.go` (old rows in the new shape, nothing more): a row becomes `SigningKey{Thumbprint: KID, State: current for active, previous for retiring, NotBefore: CreatedAt, NotAfter: RemoveAfter}` with `Serial` and `IssuerThumbprint` empty; `TrustNumber` is 0; `RotateSigningKey` always applies `RotateInput{RevokePrevious: true}` (Ruling 6: rotate always revokes) and reports the deleted key as the one `RevokedLeaf`. The receipt payload is the empty object. The cooldown no longer applies to the API form.
 
-- [ ] **Step 1: Change the tests first.** Keep one test per behavior and delete the rest of the old API tests (the non-revoking rotation, the cooldown conflict, `revoke_previous` parsing): the list's shape; the rotation's shape; a replay with the same idempotency key returns the first answer; a non-administrator is refused; local mode answers the non-retryable `unavailable`. `TestWireRoundTrip` pairs the four schemas with the Bus types above. `TestOperationErrorTable`: `rotateSigningKey` keeps `conflict` (the receipt for another payload) and nothing about a cooldown. The Arazzo workflow rotates without `revoke_previous` and ends with a token exchange and a `listSigningKeys` (Plan ruling 24: the rotation revoked the key that signed the caller's bearer). `TestRequestExamples` runs `rotateSigningKey` as its last row. `TestAuthEndToEnd/signing-key-rotation` and `TestReplicasSigningKeyRotation` exchange again after rotating.
+- [ ] **Step 1: Change the tests first.** Keep one test per behavior and delete the rest of the old API tests (the non-revoking rotation, the cooldown conflict, `revoke_previous` parsing): the list's shape; the rotation's shape; a replay with the same idempotency key returns the first answer; a non-administrator is refused; local mode answers the non-retryable `unavailable`. `TestWireRoundTrip` pairs the four schemas with the Bus types above. `TestOperationErrorTable`: `rotateSigningKey` keeps `conflict` (the receipt for another payload) and nothing about a cooldown. The Arazzo workflow rotates without `revoke_previous` and ends with a token exchange and a `listSigningKeys` (Plan ruling 24: the rotation revoked the key that signed the caller's bearer). The exchange needs a client assertion the server has not seen (an assertion is single-use), so the workflow takes it as the input `exchange_assertion`. In `internal/e2e/workflows_test.go`, `wfRunner.register` (lines 95-110) discards the identity's key today: a variant of it also returns the key and its kid, the test signs a second assertion for `arazzo-root` with them (`assertion.Sign`, as `register` does) and passes it beside `admin_bearer`. The 1.1-second sleep before the workflow, and its comment, go: no cooldown applies to the API form. `TestRequestExamples` runs `rotateSigningKey` as its last row. `TestAuthEndToEnd/signing-key-rotation` and `TestReplicasSigningKeyRotation` exchange again after rotating.
 
 Run: `go test ./internal/server/ ./internal/bus/... ./internal/cli/ 2>&1 | tail -20`. Expected: compile failures in every listed package.
 
@@ -941,7 +1008,7 @@ Run: `go test ./internal/server/ ./internal/bus/... ./internal/cli/ 2>&1 | tail 
 ### Task 16: `token`: keys bound to a certificate
 
 **Files:**
-- Modify: `internal/auth/token/keyset.go`, `internal/auth/token/issuer.go`, `internal/server/auth_handlers.go:124-138`, `internal/server/auth_exchange.go` (the `expires_in` of both grants)
+- Modify: `internal/auth/token/keyset.go`, `internal/auth/token/issuer.go`, `internal/server/auth_handlers.go:124-138` (line 136: `expires_in` becomes the minted expiry minus now; the other grant, `internal/server/auth_exchange.go:149`, already answers it that way and is not edited)
 - Test: `internal/auth/token/certkey_test.go` (new; it makes its certificates with the standard library, so the package's imports do not grow), `internal/server/auth_test.go`
 
 **Interfaces (Produces):**
@@ -976,10 +1043,10 @@ Run: `go test ./internal/auth/token/ -run 'TestCertificateKey|TestMint|TestVerif
 **Files:**
 - Create: `internal/core/signingkeys/manager.go`
 - Test: `internal/core/signingkeys/manager_test.go`
-- Modify: `internal/trusttest/trusttest.go` (`Manager`), `internal/core/signingkeys/helpers_test.go` (the in-package `manager`)
+- Modify: `internal/trusttest/trusttest.go` (`Manager`), `internal/core/signingkeys/helpers_test.go` (a Store wrapper that fails a chosen call, for `TestFailedInsertLeavesTheLeafUnused`; the old tests' wrapper in `outage_test.go` is `package signingkeys` and out of reach of `package signingkeys_test`, which every new test file of this package is: Plan ruling 26)
 
 **Interfaces:**
-- Consumes: Task 12 (`Trust`, `Memory`, `Material`, `CryptoSigner`), Task 16 (`token.Key` with a chain).
+- Consumes: Task 12 (`Trust`, `Trust.Pick`, `Memory`, `Material`, `CryptoSigner`, the fixture), Task 16 (`token.Key` with a chain).
 - Produces:
 
 ```go
@@ -996,26 +1063,39 @@ var (
 	ErrRootExpired         error
 )
 
-// New loads the trust material, picks the intermediate (Plan ruling 12) and issues the first leaf.
+// New loads the trust material, picks the intermediate (Trust.Pick; Decision 48) and issues the first leaf.
 // Its errors are one of the four above, a keyprovider.ErrUnavailable, or a Store failure.
 func New(ctx context.Context, o Options) (*Manager, error)
 func (m *Manager) SetOnChange(f func())
 func (m *Manager) Current() (thumbprint string, notAfter time.Time) // "" when nothing can sign
 func (m *Manager) LoadKeys(ctx context.Context) (token.KeySet, error) // token.KeySource: reload, then the set
+func (m *Manager) Trust() Trust // the Trust it was made with; Task 24 hands it to the maintenance service
+
+// reload is the load without reactions: Trust.Load with the manager's Memory, then the snapshot is
+// swapped. changed: the trust number or the set of verified leaves differs from the last load.
+// LoadKeys here and Step in Task 18 call it; Task 19 builds the exported Reload on it (the
+// reactions) and moves both callers to that.
+func (m *Manager) reload(ctx context.Context) (changed bool, err error)
 
 // trusttest:
 func (f *Fixture) Manager(t testing.TB, c *core.Core) *signingkeys.Manager // Install when no row; W 168 hours; fatal on error
 ```
 
-Issuing a leaf (section 4.6, the six steps, in this order): generate an Ed25519 key in memory; `pki.IssueLeaf` with the intermediate signer under a context bounded by `SignTimeout`; `pki.VerifyChain` of the new leaf at the current time (a failure is logged as `the configured key is not the certificate's key` and is a failed issue); insert the row (`IssuerKey` is `pki.KeyID` of the intermediate's subject key identifier) in one transaction; only then make it the current leaf, the former current one becoming the previous. The private key is held in the `Manager` and nowhere else.
+Issuing a leaf (section 4.6, the six steps, in this order): generate an Ed25519 key in memory; `pki.IssueLeaf` with the intermediate signer under a context bounded by `SignTimeout`; `pki.VerifyChain` of the new leaf at the current time (a failure is logged as `the configured key is not the certificate's key` and is a failed issue); insert the row (`IssuerKey` is `pki.KeyID` of the intermediate's subject key identifier) in one transaction; only then make it the current leaf, the former current one becoming the previous. The private key is held in the `Manager` and nowhere else. Inserting a leaf row does not change the trust number: the bundle of section 4.9 carries no leaf, and Task 33's restore test counts on a restart leaving the number alone.
 
-`LoadKeys`: `Keys` is every leaf of the loaded `Material` that is not revoked and whose period contains now with `token.Leeway`, as `token.Key{KID: thumbprint, Algorithm: keys.EdDSA, Public, Chain: {leaf, intermediate}, NotBefore, NotAfter}`; `Active` and `Signer` are the current leaf's, or zero and nil when it is expired, revoked or the manager has stopped.
+The start, from `Trust.Pick`: `Picked.Configured` empty is `ErrNoIntermediate`; `Use` nil is `ErrIntermediateExpired`; the key of `Use` in `Material.RevokedKeys` is `ErrIntermediateRevoked`. The manager writes no matching rule of its own (Plan ruling 12).
+
+Concurrency (Plan ruling 33). The issuer's goroutines call `LoadKeys`, one goroutine runs `Step`, a handler calls `RotateSigningKey` (Task 20) and the hint path of Task 29 reloads, all on one manager, and `Memory` is not safe for that. One mutex guards the manager's `Memory`, its snapshot of the `Material` and its current and previous leaf; `reload` holds it for the load, and `Current`, `LoadKeys` and (later) `Bundle` and `Signing` read under it. It is not held while the intermediate key signs: issuing takes it only to read the picked intermediate and, at the end, to swap the new leaf in. A second mutex is held for the whole of each operation that issues a leaf, so a renewal and a forced renewal never overlap in one process. Only `Step` and, from Task 20, `RotateSigningKey` issue; a reload never does (Task 19).
+
+`LoadKeys`: `reload` (`Reload` from Task 19 on), then `Keys` is every leaf of the loaded `Material` that is not revoked and whose period contains now with `token.Leeway`, as `token.Key{KID: thumbprint, Algorithm: keys.EdDSA, Public, Chain: {leaf, intermediate}, NotBefore, NotAfter}`; `Active` and `Signer` are the current leaf's, or zero and nil when it is expired, revoked or the manager has stopped.
 
 - [ ] **Step 1: Write the failing tests**
 
-`TestNewIssuesFirstLeaf` (one leaf row; "not before" is now minus 60 s; "not after" is now plus W; the chain verifies; `Current` reports it); `TestNewStartStates` (no intermediate row and a row for another key: `ErrNoIntermediate`, the text naming both commands; an expired one: `ErrIntermediateExpired`; a key the stored root CRL revokes: `ErrIntermediateRevoked`; a root past its "not after" on the fake clock: `ErrRootExpired`; `kmsfake.SetDown(true)`: `errors.Is(err, keyprovider.ErrUnavailable)`; a key service whose pinned reference signs with another key: an error containing `the configured key is not the certificate's key` and no leaf row in use); `TestNewPicksNewestValidIntermediate` (after `Fixture.Renew`, the leaf's authority is unchanged and its "not after" is cut by the newer certificate); `TestLoadKeysPublishesVerifiedLeaves` (two managers over one store: each set holds both leaves and its own as `Active`; a self-signed leaf row put in by hand is in neither); `TestFailedInsertLeavesTheLeafUnused` (a Store that fails the insert: an error, `Current` unchanged); `TestNoPrivateKeyInTheStore` (every `trust_material.der` parses as a certificate or a CRL).
+Every test here and in Tasks 18 to 20 runs its core on a fake clock and makes its fixture at that clock, `trusttest.New(t, clock.Now())`, and gives `Fixture.Renew` and `Fixture.RevokeIntermediate` the clock's time (Task 12).
 
-Run: `go test ./internal/core/signingkeys/ -run 'TestNew|TestLoadKeys|TestFailedInsert|TestNoPrivateKey' 2>&1 | tail`. Expected: compile failure.
+`TestNewIssuesFirstLeaf` (one leaf row; "not before" is now minus 60 s; "not after" is now plus W; the chain verifies; `Current` reports it; the trust number is what it was before the start); `TestNewStartStates` (no intermediate row and a row for another key: `ErrNoIntermediate`, the text naming both commands; an expired one: `ErrIntermediateExpired`; a key the stored root CRL revokes: `ErrIntermediateRevoked`; a root past its "not after" on the fake clock: `ErrRootExpired`; `kmsfake.SetDown(true)`: `errors.Is(err, keyprovider.ErrUnavailable)`; a key service whose pinned reference signs with another key: an error containing `the configured key is not the certificate's key` and no leaf row in use); `TestNewPicksNewestValidIntermediate` (after `Fixture.Renew`, the leaf's authority is unchanged and its "not after" is cut by the newer certificate); `TestLoadKeysPublishesVerifiedLeaves` (two managers over one store: each set holds both leaves and its own as `Active`; a self-signed leaf row put in by hand is in neither); `TestFailedInsertLeavesTheLeafUnused` (a Store that fails the insert: an error, `Current` unchanged); `TestNoPrivateKeyInTheStore` (every `trust_material.der` parses as a certificate or a CRL); `TestManagerConcurrentUse` (eight goroutines call `LoadKeys` and `Current` while another issues leaves: no race under `-race`, and every set returned is valid); `TestLoadKeysNotBlockedBySigning` (a provider whose signer waits on a channel: `LoadKeys` returns while an issue is waiting for its signature).
+
+Run: `go test ./internal/core/signingkeys/ -run 'TestNew|TestLoadKeys|TestFailedInsert|TestNoPrivateKey|TestManagerConcurrentUse' 2>&1 | tail`. Expected: compile failure.
 
 - [ ] **Step 2: Implement.** **Step 3: Run** `go test -race ./internal/core/signingkeys/ ./internal/trusttest/`. Expected: `ok`.
 
@@ -1047,9 +1127,9 @@ type Failure struct {
 func (m *Manager) LastFailure() (Failure, bool) // cleared by the next successful issue
 ```
 
-Rules (section 4.6): the next leaf is issued at the current leaf's issue time plus W/2 and signs from then on; the previous leaf stays in the published set until it expires. After a failed issue the next attempt is one eighth of the time left before the current leaf's "not after", never sooner than one minute. With the current leaf expired and no renewal, `LoadKeys` has a nil `Signer`. When the clock is outside the current leaf's validity period (before "not before" or after "not after"), the leaf counts as expired and a new one is issued at once (Ruling 13).
+Rules (section 4.6): the next leaf is issued at the current leaf's issue time plus W/2 and signs from then on; the previous leaf stays in the published set until it expires. After a failed issue the next attempt is one eighth of the time left before the current leaf's "not after", never sooner than one minute. With the current leaf expired and no renewal, `LoadKeys` has a nil `Signer`. When the clock is outside the current leaf's validity period (before "not before" or after "not after"), the leaf counts as expired and a new one is issued at once (Ruling 13). The reload `Step` runs is Task 17's `reload`; Task 19 puts `Reload` in its place. A renewal and a retry hold the manager's issuing mutex (Plan ruling 33).
 
-- [ ] **Step 1: Write the failing tests** (a fake clock in `core.Options.Now`; W 168 hours unless stated)
+- [ ] **Step 1: Write the failing tests** (a fake clock in `core.Options.Now`, and the fixture made at its start with `trusttest.New(t, clock.Now())`; W 168 hours unless stated)
 
 `TestRenewAtHalf` (a `Step` at 83 h 59 min issues nothing and returns a time no later than 84 h; a `Step` at 84 h issues: two leaves are published and the signer is the new one); `TestRetrySchedule` (the provider down from 84 h: the retry is due at 84 h + 10 h 30 min; failing again there: 9 h 11 min 15 s later; with 4 minutes left: one minute later); `TestExpiredLeafStopsSigning` (every attempt fails until past "not after": `Signer` is nil and an issuer over the manager fails `Mint` with `token.ErrSignerUnavailable`, while a bearer from another manager's valid leaf still verifies); `TestRecoveryClearsFailure`; `TestClockOutsideValidity` (the clock stepped to before "not before", and to after "not after": the next `Step` issues before anything is signed); `TestRenewalStoreFailure` (Review Focus 3: the provider works and the Store fails the insert once: `LastFailure` is set, the retry time follows the schedule, the current leaf keeps signing, the next `Step` at the retry time succeeds); `TestStepReturnsNextDue` (never in the past; at most `token.ReloadInterval` ahead); `TestRunStopsWithContext`.
 
@@ -1068,12 +1148,13 @@ State (Definition of Done D): section 5's "Leaf renewal" row: one timer per proc
 **Files:**
 - Create: `internal/core/signingkeys/reload.go`
 - Test: `internal/core/signingkeys/reload_test.go`, `internal/core/signingkeys/bearer_test.go`
-- Modify: `internal/trusttest/trusttest.go` (`Leaf`), `internal/core/signingkeys/helpers_test.go` (the in-package `leaf`)
+- Modify: `internal/trusttest/trusttest.go` (`Leaf`), `internal/core/signingkeys/manager.go` and `renew.go` (`LoadKeys` and `Step` call `Reload` where they called `reload`; `Run` also wakes on a one-slot channel of the manager, which `Reload` fills when it makes an issue due)
 
 **Interfaces (Produces):**
 
 ```go
-// Reload loads and verifies the trust material and reacts to it. Step and LoadKeys call it.
+// Reload is Task 17's reload followed by the reactions below. From this task on Step and LoadKeys
+// call it, and reload has no other caller.
 func (m *Manager) Reload(ctx context.Context) error
 // Stopped is "" or why the manager no longer issues or signs:
 // "intermediate_expired", "intermediate_revoked" or "root_expired".
@@ -1084,17 +1165,17 @@ func (m *Manager) Stopped() string
 func (f *Fixture) Leaf(t testing.TB, c *core.Core, now time.Time, validity time.Duration) (ed25519.PrivateKey, *x509.Certificate)
 ```
 
-Reactions (sections 4.8 and 4.15): its own current leaf is revoked: issue a new one at once; the configured intermediate's key is in `RevokedKeys`, or no certificate of that key is valid now, or the root is outside its validity period: stop (no issue, a nil signer, one error log line per reload); a newer valid certificate of the same key appears: use it at the next issue, and leave the `intermediate_expired` stop, with no restart; `Material.Rollback` is not empty: under the `trust` lock, one transaction writes each newer CRL back with `PutCRL` and raises the trust number; whenever the trust number or the published set changed, call `OnChange`.
+Reactions (sections 4.8 and 4.15): its own current leaf is revoked: it stops signing with it at once (a nil signer), a new leaf is due now and `Run` is woken, so the next `Step` issues it; `Step` treats a revoked current leaf as Task 18 treats an expired one. `Reload` itself never issues (Plan ruling 33): it also runs inside `LoadKeys`, on a request's goroutine, and inside `RotateSigningKey`, which already holds the issuing mutex and would wait for itself. Every reload runs `Trust.Pick` again and writes no matching rule of its own: `Use` nil (no certificate of the configured key is valid now), the key of `Use` in `RevokedKeys`, or the root outside its validity period: stop (no issue, a nil signer, one error log line per reload); a `Use` that is not the certificate in use (a renewed one was installed): the next issue uses it, and an `intermediate_expired` stop ends, with no restart; `Material.Rollback` is not empty: under the `trust` lock (`Trust.withLock`, Task 12; when the lock is held elsewhere the write-back waits for the next reload, with one log line and no error), one transaction writes each newer CRL back with `PutCRL` and raises the trust number; whenever the trust number or the published set changed, call `OnChange`.
 
 - [ ] **Step 1: Write the failing tests**
 
-`TestOwnLeafRevoked` (another `Trust` puts the manager's leaf on the leaf CRL: after `Reload` the manager has a new current leaf and the old one is not published); `TestIntermediateKeyRevokedStops` (after `InstallRootCRL`: `Stopped() == "intermediate_revoked"`, no leaf is published, `Step` issues nothing); `TestIntermediateExpiryStops` and `TestIntermediateRenewalPickedUp` (a renewed certificate installed before the old one ends: the manager never stops and its next leaf chains through the new certificate); `TestRootExpiryStops` (Decision 34: past the root's "not after" no leaf is published, so every bearer is refused, and `Stopped() == "root_expired"`); `TestRollbackWrittenBack` (the stored leaf CRL is replaced by an older one: after `Reload` the row holds the newer one again, the trust number is higher and the log says `rollback`); `TestReloadVerifiesOnlyNewRows` (Review Focus 2: 2,000 leaf rows made with `Fixture.Leaf`; the second `Reload` calls `pki.CheckChain` zero times and takes under one second); `TestReloadCallsOnChange` (once per change, not at an unchanged reload).
+`TestOwnLeafRevoked` (another `Trust` puts the manager's leaf on the leaf CRL: after `Reload` the old leaf is not published, the signer is nil and the provider was not called; after the `Step` that is now due the manager has a new current leaf); `TestIntermediateKeyRevokedStops` (after `InstallRootCRL`: `Stopped() == "intermediate_revoked"`, no leaf is published, `Step` issues nothing); `TestIntermediateExpiryStops` and `TestIntermediateRenewalPickedUp` (a renewed certificate installed before the old one ends: the manager never stops and its next leaf chains through the new certificate); `TestRootExpiryStops` (Decision 34: past the root's "not after" no leaf is published, so every bearer is refused, and `Stopped() == "root_expired"`); `TestRollbackWrittenBack` (the stored leaf CRL is replaced by an older one: after `Reload` the row holds the newer one again, the trust number is higher and the log says `rollback`); `TestReloadVerifiesOnlyNewRows` (Review Focus 2: 2,000 leaf rows made with `Fixture.Leaf`; the second `Reload` calls `pki.CheckChain` zero times and takes under one second); `TestReloadCallsOnChange` (once per change, not at an unchanged reload).
 
 `TestBearerMatrix` (section 7, "Bearers"): an issuer `token.NewIssuer(ctx, url, manager, time.Hour, clock)` and bearers the test signs with go-jose (`typ` `at+jwt`, `kid` and `x5t#S256` the leaf's thumbprint). Subtests, each asserting the named outcome of `Issuer.Verify`: `other-replica` (a `Fixture.Leaf` row: accepted); `row-missing` (`token.ErrUnknownKey`); `row-altered` (the row's DER is another certificate: refused); `self-signed` (a self-signed leaf whose row names the real intermediate key as its issuer: refused; this is the forged row of threat 2); `other-root` (refused); `expired` (the clock 61 s past the leaf's end: refused; 59 s: accepted); `revoked` (refused after the reload); `sibling-installation` (a leaf under `Fixture.Sibling("other")` with both rows stored: refused); `ca-without-usage` (an intermediate the same root signed without the agentmesh usage, and a leaf under it, both stored: refused); `lifetime-over-ceiling` (refused); `expiry-cap` (a bearer minted 10 minutes before the leaf's end with a one-hour lifetime expires at the leaf's end).
 
 Run: `go test ./internal/core/signingkeys/ -run 'TestOwnLeaf|TestIntermediate|TestRootExpiry|TestRollback|TestReload|TestBearerMatrix' 2>&1 | tail`. Expected: compile failure.
 
-- [ ] **Step 2: Implement.** Task 12's anchor line in `material.go` (`v, err := pki.CheckChain(...)`) stays as it is; `TestBearerMatrix/self-signed` is the test Task 35's mutation of it must fail.
+- [ ] **Step 2: Implement.** Task 12's anchor line in `material.go` (the `pki.CheckChain` call, written out in Task 12 and in Task 35's table) stays as it is; `TestBearerMatrix/self-signed` is the test Task 35's mutation of it must fail.
 
 - [ ] **Step 3: Run** `go test -race ./internal/core/signingkeys/`. Expected: `ok`.
 
@@ -1122,7 +1203,7 @@ type RevokeResult struct {
 	TrustNumber int64
 	Changed     bool // false: every serial number was already listed; nothing was written
 }
-// Revoke is the host form: the trust lock, a load, the next leaf CRL, one transaction. It issues no leaf.
+// Revoke is the host form: the trust lock (withLock), a load, the next leaf CRL, one transaction. It issues no leaf.
 func (t Trust) Revoke(ctx context.Context, mem *Memory, in RevokeInput) (RevokeResult, error)
 // List is the unexpired leaves with state other or revoked, and the trust number (the host form of list).
 func (t Trust) List(ctx context.Context, mem *Memory) (bus.SigningKeyList, error)
@@ -1138,19 +1219,19 @@ func countSigned(ctx context.Context, tx store.Tx, leafID int64) (int64, error) 
 
 The next leaf CRL (section 4.8, step 5) lists: every entry of the stored leaf CRL of the configured key; every serial number `mem` keeps for that key; every unexpired leaf row under that key except the one being kept; the extra serial number of a `Cert` or `Serial` input. Its number is `pki.NextNumber(now, stored number)`. The intermediate key signs it under a context bounded by `SignTimeout`.
 
-`RotateSigningKey`, the seven steps of section 4.8 in order: (1) a read transaction checks `RequireServerAdmin` and looks for the receipt of the idempotency key (a replay returns the first answer and changes nothing); (2) take the `trust` lock, or answer a retryable `unavailable`; (3) `Reload`; (4) issue a new leaf without inserting its row; (5) build the CRL, keeping the new leaf; (6) one transaction: the administrator check again, `countSigned` for each newly revoked leaf, the receipt, the new leaf's row, `PutCRL`, `BumpTrustNumber(now)`; (7) after the commit: sign with the new leaf, `OnChange`, release the lock. A failure before the transaction leaves a lost, unused leaf and nothing else. Leaves under another intermediate key are logged as not covered.
+`RotateSigningKey`, the seven steps of section 4.8 in order: (1) a read transaction checks `RequireServerAdmin` and looks for the receipt of the idempotency key (a replay returns the first answer and changes nothing); (2) take the `trust` lock, or answer a retryable `unavailable` (`Trust.withLock`: a lease of `LockTTL`, Plan ruling 30; the manager's issuing mutex is held from here on as well, Plan ruling 33); (3) `Reload`, which never issues (Task 19) and so is safe under the issuing mutex; a rollback write-back it wants finds the `trust` lock held by this very call and waits for the next reload, as Task 19 says, and step 5's CRL carries the union meanwhile; (4) issue a new leaf without inserting its row; (5) build the CRL, keeping the new leaf; (6) renew the lease (`renew`; a lost lock is a retryable `unavailable` and nothing is written), because steps 3 to 5 sign twice and reload and may have used most of it, then one transaction: the administrator check again, `countSigned` for each newly revoked leaf, the receipt, the new leaf's row, `PutCRL`, `BumpTrustNumber(now)`; (7) after the commit: sign with the new leaf, `OnChange`, release the lock. A failure before the transaction leaves a lost, unused leaf and nothing else. Leaves under another intermediate key are logged as not covered.
 
 - [ ] **Step 1: Write the failing tests**
 
-`TestRotateRevokesEveryOtherLeaf` (three managers over one store, one of them already renewed once: the CRL lists every unexpired leaf of the key except the new one, the caller's own former leaf included; one `Revoked` entry each with `HumanMessages` 0; the trust number is `pki.NextNumber`; the caller signs with the new leaf; the other managers issue new leaves at their next `Reload`); `TestRotateReplay` (the same key: the first answer, and no new row, CRL or number); `TestRotateAgainWithoutKey` (revokes the leaf the first rotation issued); `TestRotateNonAdminRefused` (`forbidden`; no lock taken, nothing written); `TestRotateLockHeld` (another owner holds `trust`: a retryable `unavailable`); `TestRotateTwoAtOnce` (one succeeds, the other answers `unavailable` and succeeds when retried); `TestRotateNumberAfterRestore` (the stored CRL number is ahead of the clock: the new number is the stored one plus one); `TestRotateCarriesTheUnion` (a serial number `mem` holds and the stored CRL lacks is in the new CRL: Decision 27); `TestRotateKeepsEntries` (entries whose leaf rows are gone stay: Ruling 7); `TestRotateFailsBeforeTheTransaction` (the provider down at step 4: an error, and the rows, the CRL and the number are unchanged); `TestRotateNotCovered` (a leaf under a second intermediate key is not on the CRL and is logged).
+`TestRotateRevokesEveryOtherLeaf` (three managers over one store, one of them already renewed once: the CRL lists every unexpired leaf of the key except the new one, the caller's own former leaf included; one `Revoked` entry each with `HumanMessages` 0; the trust number is `pki.NextNumber`; the caller signs with the new leaf; the other managers issue new leaves at the `Step` after their next `Reload`); `TestRotateReplay` (the same key: the first answer, and no new row, CRL or number); `TestRotateAgainWithoutKey` (revokes the leaf the first rotation issued); `TestRotateNonAdminRefused` (`forbidden`; no lock taken, nothing written); `TestRotateLockHeld` (another owner holds `trust`: a retryable `unavailable`); `TestRotateTwoAtOnce` (one succeeds, the other answers `unavailable` and succeeds when retried); `TestRotateNumberAfterRestore` (the stored CRL number is ahead of the clock: the new number is the stored one plus one); `TestRotateCarriesTheUnion` (a serial number `mem` holds and the stored CRL lacks is in the new CRL: Decision 27); `TestRotateKeepsEntries` (entries whose leaf rows are gone stay: Ruling 7); `TestRotateFailsBeforeTheTransaction` (the provider down at step 4: an error, and the rows, the CRL and the number are unchanged); `TestRotateNotCovered` (a leaf under a second intermediate key is not on the CRL and is logged); `TestRotateRenewsTheLease` (a provider wrapper moves the fake clock past `LockTTL` while the CRL is signed: with nobody else waiting, the rotation renews its lease and succeeds; when another owner takes the lock in that gap, on a second handle of the database, it answers a retryable `unavailable` and the rows, the CRL and the number are unchanged); `TestRotateWhenOwnLeafRevoked` (the host form has put the manager's current leaf on the CRL and the manager has not reloaded since: `RotateSigningKey` answers within the test's 10-second limit with a new current leaf, and the reload inside it issued nothing).
 
-`TestRevokeAll`; `TestRevokeByCert` (a leaf with a row and one without: listed, count 0; a certificate another key signed: `ErrCheck`); `TestRevokeBySerial`; `TestRevokeAlreadyListed` (`Changed` false, the trust number unchanged); `TestRevokeInputs` (two inputs or none: an error); `TestRevokedLeafIsReplaced` (a running manager whose leaf `Revoke` listed issues a new one at its next `Reload`).
+`TestRevokeAll`; `TestRevokeByCert` (a leaf with a row and one without: listed, count 0; a certificate another key signed: `ErrCheck`); `TestRevokeBySerial`; `TestRevokeAlreadyListed` (`Changed` false, the trust number unchanged); `TestRevokeInputs` (two inputs or none: an error); `TestRevokedLeafIsReplaced` (a running manager whose leaf `Revoke` listed issues a new one at the `Step` after its next `Reload`).
 
 `TestListSigningKeys` (the current leaf first, then `previous`, `other`, `revoked`; the trust number; a non-administrator is refused); `TestRemoveExpiredLeaves` (a leaf 59 minutes past its end stays, one 61 minutes past goes, an intermediate never goes; its serial number stays on the CRL).
 
 Run: `go test ./internal/core/signingkeys/ -run 'TestRotate|TestRevoke|TestListSigningKeys|TestRemoveExpired' 2>&1 | tail`. Expected: compile failure.
 
-- [ ] **Step 2: Implement.** **Step 3: Run** `go test -race ./internal/core/signingkeys/`. Expected: `ok`.
+- [ ] **Step 2: Implement.** Every lock section goes through `Trust.withLock`; no function of this task reads `Owner`. **Step 3: Run** `go test -race ./internal/core/signingkeys/ && go test ./internal/core/access/ -run TestAccessRuleSites`. Expected: `ok` twice, the allowlist as Task 12 left it.
 
 - [ ] **Step 4: Close the task.** Commit: `feat(signingkeys): the leaf CRL, forced renewal and revoking one leaf (ADR 0019 section 4.8, Decisions 16, 25, 27)`.
 
@@ -1184,9 +1265,9 @@ Until Task 23 the server still signs with the old key set, so these commands see
 The server does not need the settings yet (Task 23 makes them required), so this task changes fixtures only and every suite stays green before and after.
 
 **Files** (find them all first: `rg -n 'cmd\.Run(With)?\(|exec\.Command\(binPath, "server"|agentmesh server' internal scripts deploy Dockerfile`):
-- Modify: `internal/conformance/bus/auth_test.go` (the `cmd.Run` of `TestAuthEndToEnd`), `replicas_test.go:65`, `federated_test.go:54,66`: `trusttest.New`, `Fixture.Install` on the store the test already opens, `Fixture.Sets()` appended to the arguments
+- Modify: `internal/conformance/bus/auth_test.go` (the `cmd.Run` of `TestAuthEndToEnd`), `replicas_test.go:65`, `federated_test.go:54,66`: `trusttest.New(t, time.Time{})` (these servers run on the real clock), `Fixture.Install` on the store the test already opens, `Fixture.Sets()` appended to the arguments
 - Modify: the tests of `internal/server/cmd` that serve through `Run` or `run`, and any test of `internal/cli`, `internal/mcpcli`, `internal/client`, `internal/tui` the search finds
-- Modify: `internal/e2e/e2e_test.go:261` (the built binary: `agentmesh ca init`, `server admin ca csr -out`, `ca sign`, `server admin ca install`, all through the binary, then the three `-set`s), `internal/e2e/slack_test.go` and `mcponly_test.go` (the in-process server: `trusttest`)
+- Modify: `internal/e2e/e2e_test.go:261` (the built binary: `agentmesh ca init`, `server admin ca csr -out`, `ca sign`, `server admin ca install`, all through the binary, then the three `-set`s), `internal/e2e/slack_test.go` (the in-process server: `trusttest`), and `mcponly_test.go` only where the search shows it starting a server (it runs the built `agentmesh-mcponly` against the fixtures' servers)
 - Modify: `scripts/cats-harness.sh` (`up` runs the four commands in its directory and adds the three `-set`s to the server's arguments), `scripts/testdata/cats-harness/expected-argv.txt`, `scripts/cats-harness-selftest.sh`, `scripts/cats-precommit-selftest.sh`
 - Modify: `scripts/docker-smoke.sh` (the four commands through `docker run` with the image's binary and a bind-mounted temporary directory, redirects on the host; the server's three settings; Plan ruling 25), `deploy/docker-compose.yml`, `deploy/example.env`
 
@@ -1194,19 +1275,19 @@ The server does not need the settings yet (Task 23 makes them required), so this
 - [ ] **Step 2: Run** `make test 2>&1 | tail -5`, `make test-conformance 2>&1 | tail -5`, `make cats-selftest 2>&1 | tail -3`, `make docker-smoke 2>&1 | tail -5`. Expected: all pass. Run `bash scripts/cats-harness.sh up && bash scripts/cats-harness.sh status && bash scripts/cats-harness.sh down` when `cats` is installed.
 - [ ] **Step 3: Close the task** (`make release-lint` included). Commit: `test(fixtures): every server fixture bootstraps a CA (ADR 0019 section 7)`.
 
-State (Definition of Done D): `cats-harness.sh up` twice: the second finds the root and the installed certificate and reuses them (`ca init` is skipped when `root.pem` exists; `ca install` answers `unchanged`); `down` removes the directory, CA included.
+State (Definition of Done D): `cats-harness.sh up` twice: the second finds the root and the installed certificate and reuses them (`ca init` is skipped when `root.pem` exists and `ca sign` when the signed certificate file exists, so `ca install` is given the same certificate and answers `unchanged`; a second `ca sign` would issue a new serial number and add a row); `down` removes the directory, CA included.
 
 ---
 
 ### Task 23: The switch: the server starts on the hierarchy
 
 **Files:**
-- Modify: `internal/server/cmd/cmd.go:146-177` and the `Ready` line at 230-233, the State comment at 55-62; `internal/server/cmd/serve.go` (`Config.SigningKeys *signingkeys.Manager`; `go c.SigningKeys.Run(mctx, nil)` under the wait group; `opts.SigningKeys = c.SigningKeys`; the maintenance service no longer gets the old jobs)
+- Modify: `internal/server/cmd/cmd.go:146-177` and the `Ready` line at 230-233, the State comment at 55-62; `internal/server/cmd/serve.go` (`Config.SigningKeys *signingkeys.Manager`; `go c.SigningKeys.Run(mctx, nil)` under the wait group; `opts.SigningKeys = c.SigningKeys`; the maintenance service no longer gets the old jobs: the line `m.SigningKeys = c.SigningKeys` at `serve.go:152` goes, and Task 24 sets `Trust` in its place)
 - Test: `internal/server/cmd/cmd_test.go`, `serve_test.go:535,588`, `internal/server/cmd/startup_test.go` (new), `internal/conformance/bus/auth_test.go`, `replicas_test.go`, `scripts/docker-smoke.sh:134`
 
 **Interfaces:**
 - Consumes: Tasks 9, 13, 17 to 20.
-- Produces: the start sequence of `run`: `cfg.RequireTrust()`; `openRoot` (and a root outside its validity period); `openIntermediateProvider` and, for the file form, one `Provider.Next` so a missing, exposed or non-P-256 key file stops the start; the Store; the listener; `signingkeys.New`; `token.NewIssuer(ctx, issuerURL, manager, lifetime, c.Now)`; `manager.SetOnChange(issuer.Invalidate)`. The start line: `agentmesh server listening on <addr> (<engine>, registration <mode>, issuer <url>, leaf <thumbprint> until <RFC 3339>)`. The lines `generated signing key` and `adopted signing key` are gone.
+- Produces: the start sequence of `run`: `cfg.RequireTrust()`; `openRoot` (and a root outside its validity period); `openIntermediateProvider` and, for the file form, one `Provider.Next` so a missing, exposed or non-P-256 key file stops the start; the Store; the listener; `signingkeys.New`, whose `Trust` embeds the core `run` already builds at `cmd.go:148` (not the serving core: `Serve` builds that one later, at `serve.go:123`, and Task 28 hands it the manager as its `TrustSource`); `token.NewIssuer(ctx, issuerURL, manager, lifetime, c.Now)`; `manager.SetOnChange(issuer.Invalidate)`. The start line: `agentmesh server listening on <addr> (<engine>, registration <mode>, issuer <url>, leaf <thumbprint> until <RFC 3339>)`. The lines `generated signing key` and `adopted signing key` are gone.
 
 Exit codes (section 4.15, first table):
 
@@ -1228,7 +1309,7 @@ Exit codes (section 4.15, first table):
 
 `TestStartupStates` in `startup_test.go`: one subtest per row above through `run` with an injected serving function, asserting the exit code and one phrase of the message (the two command names for `ErrNoIntermediate`; `-tags awskms` for the missing backend; the setting's name for each configuration row). `TestStartLine` (the leaf thumbprint and an RFC 3339 time; neither old line). `TestSecondStartIssuesAnotherLeaf` (two starts over one store leave two leaf rows; the first leaf still verifies).
 
-`internal/server` (the test environment gets its manager in Task 25; here one test builds its own with `trusttest`): `TestTokenEndpoint503WhenLeafExpired` (a manager on a fake clock whose renewals fail past the leaf's end: the token endpoint answers 503 `temporarily_unavailable`, both grants; a request with a bearer from another leaf that is still valid is served).
+`internal/server` (the test environment gets its manager in Task 25; here one test builds its own with `trusttest.New(t, time.UnixMilli(fixedNowMs))`: the environment's fake clock starts in 2023, `testenv_test.go:22`, and a fixture made at the real time is not valid yet on it): `TestTokenEndpoint503WhenLeafExpired` (a manager on a fake clock whose renewals fail past the leaf's end: the token endpoint answers 503 `temporarily_unavailable`, both grants; a request with a bearer from another leaf that is still valid is served).
 
 `TestAuthEndToEnd` keeps its 12 leaf names (Plan ruling 23) on the hierarchy: the test no longer creates a key row; `forged-bearer-refused` signs with a key of its own under the `kid` of a real leaf (read from `GET /v1/auth/jwks`), so only the signature check stops it (selftest block 14); `stale-bearer-on-token-endpoint` signs an expired bearer with a `Fixture.Leaf`; `signing-key-rotation` rotates, sees its bearer refused, exchanges again and lists. `TestReplicasSigningKeyRotation`: a bearer from replica A is accepted by B; after a forced renewal on A, A's new bearer presented to B makes B reload (the unknown-key path), after which B refuses A's old bearer and has issued a new leaf of its own; two forced renewals at once end with one winner and one retryable `unavailable`.
 
@@ -1247,18 +1328,18 @@ State (Definition of Done D): section 5's "Server start" row. A second start iss
 ### Task 24: Removal 1: the old key set rules, the store provider, the three settings and the two jobs
 
 **Files:**
-- Delete: `internal/core/signingkeys/service.go`, `schedule.go`, `keyring.go`, `api.go`, `service_test.go`, `schedule_test.go`, `keyring_test.go`, `outage_test.go` (its Store wrapper already lives in `helpers_test.go`), `internal/conformance/bus/signingkeys_test.go`, `internal/conformance/bus/signingkeys_external_test.go` (they test the old key set), `internal/server/cmd/keyprovider.go` (the `keyBackends` map moves to `trust.go`), `internal/server/cmd/keyprovider_test.go` (what still applies moves to `trust_test.go`)
+- Delete: `internal/core/signingkeys/service.go`, `schedule.go`, `keyring.go`, `api.go`, `service_test.go`, `schedule_test.go`, `keyring_test.go`, `outage_test.go` (the new tests have had a Store wrapper of their own in `helpers_test.go` since Task 17), `internal/conformance/bus/signingkeys_test.go`, `internal/conformance/bus/signingkeys_external_test.go` (they test the old key set), `internal/server/cmd/keyprovider.go` (the `keyBackends` map moves to `trust.go`), `internal/server/cmd/keyprovider_test.go` (what still applies moves to `trust_test.go`)
 - Modify: `internal/keyprovider/keyprovider.go` (`StoreProvider`, `storeSigner`, `NameStore`, `Key.PrivatePEM` removed; `Provider.Name`'s comment; the package comment), `internal/keyprovider/keyprovider_test.go`, the four backends and `kmsfake` only where they mention the removed names
 - Modify: `internal/server/config/config.go` (`SigningKeyURI`, `SigningKeyRotationHours`, `SigningKeyRotationCooldownSeconds`, their defaults and validation removed; `MaxTokenLifetimeSeconds` stays at 86400 with a comment that no longer names `MaxBearerLifetime`), `config_test.go` (`TestSigningKeyDefaults`, `TestSigningKeyURIValidation`, `TestSigningKeyRotationBounds`, `TestMaxBearerLifetimeIsTheCeiling` removed), `docs/ops/configuration.md`
-- Modify (the remaining users of `signingkeys.Service` and `StoreProvider`): `internal/server/signing_keys_test.go` (a manager from `trusttest` in `Options.SigningKeys`), `internal/core/identities/service_test.go:584`, `internal/server/cmd/serve_test.go:535,588`
-- Modify: `internal/core/maintenance/service.go:38-40,112-115` (`SigningKeys` becomes `Trust *signingkeys.Trust`; one job, `{"expired leaf removal", t.RemoveExpiredLeaves}`, where the two were), `jobs_test.go`, `internal/server/cmd/serve.go` (sets it from the manager's `Trust`), `internal/core/health` tests that list job names
+- Modify (the remaining users of `signingkeys.Service` and `StoreProvider`): `internal/server/signing_keys_test.go` (a manager from `trusttest.New(t, time.UnixMilli(fixedNowMs))` in `Options.SigningKeys`: the fixture is made at the start of the fake clock this test advances, or its certificates are not valid yet), `internal/core/identities/service_test.go:584`, `internal/server/cmd/serve_test.go:535,588`
+- Modify: `internal/core/maintenance/service.go:38-40,112-115` (`SigningKeys` becomes `Trust *signingkeys.Trust`; one job, `{"expired leaf removal", t.RemoveExpiredLeaves}`, where the two were), `jobs_test.go`, `internal/server/cmd/serve.go` (sets it from `c.SigningKeys.Trust()`, the accessor of Task 17, where Task 23 removed `m.SigningKeys = c.SigningKeys`), `internal/core/health` tests that list job names
 - Modify: `internal/server/cmd/backend_awskms_test.go`, `backend_azurekms_test.go`, `backend_gcpkms_test.go`, `backend_hashivault_test.go` (`intermediate_key_uri`), `scripts/vet-tags.sh` if it names a removed setting
-- Modify: every fixture that still passes `signing_key_rotation_cooldown_seconds`: `internal/e2e/e2e_test.go:261`, `scripts/cats-harness.sh:67`, `scripts/testdata/cats-harness/expected-argv.txt`, `internal/conformance/bus/auth_test.go`
+- Modify: every fixture that still passes `signing_key_rotation_cooldown_seconds`: `internal/e2e/e2e_test.go:261`, `scripts/cats-harness.sh:67`, `scripts/cats-harness-selftest.sh:371`, `scripts/testdata/cats-harness/expected-argv.txt`, `internal/conformance/bus/auth_test.go`, `internal/conformance/bus/replicas_test.go` (what Task 23 left of lines 594-642), and whatever else the search of Step 2 names (`internal/server/cmd/admin_test.go` and `cmd_test.go`, if Tasks 21 and 23 left a mention)
 - Modify: `scripts/m7-exit-checks.sh` (the `keyprovider-leaf` comment: the store provider is gone)
 - Modify: `internal/store/sqlite/sqlite.go:39,86,147` and `internal/store/sqlite/perm_unix_test.go` (Plan ruling 9: the check stays; the text is `... which other accounts can read or write, and is the server's database; chmod 600 it`)
 
 - [ ] **Step 1: Write the failing tests**: `TestExpiredLeafRemovalJob` in `internal/core/maintenance` (the job runs where the two ran, before the last job, and only when `Trust` is set; its count is the rows removed); `TestUnknownSettingRefused` in `internal/server/config` (each of the three old names is `unknown setting`).
-- [ ] **Step 2: Delete and adjust.** `rg -n 'EnsureActive|PrepareRotation|ApplyRotation|RotatePrepared|RotateDue|RemoveExpired\b|RemoveAfter|ErrCooldown|ErrRotateNoChange|NewKeyring|StoreProvider|NameStore|PrivatePEM|signing_key_uri|signing_key_rotation' --glob '!docs/**' --glob '!internal/gen/**' .` must print nothing but the Store's own `PrivateKeyPEM` (Task 26).
+- [ ] **Step 2: Delete and adjust.** Then `rg -n '\bEnsureActive\b|\bPrepareRotation\b|\bApplyRotation\b|\bRotatePrepared\b|\bRotateDue\b|\bRemoveExpired\b|\bErrCooldown\b|\bErrRotateNoChange\b|\bNewKeyring\b|\bStoreProvider\b|\bNameStore\b|\bPrivatePEM\b|signing_key_uri|signing_key_rotation' --glob '!docs/**' --glob '!internal/gen/**' --glob '!internal/store/**' --glob '!internal/conformance/store/**' --glob '!CLAUDE.md' --glob '!README.md' .` must print only the three old setting names inside `TestUnknownSettingRefused` (`internal/server/config/config_test.go`), which Step 1 put there. The word boundaries keep `EncodePrivatePEM` and `ParsePrivatePEM` (`internal/auth/keys`, `internal/credential`) and Task 20's `RemoveExpiredLeaves` out of it; the Store's files go in Task 26, and `CLAUDE.md` and `README.md` in Task 36. A hit under `api/` is cooldown text Task 15 should have removed: remove it here (a documentation-only change of `api/openapi.yaml` passes the pre-commit hook at once).
 - [ ] **Step 3: Run** `make test 2>&1 | tail -5`, `make vet-tags 2>&1 | tail -3`, `make cats-selftest 2>&1 | tail -2`, `bash scripts/m7-exit-checks.sh --deps-only | tail -1`. Expected: all pass.
 - [ ] **Step 4: Close the task** (`make release-lint` included). Commit: `refactor(signingkeys)!: remove the key set rules, the store provider and the rotation settings (ADR 0019 section 4.16)`.
 
@@ -1267,12 +1348,12 @@ State (Definition of Done D): section 5's "Server start" row. A second start iss
 ### Task 25: Test fixtures leave `StaticKeys`; a key always has a chain
 
 **Files:**
-- Modify (fixtures): `internal/server/testenv_test.go:76-111` (the issuer is built over `Fixture.Manager`; the environment keeps the `Fixture` and the `Manager`), `internal/server/auth_test.go:348,898,922,955`, `internal/tui/run_test.go:184`, `internal/e2e/e2e_test.go:710`, `internal/conformance/bus/auth_test.go:172,411,494` (whatever Task 23 left)
+- Modify (fixtures): `internal/server/testenv_test.go:76-111` (the issuer is built over `Fixture.Manager` of `trusttest.New(t, time.UnixMilli(fixedNowMs))`, the start of the environment's fake clock; the environment keeps the `Fixture` and the `Manager`), `internal/server/auth_test.go:348,898,922,955`, `internal/tui/run_test.go:184`, `internal/e2e/e2e_test.go:710`, `internal/conformance/bus/auth_test.go:172,411,494` (whatever Task 23 left)
 - Modify: `internal/auth/token/keyset.go` (`StaticKeys`, `staticKeys`, `cryptoSigner` and `keyOf` removed; `validate` requires a chain for every key), `internal/auth/token/issuer.go` (`serverAlgorithms` stays; a key without a chain is unreachable), `internal/auth/token/issuer_test.go`, `keyset_test.go`, `external_test.go` (their own `KeySource` over a certificate made with the standard library, in `certkey_test.go`)
 
 **Interfaces (Produces):** `token.Key.Chain` is required: `validate` refuses a key without one.
 
-- [ ] **Step 1: Move the fixtures** to `trusttest`, package by package, running each package's tests as it is done. A test that needs "an issuer with another key" (`auth_test.go:348`) uses a second `trusttest.New` (another root).
+- [ ] **Step 1: Move the fixtures** to `trusttest`, package by package, running each package's tests as it is done. A test that needs "an issuer with another key" (`auth_test.go:348`) uses a second `trusttest.New` (another root). Each fixture is made at the clock its issuer runs on: the fake clock's time in `internal/server`, and the zero time (the real clock) in `internal/tui`, `internal/e2e` and `internal/conformance/bus` unless the test there has a fake clock of its own.
 - [ ] **Step 2: Add `TestKeyNeedsAChain` to `internal/auth/token`**, see it fail, then remove `StaticKeys` and make the chain required.
 - [ ] **Step 3: Run** `rg -n 'StaticKeys' --type go . ; make test 2>&1 | tail -5`. Expected: no match; all `ok`.
 - [ ] **Step 4: Close the task.** Commit: `refactor(token): every key has a certificate chain; StaticKeys is gone (ADR 0019)`.
@@ -1302,6 +1383,7 @@ Additive: the members exist and carry nothing until Tasks 28 to 30 fill them.
 - Create: `internal/bus/trust.go`, `internal/server/trust.go`
 - Modify: `internal/bus/sessions.go`, `internal/bus/health.go`, `internal/core/rules/bounds.go` (`MaxTrustNumber = 1 << 53`), `internal/core/sessions/open.go`, `internal/core/delivery/receive.go`, `internal/core/delivery/watch.go` (the bound check only), `internal/server/sessions.go`, `internal/server/health.go`, `internal/server/discovery.go`, `internal/bus/remote/sessions.go`, `internal/bus/remote/health.go`, `internal/bus/remote/convert.go`
 - Modify (gates): `internal/server/wire_roundtrip_test.go`, `internal/mcpserver/coverage_test.go`, `internal/server/spec_bounds_test.go`, `internal/conformance/bus/testdata/core_bound_rows.txt` and the two probes it lists rows for, `internal/e2e/zz_examples_test.go`, the three `spec_jwk_*` tests
+- Modify (the two new `JWK` members are request fields too, Plan ruling 31): `internal/auth/keys/keys.go` (`MaxJWKCertificateBytes = 4096`, beside `MaxJWKMemberBytes`), `internal/server/auth_handlers.go` (register refuses a key that carries `x5c` or `x5t#S256`), `internal/server/auth_test.go`
 
 **Interfaces (Produces):**
 
@@ -1340,9 +1422,9 @@ type HealthSigning struct { // Plan ruling 16
 }
 ```
 
-Wire names are the snake case of the members (section 4.9's table for the bundle; `intermediates`, `root_crl`, `leaf_crls` and `root` are base64 strings, `format: byte`). Every `trust_number` is an integer from 0 to 2^53; the core refuses a negative or larger one in open, receive and watch with `validation`, on the `local` transport too.
+Wire names are the snake case of the members (section 4.9's table for the bundle; `intermediates`, `root_crl`, `leaf_crls` and `root` are base64 strings, `format: byte`). Every `trust_number` is an integer from 0 to 2^53; the core refuses a negative or larger one in open, receive and watch with `validation`, on the `local` transport too. In the `JWK` schema `x5c` is an array of at most 2 strings of at most 4096 characters and `x5t#S256` a string of at most 64; the schema's description says that the server sends the two members and that register refuses a submitted key that carries either.
 
-- [ ] **Step 1: Change the gate tables first**: `TestWireRoundTrip` pairs `gen.TrustBundle`, `gen.HealthSigning` and `gen.HealthCertificate` with their Bus types and covers the new members of the six changed schemas; `TestToolCoverage` lists `TrustNumber` and `Trust` of the three inputs and three results as `hidden: carried under the Bus by internal/client`, and `Health.Signing` as `used` (the `health` tool prints the document); `TestSpecBounds` gains the three request rows (`OpenSessionRequest.trust_number`, `ReceiveRequest.trust_number`, the `watch` parameter) with `rules.MaxTrustNumber`; `core_bound_rows.txt` gains the same three rows and `TestOverBoundRefused` and `TestAtBoundAccepted` cover them; `TestRequestExamples` gets the changed request examples.
+- [ ] **Step 1: Change the gate tables first**: `TestWireRoundTrip` pairs `gen.TrustBundle`, `gen.HealthSigning` and `gen.HealthCertificate` with their Bus types and covers the new members of the six changed schemas; `TestToolCoverage` lists `TrustNumber` and `Trust` of the three inputs and three results as `hidden: carried under the Bus by internal/client`, and `Health.Signing` as `used` (the `health` tool prints the document); `TestSpecBounds` gains the three request rows (`OpenSessionRequest.trust_number`, `ReceiveRequest.trust_number`, the `watch` parameter) with `rules.MaxTrustNumber`; `core_bound_rows.txt` gains the same three rows and `TestOverBoundRefused` and `TestAtBoundAccepted` cover them; `TestSpecBounds` also gains three rows for the `JWK` schema, which is request-reachable through `RegisterRequest.public_key_jwk` and already has a row per bounded member (`spec_bounds_test.go:182-185`): `schemas/JWK.x5c` (at most 2 items) and `schemas/JWK.x5c[]` (`keys.MaxJWKCertificateBytes`), in the form of the neighboring array rows, and `schemas/JWK.x5t#S256` (`keys.MaxJWKMemberBytes`); `core_bound_rows.txt` gains three `except` lines for them, in the form of its lines for `schemas/JWK.kid` (registration is not a Bus method), naming `TestRegisterRefusesCertificateMembers`; that test, in `internal/server/auth_test.go` beside `TestRegisterRefusesWideJWK`, registers a key with `x5c`, one with `x5t#S256` and one with both, and each answers 400 `validation` naming `public_key_jwk` (Definition of Done B: an input the server does not take is refused); `TestRequestExamples` gets the changed request examples.
 
 Run: `go test ./internal/server/ ./internal/mcpserver/ ./internal/gen/ 2>&1 | tail -20`. Expected: failures naming the missing schemas and members.
 
@@ -1360,7 +1442,7 @@ Run: `go test ./internal/server/ ./internal/mcpserver/ ./internal/gen/ 2>&1 | ta
 - Create: `internal/core/trust.go`, `internal/core/signingkeys/status.go`
 - Modify: `internal/core/core.go` (`Options.Trust`, `(*Core).Trust()`), `internal/core/sessions/open.go`, `internal/core/delivery/receive.go`, `internal/server/discovery.go`, `internal/server/cmd/serve.go` (the serving core gets `Options.Trust` from `Config.SigningKeys` when it is not nil)
 - Test: `internal/server/trust_test.go`, `internal/core/signingkeys/status_test.go`
-- Modify: the harness of `internal/conformance/bus` (where `core.New` builds the harness's core, and `transport_test.go:47`): under `AGENTMESH_BUS_TRANSPORT=inproc` the serving core gets `Options.Trust` from a `trusttest` manager built over a first core on the same Store and clock, as `cmd` does; the `local` run gets none (section 7: the fixture serves the inproc Bus suite)
+- Modify: the harness of `internal/conformance/bus` (where `core.New` builds the harness's core, and `transport_test.go:47`): under `AGENTMESH_BUS_TRANSPORT=inproc` the serving core gets `Options.Trust` from a `trusttest` manager (its fixture made with `trusttest.New(t, <the harness clock's time>)`, so the certificates are valid on that clock) built over a first core on the same Store and clock, as `cmd` does; the `local` run gets none (section 7: the fixture serves the inproc Bus suite)
 
 **Interfaces (Produces):**
 
@@ -1512,7 +1594,7 @@ State (Definition of Done D): section 5's rows "Client first contact", "`-accept
 
 `TestReplicasTrust/<engine>`: `bearer-crosses-replicas`; `forced-renewal-revokes-across` (after a forced renewal on A, A's new bearer presented to B makes B reload; B then refuses A's old bearer and signs with a new leaf of its own); `two-forced-renewals` (at once: one answer and one retryable `unavailable`, which succeeds when retried); Postgres only, like the cross-server leaves of `TestReplicasWake`: `watch-wakes-across-replicas` (a watch on B with the current number wakes within 5 seconds of a forced renewal on A, count 0).
 
-`TestRestore/<engine>` (Decision 27; a real server through `cmd.Run` and a client through `client.Open` with a profile in a temporary configuration directory; the rollback is written through the suite's raw database handle), subtests in order: `bundle-after-restore` (the stored leaf CRL and the trust number are put back to their values from before a forced renewal; the client, which holds the later ones, still gets the bundle on its next receive, because the numbers differ); `older-crl-refused-once` (one `trust.log` line; the client's kept revocations still hold the revoked serial number; its recorded trust number is the server's); `next-renewal-accepted` (the next forced renewal's CRL has a higher number than the client holds and is accepted); `union-on-the-client` (a leaf revoked before the rollback and missing from the new CRL is still in the client's kept revocations); `union-on-the-server` (the same scenario with the server process kept running across the rollback: the next CRL it builds lists the serial number); `trust-number-above-all` (the trust number of the first change after the rollback is above every value issued before it).
+`TestRestore/<engine>` (Decision 27; a real server through `cmd.Run` on a loopback address the test reserves, so that the server can be stopped and started again on it; a client through `client.Open` with a profile in a temporary configuration directory, opened once and kept, one `Bus` for the whole test; the rollback is written through the suite's raw database handle), subtests in order: `bundle-after-restore` (after a forced renewal the client holds the later CRL and trust number; the server is stopped, the stored leaf CRL and the trust number are put back to their values from before the renewal, and the server is started again on the same address, as after a real restore: its fresh `Memory` knows nothing newer, and its trust number is the rolled-back one, below the client's. The client's `Bus`, open since before the restart, still gets the bundle on its next receive, because the numbers differ, although the server's is the lower one. Both conditions are needed for Task 35's `bundle-only-when-lower` mutation to fail here: a server left running would see the rollback, write the newer CRL back and raise the number above the client's, and a new `client.Open` would fetch the bundle through discover); `older-crl-refused-once` (one `trust.log` line; the client's kept revocations still hold the revoked serial number; its recorded trust number is the server's); `next-renewal-accepted` (the next forced renewal's CRL has a higher number than the client holds and is accepted); `union-on-the-client` (a leaf revoked before the rollback and missing from the new CRL is still in the client's kept revocations); `union-on-the-server` (the same scenario with the server process kept running across the rollback: the next CRL it builds lists the serial number); `trust-number-above-all` (the trust number of the first change after the rollback is above every value issued before it).
 
 - [ ] **Step 1: Write the tests; see the new ones fail where the behavior is missing and fix what they find.**
 - [ ] **Step 2: Run** `make test-conformance 2>&1 | tail -5`; `log="$(mktemp)"; go test -count=1 -v -run '^TestReplicas' ./internal/conformance/bus/ > "$log" 2>&1; bash scripts/m7-exit-checks.sh "$log" | tail -3; rm -f "$log"`. Expected: all `ok`; the m7 line shows `trust_sqlite=3 trust_postgres=4` beside the existing counts.
@@ -1553,13 +1635,13 @@ State (Definition of Done D): section 5's rows "Client first contact", "`-accept
 | `pki-leaf-rule` | probe file in `internal/pki` and in `internal/pki/rootca` importing `internal/oidctest` | (m7 probe) | `deps_violation=` for each under `pki-leaf` |
 | `trust-leaf-rule` | probe file in `internal/trust` importing `internal/oidctest` | (m7 probe) | `deps_violation=` under `trust-leaf` |
 | `trusttest-in-binary` | probe file in the root package importing `internal/trusttest` | (m4 probe) | `deps_violation=` |
-| `trust-row-trusted` | `internal/core/signingkeys/material.go` | `v, err := pki.CheckChain(...)` becomes `v, err := pki.Verified{Leaf: leaf, Intermediate: im, NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}, error(nil)` | `TestBearerMatrix/self-signed` |
+| `trust-row-trusted` | `internal/core/signingkeys/material.go` | `v, err := pki.CheckChain([]*x509.Certificate{leaf, im}, t.Root, t.Installation)` (the whole line, as Task 12 fixed it; `grep -cF` of it is 1) becomes `v, err := pki.Verified{Leaf: leaf, Intermediate: im, NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}, error(nil)` | `TestBearerMatrix/self-signed` |
 | `chain-name-ignored` | `internal/pki/chain.go` | `if c.Subject.CommonName != installation {` becomes `if false {` | `TestVerifyChain/other-installation` |
 | `chain-usage-intermediate` | `internal/pki/chain.go` | `if !HasAgentmeshUsage(c) {` becomes `if false {` | `TestVerifyChain/intermediate-without-usage` |
 | `chain-usage-leaf` | `internal/pki/chain.go` | `if !HasAgentmeshUsage(leaf) {` becomes `if false {` | `TestVerifyChain/leaf-without-usage` |
 | `chain-lifetime-ignored` | `internal/pki/chain.go` | `if leaf.NotAfter.Sub(leaf.NotBefore) > MaxLeafLifetime {` becomes `if false {` | `TestVerifyChain/leaf-lifetime-over` |
 | `revocation-by-certificate` | `internal/pki/revocations.go` | `if r.RevokedKeys(intermediates)[issuer] {` becomes `if false {` | `TestRevocationByKey` |
-| `bundle-only-when-lower` | `internal/core/trust.go` | `*client != b.TrustNumber {` becomes `*client < b.TrustNumber {` | `TestRestore/sqlite/bundle-after-restore` |
+| `bundle-only-when-lower` | `internal/core/trust.go` | `*client != b.TrustNumber {` becomes `*client < b.TrustNumber {` | `TestRestore/sqlite/bundle-after-restore` (it restarts the server and keeps the client's `Bus`: Task 33) |
 | `trust-number-counter` | `internal/store/sqlstore/trust.go` | `next := max(now, stored+1)` becomes `next := stored + 1` | `TestTrustNumber` (the SQLite half) |
 | `ca-sign-name-unchecked` | `internal/pki/rootca/rootca.go` | `if taken && !sameInstallation {` becomes `if false {` | `TestSignNameTaken` |
 | `expected-installation-ignored` | `internal/trust/pin.go` | `if e.Installation != "" && b.Installation != e.Installation {` becomes `if false {` | `TestExpectedInstallation` |
@@ -1581,12 +1663,13 @@ Every factual claim is checked against the source or a live run (Definition of D
 - Rewrite: `docs/ops/signing-keys.md`: the hierarchy; the four commands of a first start; the outside-CA profile in the words of section 4.2 with an `openssl` example, run by hand and checked with `ca install`; the four backends as stores of the intermediate key (their sections stay true of the backends); forced renewal and what it costs; and the six statements section 9 requires: each installation under one root needs a name of its own (Decision 23); an outside CA issues the name, the extended key usage and one subject key identifier for every certificate of a key; revoking an intermediate means revoking every certificate of its key (Decision 26); what `signing-key revoke` is for (Decision 25); any root renewal needs `-accept-new-root` on every client, and what root expiry does (Decision 34); the shipped tool refuses a name it issued to another key, what `-same-installation` is for, and an outside CA has no such check (Decision 37). Also Ruling 12 in plain words: a single server whose renewals fail for W/2 stops serving authenticated requests until one succeeds.
 - Modify: `docs/ops/configuration.md` (the five settings; the three removed), `docs/ops/deploy.md` and `deploy/` comments (the CA step; the key file as a mounted secret), `docs/ops/admin-bootstrap.md`, `docs/ops/backup.md` (the database holds no private key; after a restore install the latest root CRL again and, if a forced renewal was run after the backup, run one again: Decision 27), `docs/ops/health.md` (`signing`, the `degraded` reasons), `docs/ops/upgrade.md`, `docs/install.md` (HTTPS and the switch; `root_thumbprint` and `installation`, above all for a client that keeps no configuration directory: Decisions 30 and 38), `docs/cats.md` if it describes the harness's start, `docs/journeys.md` if the rotation journey names `revoke_previous`
 - Modify: `CLAUDE.md`: the `agentmesh ca` and `server admin ca` and `signing-key revoke` commands; `signing-keys rotate` without `-revoke-previous`; the new flags and variables; the design notes on `internal/pki`, `internal/trust`, `internal/trusttest`, the leaf manager, `trust_material`, `core.TrustSource`, the m7 rules `pki-leaf` and `trust-leaf`, the m7 replica counts, selftest block 41, `make pen-check`, `make verify` running the m7 rule; the notes that describe `signing_keys`, `StoreProvider`, the two jobs and the three settings are removed; the done gate line names the m7 rule
-- Modify: `docs/adr/0012-signing-key-rotation-and-key-providers.md` (the status line: the superseded parts are no longer "designed, not built" but removed, with the date and this plan's path), `docs/adr/0019-certificate-hierarchy-and-signed-messages.md` (the status line: spec 1 built, spec 2 designed; a "Plan rulings of the spec 1 plan" list naming rulings 1 to 29 of this plan as not Eric's), `docs/adr/0004-store-contract-and-storage.md` and `docs/adr/0002-authentication-and-credentials.md` (one line each at the passages ADR 0019 "What this supersedes" names, pointing to ADR 0019), `docs/adr/README.md` (the status cells of the ADR 0012 and ADR 0019 rows)
+- Modify: `docs/adr/0012-signing-key-rotation-and-key-providers.md` (the status line: the superseded parts are no longer "designed, not built" but removed, with the date and this plan's path), `docs/adr/0019-certificate-hierarchy-and-signed-messages.md` (the status line: spec 1 built, spec 2 designed; a "Plan rulings of the spec 1 plan" list naming rulings 2 to 11 and 13 to 33 of this plan as not Eric's; rulings 1 and 12 are left out of it, because they are his Decisions 47 and 48, which the ADR already records), `docs/adr/0004-store-contract-and-storage.md` and `docs/adr/0002-authentication-and-credentials.md` (one line each at the passages ADR 0019 "What this supersedes" names, pointing to ADR 0019), `docs/adr/README.md` (the status cells of the ADR 0012 and ADR 0019 rows)
 - Modify: `docs/security/threat-model-server.md` (SD1, SD3, SD6 and threats 1, 2, 6 and 15, now that spec 1 is built; threats are named in plain English)
 - Controller step, not an implementer's: the TMI mirror of the threat model. It writes to an outside service, so the controller pauses for Eric with `Approve: update the TMI mirror of the server threat model for threats 1, 2, 6 and 15`.
-- Spec 1's status lines (Open question 4): already updated by Decision 49; leave them.
+- Spec 1's status lines: section 1 records Decision 49 on each revision's line and in a line of its own (the commit that folded the pre-flight scan into this plan reworded the two revision lines, which still said "not approved yet"); leave them.
+- Modify: `README.md` (line 75, which says the signing key is stored in clear in the `signing_keys` rows: the database holds no private key now).
 
-- [ ] **Step 1: Write the documents.** **Step 2: Verify**: run every quoted command; `rg -n 'signing_key_uri|signing_key_rotation|revoke-previous|revoke_previous|StoreProvider|signing_keys' docs CLAUDE.md` shows only ADR history and the two superseded specs. **Step 3: Close the task.** Commit: `docs: the certificate hierarchy in the operator guides, CLAUDE.md and the ADRs (ADR 0019 section 9)`.
+- [ ] **Step 1: Write the documents.** **Step 2: Verify**: run every quoted command; `rg -n 'signing_key_uri|signing_key_rotation|revoke-previous|revoke_previous|StoreProvider|signing_keys' docs CLAUDE.md README.md` shows only ADR history and the two superseded specs. **Step 3: Close the task.** Commit: `docs: the certificate hierarchy in the operator guides, CLAUDE.md and the ADRs (ADR 0019 section 9)`.
 
 ---
 
@@ -1616,5 +1699,6 @@ Every factual claim is checked against the source or a live run (Definition of D
 
 ## Self-review record
 
-- **Spec coverage.** Section 4.1: Tasks 23, 28 (local mode has none of it). 4.2: Tasks 1, 3. 4.3: Tasks 5, 6. 4.4: Tasks 7, 12, 13. 4.5: Tasks 8, 26. 4.6: Tasks 17, 18. 4.7: Tasks 16, 19, 23. 4.8: Tasks 4, 19, 20, 21, 33, 34. 4.9: Tasks 27, 28, 29, 31. 4.10: Tasks 10, 11, 31, 32. 4.11: Tasks 15, 27, 30. 4.12: Tasks 9, 10, 24. 4.13: Tasks 6, 13, 21, 32. 4.14: Task 30. 4.15: Tasks 23 (start), 18 and 19 (running), 31 (client). 4.16: Tasks 24, 26. Section 5: the State lines of Tasks 5, 8, 12, 18, 20, 22, 23, 31, and Task 33 for the restore. Section 7: every bullet has a named test (the fixtures: Tasks 14, 22; `internal/pki`: Tasks 1, 3, 4; the root tool: Tasks 5, 6; host commands: Tasks 13, 21; start-up: Task 23; the fake clock: Task 18; bearers: Task 19; replicas: Task 33; the report: Task 20; the inproc Bus suite: Task 28; discover and in-band: Tasks 28, 29; the trust number: Task 8; restore: Task 33; root expiry: Tasks 17, 19, 30; the profile rule: Task 10; the client trust store: Tasks 11, 31, 34; a key service: Task 34; no 500: Task 28). Section 8: Tasks 15, 27 (tables), 1, 5, 11, 14 (import rules), 35 (mutations), 37 (the identifier). Section 9: Task 36.
+- **Spec coverage.** Section 4.1: Tasks 23, 28 (local mode has none of it). 4.2: Tasks 1, 3. 4.3: Tasks 5, 6. 4.4: Tasks 7, 12, 13. 4.5: Tasks 8, 26. 4.6: Tasks 17, 18. 4.7: Tasks 16, 19, 23. 4.8: Tasks 4, 19, 20, 21, 33, 34. 4.9: Tasks 27, 28, 29, 31. 4.10: Tasks 10, 11, 31, 32. 4.11: Tasks 15, 27, 30. 4.12: Tasks 9, 10, 24. 4.13: Tasks 6, 13, 21, 32. 4.14: Task 30. 4.15: Tasks 23 (start), 18 and 19 (running), 31 (client). 4.16: Tasks 24, 26. Section 5: the State lines of Tasks 5, 8, 12, 18, 20, 22, 23, 31, and Task 33 for the restore. Section 7: every bullet has a named test (the fixtures: Tasks 12, 14, 22; `internal/pki`: Tasks 1, 3, 4; the root tool: Tasks 5, 6; host commands: Tasks 13, 21; start-up: Task 23; the fake clock: Task 18; bearers: Task 19; replicas: Task 33; the report: Task 20; the inproc Bus suite: Task 28; discover and in-band: Tasks 28, 29; the trust number: Task 8; restore: Task 33; root expiry: Tasks 17, 19, 30; the profile rule: Task 10; the client trust store: Tasks 11, 31, 34; a key service: Task 34; no 500: Task 28). Section 8: Tasks 15, 27 (tables), 1, 5, 11, 12 (import rules), 35 (mutations), 37 (the identifier). Section 9: Task 36.
 - **Not built, on purpose:** everything in "Left for spec 2".
+- **Pre-flight scan (2026-11-12).** Its 21 findings are folded in, each checked against the tree first. Finding 1: the Global Constraint on `TestAccessRuleSites` and Task 12 (`withLock`). 2: Tasks 17 and 19 (`reload`, then `Reload`). 3: Tasks 3 and 12 (the messages live in `pki.CheckIntermediate`). 4: Task 12 (`trusttest.New(t, now)`) and every caller. 5 and 6: Task 15. 7: Task 27 and Plan ruling 31. 8: Task 24 Step 2. 9: Task 12 (`Trust.Configured`, `Trust.Pick`). 10: Tasks 17, 23 and 24. 11: Task 8. 12: Plan ruling 30, Tasks 12 and 20. 13: Plan ruling 26, Tasks 12 and 14. 14: Task 2. 15: the header, the open questions, the rulings and Task 36. 16: Tasks 33 and 35. 17: the checkpoint constraint. 18: Tasks 1, 5 and 6. 19: Plan ruling 33 and Task 17. 20: the file map. 21: Task 1 (`pki.CheckRoot`) and Task 13.
