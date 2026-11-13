@@ -110,6 +110,15 @@ Flags of serve, register, check and config:
                     store (default: AGENTMESH_CREDENTIAL)
   -profile NAME     the profile (default: AGENTMESH_PROFILE, then
                     .local/agentmesh.json, then default)
+  -insecure-http    accept an http server URL for a host other than 127.0.0.1,
+                    ::1 and localhost, for local testing only (default:
+                    AGENTMESH_INSECURE_HTTP=1; any other value is exit 2)
+  -root-thumbprint T  pin the trust root: 43 base64url characters, the SHA-256
+                    of the root certificate (default:
+                    AGENTMESH_ROOT_THUMBPRINT)
+  -installation NAME  the installation name the server must carry (default:
+                    AGENTMESH_INSTALLATION)
+A server URL must use https; http is accepted for 127.0.0.1, ::1 and localhost.
 Flags of register only:
   -enrollment-token T       the token (default: AGENTMESH_ENROLLMENT_TOKEN)
   -enrollment-token-file F  a file holding the token

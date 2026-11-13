@@ -123,7 +123,10 @@ func runCheck(ctx context.Context, args []string, environ []string, _ io.Reader,
 		_, _ = fmt.Fprintf(stderr, "%s check: unexpected argument %q\n", Binary, fs.Arg(0))
 		return 2
 	}
-	applyEnv(&o, environ)
+	if err := applyEnv(&o, environ); err != nil {
+		_, _ = fmt.Fprintf(stderr, "%s check: %v\n", Binary, err)
+		return 2
+	}
 	server, code := target("check", o, stderr)
 	if code != -1 {
 		return code

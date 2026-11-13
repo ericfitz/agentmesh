@@ -5,7 +5,7 @@
       "args": [
         "serve",
         "-server",
-        "http://h:1",
+        "https://h:1",
         "-identity",
         "pat"
       ]
@@ -13,4 +13,4 @@
   }
 }
 
-command line: /opt/bin/agentmesh-mcponly serve -server http://h:1 -identity pat
+command line: /opt/bin/agentmesh-mcponly serve -server https://h:1 -identity pat

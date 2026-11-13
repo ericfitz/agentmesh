@@ -9,6 +9,7 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/fileacl"
+	"github.com/ericfitz/agentmesh/internal/profile"
 )
 
 func testEnviron(t *testing.T) (environ []string, configDir string) {
@@ -123,5 +124,26 @@ func TestRegisterRefusesOSLoginName(t *testing.T) {
 	}
 	if code, out, errs = run([]string{"register", "-server", base, "-identity", "other"}, environ); code != 0 {
 		t.Errorf("other name: code %d, stdout %q, stderr %q", code, out, errs)
+	}
+}
+
+func TestRegisterWritesTrustMembers(t *testing.T) {
+	const thumb = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	base := startServer(t)
+	environ, configDir := testEnviron(t)
+	code, _, errs := run([]string{"register", "-server", base, "-identity", "pat", "-profile", "lab", "-insecure-http", "-root-thumbprint", thumb, "-installation", "prod"}, environ)
+	if code != 0 {
+		t.Fatalf("register: code %d, stderr %q", code, errs)
+	}
+	cfg, err := profile.Load(filepath.Join(configDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Profiles["lab"]; !p.InsecureHTTP || p.RootThumbprint != thumb || p.Installation != "prod" {
+		t.Fatalf("profile %+v", p)
+	}
+	code, out, errs := run([]string{"register", "-server", "http://elsewhere:1", "-identity", "pat", "-profile", "other"}, environ)
+	if code != 2 || out != "" || !strings.Contains(errs, "-insecure-http") {
+		t.Fatalf("http without the switch: code %d, stdout %q, stderr %q", code, out, errs)
 	}
 }

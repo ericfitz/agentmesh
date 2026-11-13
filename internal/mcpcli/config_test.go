@@ -22,14 +22,14 @@ func TestShellQuote(t *testing.T) {
 // Windows (its default shell; cmd.exe does not read single quotes). Pure, so
 // it runs on every OS.
 func TestCommandLine(t *testing.T) {
-	args := []string{"serve", "-server", "http://h:1", "-identity", "pat", "-credential", `C:\Users\First Last\k.pem`}
+	args := []string{"serve", "-server", "https://h:1", "-identity", "pat", "-credential", `C:\Users\First Last\k.pem`}
 	for _, c := range []struct{ goos, exe, want string }{
-		{"linux", "/opt/bin/x", `/opt/bin/x serve -server http://h:1 -identity pat -credential '` + `C:\Users\First Last\k.pem'`},
-		{"darwin", "/Users/a b/x", `'/Users/a b/x' serve -server http://h:1 -identity pat -credential '` + `C:\Users\First Last\k.pem'`},
-		{"linux", "/opt/it's here/x", `'/opt/it'\''s here/x' serve -server http://h:1 -identity pat -credential '` + `C:\Users\First Last\k.pem'`},
-		{"windows", `C:\bin\x.exe`, `C:\bin\x.exe serve -server http://h:1 -identity pat -credential 'C:\Users\First Last\k.pem'`},
-		{"windows", `C:\Users\First Last\x.exe`, `& 'C:\Users\First Last\x.exe' serve -server http://h:1 -identity pat -credential 'C:\Users\First Last\k.pem'`},
-		{"windows", `C:\it's\x.exe`, `& 'C:\it''s\x.exe' serve -server http://h:1 -identity pat -credential 'C:\Users\First Last\k.pem'`},
+		{"linux", "/opt/bin/x", `/opt/bin/x serve -server https://h:1 -identity pat -credential '` + `C:\Users\First Last\k.pem'`},
+		{"darwin", "/Users/a b/x", `'/Users/a b/x' serve -server https://h:1 -identity pat -credential '` + `C:\Users\First Last\k.pem'`},
+		{"linux", "/opt/it's here/x", `'/opt/it'\''s here/x' serve -server https://h:1 -identity pat -credential '` + `C:\Users\First Last\k.pem'`},
+		{"windows", `C:\bin\x.exe`, `C:\bin\x.exe serve -server https://h:1 -identity pat -credential 'C:\Users\First Last\k.pem'`},
+		{"windows", `C:\Users\First Last\x.exe`, `& 'C:\Users\First Last\x.exe' serve -server https://h:1 -identity pat -credential 'C:\Users\First Last\k.pem'`},
+		{"windows", `C:\it's\x.exe`, `& 'C:\it''s\x.exe' serve -server https://h:1 -identity pat -credential 'C:\Users\First Last\k.pem'`},
 	} {
 		if got := commandLine(c.goos, c.exe, args); got != c.want {
 			t.Errorf("commandLine(%s, %q) = %q, want %q", c.goos, c.exe, got, c.want)

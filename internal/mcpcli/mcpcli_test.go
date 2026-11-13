@@ -84,7 +84,7 @@ func TestOnlyMCPCommands(t *testing.T) {
 }
 
 func TestServeOptions(t *testing.T) {
-	env := []string{"AGENTMESH_SERVER=http://h:1", "AGENTMESH_CREDENTIAL=k.pem"}
+	env := []string{"AGENTMESH_SERVER=https://h:1", "AGENTMESH_CREDENTIAL=k.pem"}
 	o, code := serveOptions(nil, env, &bytes.Buffer{})
 	if code != -1 {
 		t.Fatalf("code %d", code)
@@ -95,15 +95,15 @@ func TestServeOptions(t *testing.T) {
 	if o.Client.Local != nil {
 		t.Error("Client.Local is set: the MCP-only binary has no local mode")
 	}
-	if o.Client.Server != "http://h:1" {
+	if o.Client.Server != "https://h:1" {
 		t.Errorf("Server = %q", o.Client.Server)
 	}
 	if !strings.HasSuffix(o.Client.Credential, "k.pem") || !isAbs(o.Client.Credential) {
 		t.Errorf("Credential = %q, want an absolute path ending in k.pem", o.Client.Credential)
 	}
 
-	o, code = serveOptions([]string{"-server", "http://h:2"}, env, &bytes.Buffer{})
-	if code != -1 || o.Client.Server != "http://h:2" {
+	o, code = serveOptions([]string{"-server", "https://h:2"}, env, &bytes.Buffer{})
+	if code != -1 || o.Client.Server != "https://h:2" {
 		t.Errorf("-server over the variable: code %d, Server %q", code, o.Client.Server)
 	}
 

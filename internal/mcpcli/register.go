@@ -36,7 +36,10 @@ func runRegister(ctx context.Context, args []string, environ []string, _ io.Read
 		_, _ = fmt.Fprintf(stderr, "%s register: unexpected argument %q\n", Binary, fs.Arg(0))
 		return 2
 	}
-	applyEnv(&o, environ)
+	if err := applyEnv(&o, environ); err != nil {
+		_, _ = fmt.Fprintf(stderr, "%s register: %v\n", Binary, err)
+		return 2
+	}
 	if tokenFile != "" {
 		if abs, err := filepath.Abs(tokenFile); err == nil {
 			tokenFile = abs

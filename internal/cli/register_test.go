@@ -130,7 +130,7 @@ func TestRegisterCreatesServerProfile(t *testing.T) {
 	if code, _, _ = register("-profile", "lab", "extra"); code != 2 {
 		t.Fatalf("extra argument: code %d", code)
 	}
-	if code, _, errs = register("-profile", "lab", "-server", "http://elsewhere:1"); code != 2 || !strings.Contains(errs, "disagrees") {
+	if code, _, errs = register("-profile", "lab", "-server", "https://elsewhere:1"); code != 2 || !strings.Contains(errs, "disagrees") {
 		t.Fatalf("server clash: code %d %q", code, errs)
 	}
 	if code, _, errs = register("-profile", "nosuch"); code != 2 || !strings.Contains(errs, "-server") {
@@ -382,5 +382,33 @@ func TestRegisterPendingConflictAndStale(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(cs.Path("pat")); string(after) != string(cred) {
 		t.Fatal("the credential changed")
+	}
+}
+
+func TestRegisterWritesTrustMembers(t *testing.T) {
+	const thumb = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	ctx := context.Background()
+	e := newTestEnv(t)
+	base := startServer(t, filepath.Join(t.TempDir(), "srv.sqlite"))
+	register := func(args ...string) (int, string) {
+		var out, errb testkit.LockedBuffer
+		code := RunRegister(ctx, args, e.Environ, nil, &out, &errb)
+		return code, errb.String()
+	}
+	if code, errs := register("-profile", "lab", "-identity", "pat", "-server", base, "-insecure-http", "-root-thumbprint", thumb, "-installation", "prod"); code != 0 {
+		t.Fatalf("register: code %d %q", code, errs)
+	}
+	cfg, err := profile.Load(filepath.Join(e.ConfigDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Profiles["lab"]; !p.InsecureHTTP || p.RootThumbprint != thumb || p.Installation != "prod" {
+		t.Fatalf("profile %+v", p)
+	}
+	if code, errs := register("-profile", "other", "-identity", "pat", "-server", "http://elsewhere:1"); code != 2 || !strings.Contains(errs, "-insecure-http") {
+		t.Fatalf("http without the switch: code %d %q", code, errs)
+	}
+	if code, errs := register("-profile", "lab", "-installation", "dev"); code != 2 || !strings.Contains(errs, "disagrees") {
+		t.Fatalf("installation clash: code %d %q", code, errs)
 	}
 }
