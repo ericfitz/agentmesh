@@ -34,6 +34,7 @@ func TestVerifyChain(t *testing.T) {
 		}},
 		{name: "wrong-root", want: ErrChainSignature, root: otherRoot},
 		{name: "leaf-signed-by-another-key", want: ErrChainSignature, o: chainOpts{leafSigner: anotherKey}},
+		{name: "leaf-signed-by-root", want: ErrChainSignature, o: chainOpts{leafByRoot: true}},
 		{name: "intermediate-path-length-1", want: ErrIntermediateProfile, o: chainOpts{interMod: func(c *x509.Certificate) { c.MaxPathLen = 1; c.MaxPathLenZero = false }}},
 		{name: "intermediate-not-ca", want: ErrIntermediateProfile, o: chainOpts{interMod: func(c *x509.Certificate) { c.IsCA = false; c.MaxPathLen = -1; c.MaxPathLenZero = false }}},
 		{name: "intermediate-without-crl-sign", want: ErrIntermediateProfile, o: chainOpts{interMod: func(c *x509.Certificate) { c.KeyUsage = x509.KeyUsageCertSign }}},

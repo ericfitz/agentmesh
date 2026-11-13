@@ -77,6 +77,9 @@ func CheckChain(presented []*x509.Certificate, root *x509.Certificate, installat
 	if nb.After(na) {
 		return Verified{}, fmt.Errorf("%w: the leaf, the intermediate and the root are never valid together", ErrChainTime)
 	}
+	if err := leaf.CheckSignatureFrom(inter); err != nil {
+		return Verified{}, fmt.Errorf("%w: the leaf is not signed by the presented intermediate", ErrChainSignature)
+	}
 	roots, pool := x509.NewCertPool(), x509.NewCertPool()
 	roots.AddCert(root)
 	pool.AddCert(inter)

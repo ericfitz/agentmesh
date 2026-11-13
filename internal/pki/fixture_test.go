@@ -119,6 +119,7 @@ type chainOpts struct {
 	interMod, leafMod func(*x509.Certificate)
 	interKey          *ecdsa.PrivateKey // nil: a new P-256 key
 	leafSigner        *ecdsa.PrivateKey // nil: the intermediate's key
+	leafByRoot        bool              // the root signs the leaf directly
 }
 
 func orTime(t, def time.Time) time.Time {
@@ -158,6 +159,9 @@ func buildChain(t *testing.T, o chainOpts) chainFixture {
 		clone := *inter
 		clone.PublicKey = o.leafSigner.Public()
 		parent, signer = &clone, o.leafSigner
+	}
+	if o.leafByRoot {
+		parent, signer = root, rootKey
 	}
 	leaf := fixtureCreate(t, lt, parent, pub, signer)
 	return chainFixture{root: root, inter: inter, leaf: leaf, rootKey: rootKey, interKey: interKey}
