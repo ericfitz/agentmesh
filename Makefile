@@ -1,4 +1,4 @@
-.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run cats-selftest
+.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run cats-selftest pen-check pen-selftest
 export CGO_ENABLED=0
 PKGS_UNIT = $$(go list ./... | grep -v '^github.com/ericfitz/agentmesh/internal/conformance')
 
@@ -92,3 +92,7 @@ cats-run:    ## One CATS campaign against a throwaway server (needs cats and Jav
 cats-selftest: ## The harness selftest with the fake cats (no Java; block 40 of check-gates-selftest runs it once unmutated and under mutation)
 	bash scripts/cats-harness-selftest.sh
 	bash scripts/cats-precommit-selftest.sh
+pen-check:   ## Refuse the stand-in enterprise number in internal/pki (ADR 0019, Decision 47; red until the assigned number is in; not part of verify until Task 37)
+	bash scripts/pen-gate.sh
+pen-selftest: ## The pen-check gate against six generated files
+	bash scripts/pen-gate-selftest.sh

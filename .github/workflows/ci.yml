@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 env:
@@ -161,3 +162,14 @@ jobs:
           if docker info >/dev/null 2>&1; then echo "::error::docker still reachable after stop"; exit 1; fi
       - name: make verify must fail for want of Postgres
         run: bash scripts/ci-gate-negative.sh 'AGENTMESH_TEST_POSTGRES_DSN is unset and testcontainers could not start cgr.dev/chainguard/postgres'
+  pen-gate: # the stand-in enterprise number must not reach main (ADR 0019, Decision 47; not part of make verify)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The gate's own selftest
+        run: make pen-selftest
+      - name: The enterprise number is the assigned one
+        if: github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+        run: make pen-check
