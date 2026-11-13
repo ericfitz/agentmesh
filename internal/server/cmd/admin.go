@@ -14,10 +14,11 @@ import (
 	"github.com/ericfitz/agentmesh/internal/core/identities"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
+	"github.com/ericfitz/agentmesh/internal/server/config"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
-const adminSubcommands = "users and admins (add, remove, list), reset-credential, create-identity, create-human, enrollment (create, list, revoke), signing-key (list, rotate)"
+const adminSubcommands = "users and admins (add, remove, list), reset-credential, create-identity, create-human, enrollment (create, list, revoke), signing-key (list, rotate), ca (csr, install, install-crl, status)"
 
 const makeAdminReplaced = "make-admin was replaced by: admins add -identity NAME (admins remove -identity NAME)"
 
@@ -46,6 +47,11 @@ type hostEnv struct {
 	Keys signingkeys.Service
 	// OpenProvider opens the configured key provider; only rotate calls it.
 	OpenProvider func() (keyprovider.Provider, error)
+	// Config is the merged configuration; the ca commands read the trust settings.
+	Config config.Config
+	// Trust is the trust rules over the Core for the configured root, name and
+	// key; it checks cfg.RequireTrust first. sign false leaves Provider nil.
+	Trust func(sign bool) (signingkeys.Trust, error)
 }
 
 type adminAction func(context.Context, hostEnv, io.Writer) error
@@ -97,6 +103,8 @@ func RunAdmin(ctx context.Context, args []string, environ []string, stdout, stde
 		run, code, done = enrollmentCommand(subArgs, stdout, stderr)
 	case "signing-key":
 		run, code, done = signingKeyCommand(subArgs, stdout, stderr)
+	case "ca":
+		run, code, done = caCommand(subArgs, stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "agentmesh server admin: unknown subcommand %q; subcommands: %s\n", sub, adminSubcommands)
 		return 2
@@ -121,8 +129,10 @@ func RunAdmin(ctx context.Context, args []string, environ []string, stdout, stde
 		return 1
 	}
 	env := hostEnv{
-		Svc:  identities.Service{Core: c},
-		Keys: signingkeys.Service{Core: c, Settings: signingSettings(cfg)},
+		Config: cfg,
+		Trust:  newTrust(c, cfg),
+		Svc:    identities.Service{Core: c},
+		Keys:   signingkeys.Service{Core: c, Settings: signingSettings(cfg)},
 		OpenProvider: func() (keyprovider.Provider, error) {
 			p, err := openKeyProvider(cfg)
 			if err != nil && !errors.Is(err, keyprovider.ErrUnavailable) {
