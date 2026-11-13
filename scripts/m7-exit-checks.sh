@@ -232,6 +232,11 @@ import_check() {
 	# The certificate profiles are a leaf over the standard library alone.
 	check_allowlist pki-leaf ./internal/pki "$MOD/internal/pki"
 	check_allowlist pki-leaf ./internal/pki/rootca "$MOD/internal/pki"
+	# The client's trust store imports the standard library, internal/filelock
+	# and internal/pki. The rule lists the dependencies of the platform it runs
+	# on: internal/filelock imports no golang.org/x/sys on Unix, while its
+	# Windows build imports golang.org/x/sys/windows, so this rule is for Unix.
+	check_allowlist trust-leaf ./internal/trust "$MOD/internal/trust" "$MOD/internal/filelock" "$MOD/internal/pki"
 	local tags
 	for tags in "" "$M7_TAGS"; do
 		TAGS="$tags"
