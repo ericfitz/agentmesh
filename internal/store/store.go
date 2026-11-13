@@ -61,6 +61,7 @@ type Tx interface {
 	Scopes
 	Bridges
 	SigningKeys
+	TrustMaterial
 	AssertionReplays
 	References
 	AgentStatuses

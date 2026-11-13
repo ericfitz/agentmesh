@@ -207,6 +207,21 @@ CREATE TABLE signing_keys (
   CHECK ((state = 'active') = (retired_at = 0))
 );
 CREATE UNIQUE INDEX signing_keys_one_active ON signing_keys (state) WHERE state = 'active';
+CREATE TABLE trust_material (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK (kind IN ('intermediate', 'leaf', 'root_crl', 'leaf_crl', 'trust_number')),
+  thumbprint TEXT NOT NULL DEFAULT '',
+  der BLOB NOT NULL,
+  issuer_key TEXT NOT NULL DEFAULT '',
+  not_after INTEGER NOT NULL DEFAULT 0,
+  number INTEGER NOT NULL DEFAULT 0,
+  key_ref TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX trust_material_certificate ON trust_material (kind, thumbprint) WHERE kind IN ('intermediate', 'leaf');
+CREATE UNIQUE INDEX trust_material_single ON trust_material (kind, issuer_key) WHERE kind IN ('root_crl', 'leaf_crl', 'trust_number');
+CREATE INDEX trust_material_leaf_expiry ON trust_material (not_after) WHERE kind = 'leaf';
+INSERT INTO trust_material (kind, der, created_at) VALUES ('trust_number', x'', 0);
 CREATE TABLE human_bindings (
   identity TEXT PRIMARY KEY REFERENCES identities(name) ON DELETE CASCADE,
   issuer TEXT NOT NULL DEFAULT '',

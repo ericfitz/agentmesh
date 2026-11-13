@@ -20,7 +20,7 @@ type Meta interface {
 	// (channel_acl, subscriptions, session_cursors, message_tags, embeddings
 	// and embed_failures cascade), subscriptions, tag_subscriptions
 	// (tag_subscription_tags cascades), sessions, memory_access, receipts and agent_statuses.
-	// It keeps schema_meta, seq_counter, leases, signing_keys, identities,
+	// It keeps schema_meta, seq_counter, leases, signing_keys, trust_material, identities,
 	// identity_keys, human_bindings, access_refs (the users and admins lists),
 	// enrollment_tokens, scopes, retired_identities, bridges, bridge_messages,
 	// bridge_dropped and slack_users (a bridge whose channel it removed is
@@ -31,7 +31,7 @@ type Meta interface {
 	// cascades; keep "" deletes all; human_bindings and agent_statuses
 	// cascade with their identities), every enrollment_tokens row, every users reference and
 	// every admins reference except {admins, identity, "", keep}; it keeps
-	// signing_keys and everything else ResetData keeps (the core calls
+	// signing_keys, trust_material and everything else ResetData keeps (the core calls
 	// ResetData first). The Store adds no admins row for keep. ErrInvalid when keep fails TextRule. Write transactions only.
 	ResetRegistry(ctx context.Context, keep string) error
 }
