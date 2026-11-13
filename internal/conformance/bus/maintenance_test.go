@@ -922,6 +922,14 @@ func TestMaintenanceLockExclusiveAcrossCores(t *testing.T) {
 		if _, err := rdb.ExecContext(ctx, "SELECT pg_terminate_backend($1)", pids[0]); err != nil {
 			t.Fatalf("terminate: %v", err)
 		}
+		// pg_terminate_backend only signals the backend, which releases its locks asynchronously.
+		waitFor(t, 5*time.Second, "the terminated backend's advisory lock released", func() bool {
+			var n int
+			if err := rdb.QueryRowContext(ctx, "SELECT count(*) FROM pg_locks WHERE pid = $1", pids[0]).Scan(&n); err != nil {
+				t.Fatalf("lock count: %v", err)
+			}
+			return n == 0
+		})
 		if ran, _ := maint(h).Tick(ctx); !ran {
 			t.Fatal("first core did not take the lock after the holder's session died")
 		}
