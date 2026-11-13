@@ -45,21 +45,41 @@ type Accepted struct {
 	Old, New        Pin
 }
 
-// pin reads the pin under the caller's lock. A pin is root.pem together with
-// state.json; one without the other (a replacement or a first contact that was
-// killed between them) is no pin.
+// incompleteError is a pin whose two files disagree or of which only one is
+// there: a first contact or a replacement was killed between them. The store
+// fails closed; only -accept-new-root (or deleting the directory) recovers.
+type incompleteError struct{ dir, why string }
+
+func (e *incompleteError) Error() string {
+	return fmt.Sprintf("trust: the pin in %s is incomplete (%s), perhaps after an interrupted run; nothing was changed (run register or login with -accept-new-root, or delete the directory)", e.dir, e.why)
+}
+
+// pin reads the pin under the caller's lock. There is no pin only when
+// state.json and root.pem are both absent; a pin is both, agreeing on the
+// root's thumbprint. Anything between is an *incompleteError (fail closed).
 func (s Store) pin() (Pin, bool, error) {
 	st, err := s.loadState()
-	if err != nil || st == nil {
+	if err != nil {
 		return Pin{}, false, err
 	}
 	b, err := s.readFile(rootFile)
-	if err != nil || b == nil {
+	if err != nil {
 		return Pin{}, false, err
+	}
+	switch {
+	case st == nil && b == nil:
+		return Pin{}, false, nil
+	case st == nil:
+		return Pin{}, false, &incompleteError{s.Dir, "root.pem without state.json"}
+	case b == nil:
+		return Pin{}, false, &incompleteError{s.Dir, "state.json without root.pem"}
 	}
 	root, err := pki.ParseCertificatePEM(b)
 	if err != nil {
 		return Pin{}, false, fmt.Errorf("trust: %s: %w", s.path(rootFile), err)
+	}
+	if pki.Thumbprint(root.Raw) != st.RootThumb {
+		return Pin{}, false, &incompleteError{s.Dir, "root.pem is not the root state.json names"}
 	}
 	return Pin{Root: root, Thumbprint: pki.Thumbprint(root.Raw), Installation: st.Installation, Server: st.Server}, true, nil
 }
@@ -119,6 +139,13 @@ func (s Store) Accept(b Bundle, e Expect, acceptNew bool) (Accepted, error) {
 	var out Accepted
 	err = s.withLock(true, func() error {
 		held, ok, err := s.pin()
+		var inc *incompleteError
+		if errors.As(err, &inc) {
+			if !acceptNew {
+				return err
+			}
+			err = nil // -accept-new-root completes an incomplete pin
+		}
 		if err != nil {
 			return err
 		}
@@ -133,12 +160,19 @@ func (s Store) Accept(b Bundle, e Expect, acceptNew bool) (Accepted, error) {
 				return nil
 			}
 		}
-		if ok {
-			if err := s.discard(); err != nil {
+		// Leftovers of a pin that is gone (or incomplete) never meet a new one.
+		if !ok {
+			if err := s.discardDerived(); err != nil {
 				return err
 			}
 		}
 		if err := s.writePin(got); err != nil {
+			return err
+		}
+		// A replacement removes what belonged to the old pin only after the
+		// new one is in place; readers ignore what does not fit the pin in
+		// the meantime.
+		if err := s.discardDerived(); err != nil {
 			return err
 		}
 		out = Accepted{First: !ok, Replaced: ok, New: got}
@@ -153,19 +187,20 @@ func (s Store) Accept(b Bundle, e Expect, acceptNew bool) (Accepted, error) {
 	return out, nil
 }
 
-// writePin writes state.json, then root.pem: the pin appears when the second
-// rename lands, and a kill between them leaves no pin (the next first contact
-// overwrites both).
+// writePin writes state.json, then root.pem. The old pin is never removed
+// first: a kill between the renames leaves an incomplete pin, which every
+// reader reports and only -accept-new-root completes.
 func (s Store) writePin(p Pin) error {
-	if err := s.saveState(&state{Installation: p.Installation, Server: p.Server}); err != nil {
+	if err := s.saveState(&state{Installation: p.Installation, Server: p.Server, RootThumb: p.Thumbprint}); err != nil {
 		return err
 	}
 	return s.writeFile(rootFile, pki.EncodePEM("CERTIFICATE", p.Root.Raw))
 }
 
-// discard removes the pin and everything applied for it, the pin first.
-func (s Store) discard() error {
-	for _, n := range []string{stateFile, rootFile, intermediatesFile, rootCRLFile, revokedFile} {
+// discardDerived removes everything applied for a pin (the chain, the CRLs and
+// the kept revocations), never the pin.
+func (s Store) discardDerived() error {
+	for _, n := range []string{intermediatesFile, rootCRLFile, revokedFile} {
 		if err := s.remove(n); err != nil {
 			return err
 		}

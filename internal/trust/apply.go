@@ -35,7 +35,7 @@ func (s Store) Apply(b Bundle) (Report, error) {
 		if err != nil {
 			return err
 		}
-		revs, err := s.heldRevocations()
+		revs, err := s.heldRevocations(pin)
 		if err != nil {
 			return err
 		}
@@ -48,7 +48,7 @@ func (s Store) Apply(b Bundle) (Report, error) {
 		// Step 3: the root CRL.
 		if len(b.RootCRL) > 0 {
 			if crl, err := pki.ParseCRL(b.RootCRL); err == nil && pki.CheckCRL(crl, pin.Root) == nil {
-				held, has, err := s.heldCRLNumber(rootCRLFile)
+				held, has, err := s.heldCRLNumber(rootCRLFile, pin.Root)
 				if err != nil {
 					return err
 				}
@@ -74,7 +74,7 @@ func (s Store) Apply(b Bundle) (Report, error) {
 				if revoked[key] || pki.CheckCRL(crl, c) != nil {
 					continue
 				}
-				held, has, err := s.heldCRLNumber(leafCRLName(key))
+				held, has, err := s.heldCRLNumber(leafCRLName(key), c)
 				if err != nil {
 					return err
 				}
@@ -90,7 +90,7 @@ func (s Store) Apply(b Bundle) (Report, error) {
 
 		// Writes: the kept revocations before the CRL files, so a kill between
 		// them leaves the revocations kept and the CRL to be taken again.
-		rb, err := json.MarshalIndent(revs, "", "  ")
+		rb, err := json.MarshalIndent(revokedDoc{RootThumb: pin.Thumbprint, Revocations: revs}, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -131,7 +131,7 @@ func (s Store) noPin() error {
 // keepIntermediates is step 2: the held ones plus each bundle intermediate
 // that passes CheckIntermediate against the pin; none is ever dropped.
 func (s Store) keepIntermediates(b Bundle, pin Pin) ([]*x509.Certificate, error) {
-	held, err := s.heldIntermediates()
+	held, err := s.heldIntermediates(pin)
 	if err != nil {
 		return nil, err
 	}
@@ -151,15 +151,16 @@ func (s Store) keepIntermediates(b Bundle, pin Pin) ([]*x509.Certificate, error)
 		have[pki.Thumbprint(c.Raw)] = true
 		kept = append(kept, c)
 	}
-	if len(kept) != len(held) {
-		if err := s.writeFile(intermediatesFile, encodeCertsPEM(kept)); err != nil {
-			return nil, err
-		}
+	// Also drops leftovers that do not belong to this pin.
+	if err := s.writeIfChanged(intermediatesFile, encodeCertsPEM(kept)); err != nil {
+		return nil, err
 	}
 	return kept, nil
 }
 
-func (s Store) heldIntermediates() ([]*x509.Certificate, error) {
+// heldIntermediates are the stored intermediates that belong to pin: a
+// leftover of another root or installation is ignored, never adopted.
+func (s Store) heldIntermediates(pin Pin) ([]*x509.Certificate, error) {
 	b, err := s.readFile(intermediatesFile)
 	if err != nil || b == nil {
 		return nil, err
@@ -168,19 +169,34 @@ func (s Store) heldIntermediates() ([]*x509.Certificate, error) {
 	if err != nil {
 		return nil, fmt.Errorf("trust: %s: %w", s.path(intermediatesFile), err)
 	}
-	return cs, nil
+	var out []*x509.Certificate
+	for _, c := range cs {
+		if pki.CheckIntermediate(c, pin.Root, pin.Installation) == nil {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
-func (s Store) heldRevocations() (pki.Revocations, error) {
-	var r pki.Revocations
+// revokedDoc is revoked.json: the kept revocations and the root they belong to.
+type revokedDoc struct {
+	RootThumb string `json:"root_thumbprint"`
+	pki.Revocations
+}
+
+func (s Store) heldRevocations(pin Pin) (pki.Revocations, error) {
 	b, err := s.readFile(revokedFile)
 	if err != nil || b == nil {
-		return r, err
+		return pki.Revocations{}, err
 	}
-	if err := json.Unmarshal(b, &r); err != nil {
+	var d revokedDoc
+	if err := json.Unmarshal(b, &d); err != nil {
 		return pki.Revocations{}, fmt.Errorf("trust: parse %s: %w", s.path(revokedFile), err)
 	}
-	return r, nil
+	if d.RootThumb != pin.Thumbprint {
+		return pki.Revocations{}, nil
+	}
+	return d.Revocations, nil
 }
 
 // TrustNumber is the held trust number; ok is false before any bundle has been
@@ -199,12 +215,26 @@ func (s Store) TrustNumber() (n int64, ok bool, err error) {
 
 // Intermediates are the kept intermediates.
 func (s Store) Intermediates() (cs []*x509.Certificate, err error) {
-	err = s.read(func() (e error) { cs, e = s.heldIntermediates(); return })
+	err = s.read(func() error {
+		pin, ok, e := s.pin()
+		if e != nil || !ok {
+			return e
+		}
+		cs, e = s.heldIntermediates(pin)
+		return e
+	})
 	return cs, err
 }
 
 // Revocations are the kept revocations.
 func (s Store) Revocations() (r pki.Revocations, err error) {
-	err = s.read(func() (e error) { r, e = s.heldRevocations(); return })
+	err = s.read(func() error {
+		pin, ok, e := s.pin()
+		if e != nil || !ok {
+			return e
+		}
+		r, e = s.heldRevocations(pin)
+		return e
+	})
 	return r, err
 }

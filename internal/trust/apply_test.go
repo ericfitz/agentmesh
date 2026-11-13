@@ -228,10 +228,10 @@ func TestTwoWriters(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		if n, _, err := s.heldCRLNumber(rootCRLFile); err != nil || n != 8 {
+		if n, _, err := s.heldCRLNumber(rootCRLFile, c.root); err != nil || n != 8 {
 			t.Fatalf("round %d: root CRL number %d %v", round, n, err)
 		}
-		if n, _, _ := s.heldCRLNumber(leafCRLName(in.keyID())); n != 8 {
+		if n, _, _ := s.heldCRLNumber(leafCRLName(in.keyID()), in.cert); n != 8 {
 			t.Fatalf("round %d: leaf CRL number %d", round, n)
 		}
 		r, _ := s.Revocations()
@@ -259,17 +259,6 @@ func TestCrashBetweenFiles(t *testing.T) {
 	}
 	if got := names(snapshot(t, s.Dir)); len(got) != 5 {
 		t.Fatalf("files = %v", got)
-	}
-	// A kill between the two pin files leaves no pin; the next first contact completes it.
-	s2 := newStore(t)
-	if err := s2.withLock(true, func() error { return s2.saveState(&state{Installation: "inst", Server: srv}) }); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, err := s2.Pinned(); err != nil || ok {
-		t.Fatalf("half pin: ok=%v err=%v", ok, err)
-	}
-	if acc, err := s2.Accept(discover(c, "inst", 1), expect(srv), false); err != nil || !acc.First {
-		t.Fatalf("%+v %v", acc, err)
 	}
 }
 

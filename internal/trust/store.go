@@ -65,6 +65,7 @@ type state struct {
 	Version      int    `json:"version"`
 	Installation string `json:"installation"`
 	Server       string `json:"server"`
+	RootThumb    string `json:"root_thumbprint"`
 	TrustNumber  *int64 `json:"trust_number,omitempty"`
 }
 
@@ -245,15 +246,16 @@ func encodeCertsPEM(cs []*x509.Certificate) []byte {
 	return out
 }
 
-// heldCRLNumber is the number of a stored CRL file; ok is false when there is
-// none or it does not parse.
-func (s Store) heldCRLNumber(name string) (n int64, ok bool, err error) {
+// heldCRLNumber is the number of a stored CRL file that issuer signed; ok is
+// false when there is none, it does not parse or it is not issuer's (a
+// leftover of another root is never adopted).
+func (s Store) heldCRLNumber(name string, issuer *x509.Certificate) (n int64, ok bool, err error) {
 	b, err := s.readFile(name)
-	if err != nil || b == nil {
+	if err != nil || b == nil || issuer == nil {
 		return 0, false, err
 	}
 	crl, perr := pki.ParseCRLPEM(b)
-	if perr != nil {
+	if perr != nil || pki.CheckCRL(crl, issuer) != nil {
 		return 0, false, nil
 	}
 	return pki.CRLNumber(crl), true, nil
