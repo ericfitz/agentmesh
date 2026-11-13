@@ -22,6 +22,8 @@ import (
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 )
 
+func noRestrict(string) error { return nil }
+
 func readPlain(path string) ([]byte, error) { return os.ReadFile(path) }
 
 func writePKCS8(t *testing.T, path string, k crypto.PrivateKey) {
@@ -39,7 +41,7 @@ func writePKCS8(t *testing.T, path string, k crypto.PrivateKey) {
 func TestFileProviderNextAndSign(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "int.key")
-	if err := CreateKeyFile(path); err != nil {
+	if err := CreateKeyFile(path, noRestrict); err != nil {
 		t.Fatal(err)
 	}
 	p := FileProvider{Path: path, Read: readPlain}
@@ -111,10 +113,10 @@ func TestFileProviderKeyChanged(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
-	if err := CreateKeyFile(a); err != nil {
+	if err := CreateKeyFile(a, noRestrict); err != nil {
 		t.Fatal(err)
 	}
-	if err := CreateKeyFile(b); err != nil {
+	if err := CreateKeyFile(b, noRestrict); err != nil {
 		t.Fatal(err)
 	}
 	ka, err := FileProvider{Path: a, Read: readPlain}.Next(ctx)
@@ -141,12 +143,12 @@ func noTemps(t *testing.T, dir string, want int) {
 func TestCreateKeyFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "int.key")
-	if err := CreateKeyFile(path); err != nil {
+	if err := CreateKeyFile(path, noRestrict); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(path)
 	noTemps(t, dir, 1)
-	if err := CreateKeyFile(path); !errors.Is(err, fs.ErrExist) {
+	if err := CreateKeyFile(path, noRestrict); !errors.Is(err, fs.ErrExist) {
 		t.Fatalf("second call: %v", err)
 	}
 	again, _ := os.ReadFile(path)
@@ -163,7 +165,7 @@ func TestCreateKeyFile(t *testing.T) {
 	errs := make([]error, 8)
 	for i := range errs {
 		wg.Add(1)
-		go func() { defer wg.Done(); errs[i] = CreateKeyFile(race) }()
+		go func() { defer wg.Done(); errs[i] = CreateKeyFile(race, noRestrict) }()
 	}
 	wg.Wait()
 	wins, exists := 0, 0
@@ -181,4 +183,49 @@ func TestCreateKeyFile(t *testing.T) {
 		t.Fatalf("wins %d exists %d", wins, exists)
 	}
 	noTemps(t, filepath.Dir(race), 1)
+}
+
+func TestCreateKeyFileRestrict(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "int.key")
+	var calls []string
+	var sizeAtCall int64 = -1
+	err := CreateKeyFile(path, func(p string) error {
+		calls = append(calls, p)
+		fi, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		sizeAtCall = fi.Size()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] == path || filepath.Dir(calls[0]) != dir {
+		t.Fatalf("restrict calls %v", calls)
+	}
+	if sizeAtCall != 0 {
+		t.Fatalf("temp held %d bytes when restrict ran", sizeAtCall)
+	}
+	noTemps(t, dir, 1)
+}
+
+func TestCreateKeyFileRestrictFails(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "int.key")
+	err := CreateKeyFile(path, func(string) error { return errors.New("acl boom") })
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "acl boom") {
+		t.Fatalf("error %v", err)
+	}
+	noTemps(t, dir, 0)
+}
+
+func TestCreateKeyFileNilRestrict(t *testing.T) {
+	dir := t.TempDir()
+	err := CreateKeyFile(filepath.Join(dir, "int.key"), nil)
+	if err == nil || !strings.Contains(err.Error(), "restrict") {
+		t.Fatalf("error %v", err)
+	}
+	noTemps(t, dir, 0)
 }

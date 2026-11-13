@@ -89,8 +89,14 @@ func (p FileProvider) load() (crypto.Signer, Key, error) {
 
 // CreateKeyFile generates an ECDSA P-256 key and writes it at path: a
 // temporary file in the same directory at mode 0600, then os.Link to path, so
-// an existing file is never replaced (fs.ErrExist).
-func CreateKeyFile(path string) error {
+// an existing file is never replaced (fs.ErrExist). restrict is required: it
+// makes the temporary file owner-only (fileacl.OwnerOnly on Windows, where a
+// mode means nothing) before any key byte is written, and the access list
+// travels with the hard link.
+func CreateKeyFile(path string, restrict func(path string) error) error {
+	if restrict == nil {
+		return fmt.Errorf("keyprovider: create %s: restrict is nil", path)
+	}
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
@@ -109,6 +115,10 @@ func CreateKeyFile(path string) error {
 	if err := tmp.Chmod(0o600); err != nil && !errors.Is(err, errors.ErrUnsupported) {
 		_ = tmp.Close()
 		return err
+	}
+	if err := restrict(name); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("keyprovider: restrict %s: %w", path, err)
 	}
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()

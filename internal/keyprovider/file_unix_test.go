@@ -10,7 +10,7 @@ import (
 
 func TestCreateKeyFileMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "int.key")
-	if err := CreateKeyFile(path); err != nil {
+	if err := CreateKeyFile(path, noRestrict); err != nil {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(path)
