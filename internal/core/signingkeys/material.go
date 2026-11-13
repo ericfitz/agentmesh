@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/pki"
@@ -110,12 +111,12 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 		mem.logged = map[string]bool{}
 	}
 	var (
-		number             int64
-		inters, leafRows   []store.TrustCertificate
-		crlRows            []store.TrustCRL
-		m                  = Material{KeyRefs: map[string]string{}, LeafCRLs: map[string]*x509.RevocationList{}}
-		stored, rolledBack = map[string]bool{}, map[string]bool{}
-		chainsSeen         = map[chainKey]chainResult{}
+		number           int64
+		inters, leafRows []store.TrustCertificate
+		crlRows          []store.TrustCRL
+		m                = Material{KeyRefs: map[string]string{}, LeafCRLs: map[string]*x509.RevocationList{}}
+		exists           = map[string]bool{} // a row is stored for the CRL, whether or not it verified
+		chainsSeen       = map[chainKey]chainResult{}
 	)
 	err := t.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
 		var err error
@@ -152,10 +153,8 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 	// take applies the memory rule to a verified CRL: an older number than the
 	// one this process holds is a rollback and the newer one stays in force.
 	take := func(key string, row store.TrustCRL, crl *x509.RevocationList, add func(*x509.RevocationList)) *x509.RevocationList {
-		stored[key] = true
 		if cur, ok := mem.crls[key]; ok && cur.row.Number > row.Number {
 			t.rollback(mem, row, cur.row)
-			rolledBack[key] = true
 			m.Rollback = append(m.Rollback, cur.row)
 			return cur.crl
 		}
@@ -168,6 +167,7 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 		if row.Kind != store.TrustRootCRL {
 			continue
 		}
+		exists["root"] = true
 		crl, err := parseStoredCRL(row)
 		if err == nil {
 			err = pki.CheckCRL(crl, t.Root)
@@ -178,7 +178,7 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 		}
 		m.RootCRL = take("root", row, crl, mem.revoked.AddRoot)
 	}
-	if !stored["root"] {
+	if !exists["root"] {
 		if cur, ok := mem.crls["root"]; ok {
 			t.rollbackMissing(mem, cur.row)
 			m.RootCRL = cur.crl
@@ -195,6 +195,7 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 		if row.Kind != store.TrustLeafCRL {
 			continue
 		}
+		exists["leaf/"+row.IssuerKey] = true
 		crl, err := parseStoredCRL(row)
 		if err == nil {
 			err = checkLeafCRL(crl, byKey[row.IssuerKey], revokedKeys[row.IssuerKey])
@@ -208,7 +209,7 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 	}
 	for key, cur := range mem.crls {
 		issuer, ok := leafIssuer(key)
-		if !ok || stored[key] || rolledBack[key] || len(byKey[issuer]) == 0 {
+		if !ok || exists[key] || len(byKey[issuer]) == 0 {
 			continue
 		}
 		t.rollbackMissing(mem, cur.row)
@@ -216,6 +217,13 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 		m.Rollback = append(m.Rollback, cur.row)
 	}
 
+	sort.Slice(m.Rollback, func(i, j int) bool {
+		a, b := m.Rollback[i], m.Rollback[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		return a.IssuerKey < b.IssuerKey
+	})
 	m.Revoked.Merge(mem.revoked)
 	m.RevokedKeys = m.Revoked.RevokedKeys(m.Intermediates)
 

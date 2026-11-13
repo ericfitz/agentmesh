@@ -6,10 +6,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
 
+	"github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/store"
@@ -333,7 +336,157 @@ func TestLoadNumberAndStoreFailure(t *testing.T) {
 	if err := e.st.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.tr.Load(context.Background(), e.mem); err == nil {
+	_, err := e.tr.Load(context.Background(), e.mem)
+	if err == nil {
 		t.Fatal("Load over a closed store succeeded")
+	}
+	// A closed Store is the Store's retryable "unavailable", never an internal error.
+	if got := bus.CodeOf(err); got != bus.CodeUnavailable {
+		t.Fatalf("code = %q (%v), want %q", got, err, bus.CodeUnavailable)
+	}
+}
+
+// A leaf CRL whose row is stored but ignored (its issuer key is now revoked) is
+// not a rollback.
+func TestLoadRevokedIssuerIsNotRollback(t *testing.T) {
+	e := newEnv(t)
+	e.f.Install(t, e.c)
+	now := e.clk.now()
+	leaf := leafFor(t, e.f, now, time.Hour)
+	e.putLeaf(t, leaf, keyID(e.f.Intermediate))
+	e.putCRL(t, store.TrustLeafCRL, keyID(e.f.Intermediate), crlBy(t, e.f.Intermediate, interKey(t, e.f), 1000, now, leaf.SerialNumber))
+	if m := e.load(t); len(m.Rollback) != 0 {
+		t.Fatalf("first load: rollback %d", len(m.Rollback))
+	}
+	if _, err := e.tr.InstallRootCRL(context.Background(), e.f.RevokeIntermediate(t, now)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		m := e.load(t)
+		if len(m.Rollback) != 0 {
+			t.Fatalf("load %d after the revocation: Rollback = %+v", i, m.Rollback)
+		}
+		if len(m.Leaves) != 1 || !m.Leaves[0].Revoked {
+			t.Fatalf("leaf: %+v", m.Leaves)
+		}
+	}
+}
+
+// A CRL this process holds whose stored row is gone is reported, for the root
+// CRL and for a leaf CRL.
+func TestLoadMissingRowIsRollback(t *testing.T) {
+	setup := func(t *testing.T) (a *env, leaf *x509.Certificate, rootDER, leafDER []byte) {
+		a = newEnv(t)
+		a.f.Install(t, a.c)
+		now := a.clk.now()
+		leaf = leafFor(t, a.f, now, time.Hour)
+		a.putLeaf(t, leaf, keyID(a.f.Intermediate))
+		rootDER = crlBy(t, a.f.Root, rootKey(t, a.f), 3000, now, big.NewInt(99))
+		leafDER = crlBy(t, a.f.Intermediate, interKey(t, a.f), 2000, now, leaf.SerialNumber)
+		a.putCRL(t, store.TrustRootCRL, "", rootDER)
+		a.putCRL(t, store.TrustLeafCRL, keyID(a.f.Intermediate), leafDER)
+		if m := a.load(t); len(m.Rollback) != 0 || m.RootCRL == nil || len(m.LeafCRLs) != 1 {
+			t.Fatalf("first load: %+v", m.Rollback)
+		}
+		return
+	}
+	t.Run("both", func(t *testing.T) {
+		a, leaf, rootDER, leafDER := setup(t)
+		b := a.second(t)
+		b.f.Install(t, b.c)
+		b.putLeaf(t, leaf, keyID(b.f.Intermediate))
+		m := b.load(t)
+		if len(m.Rollback) != 2 {
+			t.Fatalf("Rollback = %+v", m.Rollback)
+		}
+		// Sorted by kind: the leaf CRL, then the root CRL.
+		lc, rc := m.Rollback[0], m.Rollback[1]
+		if lc.Kind != store.TrustLeafCRL || lc.Number != 2000 || string(lc.DER) != string(leafDER) || lc.IssuerKey != keyID(b.f.Intermediate) {
+			t.Fatalf("leaf rollback = %+v", lc)
+		}
+		if rc.Kind != store.TrustRootCRL || rc.Number != 3000 || string(rc.DER) != string(rootDER) {
+			t.Fatalf("root rollback = %+v", rc)
+		}
+		if m.RootCRL == nil || pki.CRLNumber(m.RootCRL) != 3000 || m.LeafCRLs[keyID(b.f.Intermediate)] == nil {
+			t.Fatalf("held CRLs are not carried: root %v leaf %v", m.RootCRL, m.LeafCRLs)
+		}
+		if len(m.Leaves) != 1 || !m.Leaves[0].Revoked {
+			t.Fatalf("leaf: %+v", m.Leaves)
+		}
+		if !b.logged("no longer stored") {
+			t.Fatalf("the log does not say \"no longer stored\":\n%s", b.logs.String())
+		}
+	})
+	t.Run("leaf-guard-no-kept-intermediate", func(t *testing.T) {
+		a, _, _, _ := setup(t)
+		b := a.second(t) // no intermediate stored
+		m := b.load(t)
+		if len(m.LeafCRLs) != 0 {
+			t.Fatalf("a leaf CRL of an issuer with no kept intermediate was reported: %v", m.LeafCRLs)
+		}
+		if len(m.Rollback) != 1 || m.Rollback[0].Kind != store.TrustRootCRL {
+			t.Fatalf("Rollback = %+v, want the root CRL alone", m.Rollback)
+		}
+	})
+}
+
+// failingStore fails the calls the trust rules make with a retryable error.
+type failingStore struct {
+	store.Store
+	tryLock, tx, read bool
+}
+
+func (f failingStore) fail() error { return fmt.Errorf("injected: %w", store.ErrRetryable) }
+
+func (f failingStore) TryLock(ctx context.Context, name, owner string, now, until int64) (bool, error) {
+	if f.tryLock {
+		return false, f.fail()
+	}
+	return f.Store.TryLock(ctx, name, owner, now, until)
+}
+
+func (f failingStore) Tx(ctx context.Context, fn func(context.Context, store.Tx) error) error {
+	if f.tx {
+		return f.fail()
+	}
+	return f.Store.Tx(ctx, fn)
+}
+
+func (f failingStore) Read(ctx context.Context, fn func(context.Context, store.Tx) error) error {
+	if f.read {
+		return f.fail()
+	}
+	return f.Store.Read(ctx, fn)
+}
+
+func TestRetryableStoreErrorIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	for name, fs := range map[string]failingStore{
+		"lock":        {Store: e.st, tryLock: true},
+		"transaction": {Store: e.st, tx: true},
+		"read":        {Store: e.st, read: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := core.New(fs, core.Defaults(), core.Options{Now: e.clk.now})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := e.f.Trust(c)
+			if name == "read" {
+				_, err = tr.Load(ctx, &signingkeys.Memory{})
+			} else {
+				_, err = tr.InstallIntermediate(ctx, e.f.Intermediate)
+				if err == nil {
+					t.Fatal("no error")
+				}
+				if _, err2 := tr.InstallRootCRL(ctx, e.f.RevokeIntermediate(t, e.clk.now())); err2 == nil {
+					t.Fatal("root CRL: no error")
+				} else {
+					wantUnavailable(t, err2)
+				}
+			}
+			wantUnavailable(t, err)
+		})
 	}
 }

@@ -43,7 +43,9 @@ type Trust struct {
 
 // holders is the set of owner names that hold the trust lock in this process.
 // Store.TryLock renews for the same owner, so the Store lock alone does not
-// keep two callers of one process apart.
+// keep two callers of one process apart. Keying by owner alone is safe because
+// Core.Owner is random per Core: two cores in one process never share a name,
+// and the Store lock separates them. Do not widen the key.
 var holders = struct {
 	sync.Mutex
 	owners map[string]bool
