@@ -56,6 +56,8 @@ func TestVerifyChain(t *testing.T) {
 		{name: "empty-period", want: ErrChainTime, o: chainOpts{leafNA: b.Add(-30 * time.Minute), interNB: b}},
 		{name: "leeway-fails-with-zero", want: ErrChainTime, o: chainOpts{leafNA: b.Add(-30 * time.Second)}},
 		{name: "leeway", o: chainOpts{leafNA: b.Add(-30 * time.Second)}, lee: 60 * time.Second},
+		{name: "leaf-without-aki", want: ErrLeafProfile, o: chainOpts{leafParentMod: func(c *x509.Certificate) { c.SubjectKeyId = nil }}},
+		{name: "leaf-with-other-aki", want: ErrLeafProfile, o: chainOpts{leafParentMod: func(c *x509.Certificate) { c.SubjectKeyId = []byte{1, 2, 3} }}},
 		{name: "good"},
 	}
 	for _, c := range cases {

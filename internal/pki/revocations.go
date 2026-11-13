@@ -79,20 +79,30 @@ func (r Revocations) RevokedKeys(intermediates []*x509.Certificate) map[string]b
 	return out
 }
 
-// LeafRevoked: the leaf's serial number is kept for its issuer key
-// (KeyID(leaf.AuthorityKeyId)), or that key is revoked.
+// LeafRevoked: the issuer is each listed intermediate that verifies the leaf's
+// signature, never the leaf's own authority key identifier (whoever signs a
+// leaf chooses that). The leaf is revoked when that intermediate's key is
+// revoked or the leaf's serial number is kept for that key. A leaf no listed
+// intermediate verifies counts as revoked (fail closed).
 func (r Revocations) LeafRevoked(leaf *x509.Certificate, intermediates []*x509.Certificate) bool {
-	issuer := KeyID(leaf.AuthorityKeyId)
-	if r.RevokedKeys(intermediates)[issuer] {
-		return true
-	}
 	text := SerialText(leaf.SerialNumber)
-	for _, s := range r.Leaves[issuer] {
-		if s == text {
+	verified := false
+	for _, c := range intermediates {
+		if leaf.CheckSignatureFrom(c) != nil {
+			continue
+		}
+		verified = true
+		issuer := KeyID(c.SubjectKeyId)
+		if r.RevokedKeys(intermediates)[issuer] {
 			return true
 		}
+		for _, s := range r.Leaves[issuer] {
+			if s == text {
+				return true
+			}
+		}
 	}
-	return false
+	return !verified
 }
 
 // LeafSerials is the revoked leaf serial numbers kept for an issuer key, in

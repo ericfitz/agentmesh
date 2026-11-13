@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
@@ -79,6 +80,9 @@ func CheckChain(presented []*x509.Certificate, root *x509.Certificate, installat
 	}
 	if err := leaf.CheckSignatureFrom(inter); err != nil {
 		return Verified{}, fmt.Errorf("%w: the leaf is not signed by the presented intermediate", ErrChainSignature)
+	}
+	if len(leaf.AuthorityKeyId) == 0 || !bytes.Equal(leaf.AuthorityKeyId, inter.SubjectKeyId) {
+		return Verified{}, fmt.Errorf("%w: the leaf's authority key identifier is absent or is not the intermediate's key", ErrLeafProfile)
 	}
 	roots, pool := x509.NewCertPool(), x509.NewCertPool()
 	roots.AddCert(root)

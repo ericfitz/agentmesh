@@ -135,3 +135,56 @@ func TestUnion(t *testing.T) {
 		t.Errorf("round trip = %+v", back)
 	}
 }
+
+// A leaf whose authority key identifier is absent or wrong, signed by a revoked
+// key, is still revoked: the issuer is the intermediate that verifies the
+// signature, not what the leaf claims.
+func TestLeafRevokedIgnoresForgedAKI(t *testing.T) {
+	mods := map[string]func(*x509.Certificate){
+		"absent":   func(c *x509.Certificate) { c.SubjectKeyId = nil },
+		"mismatch": func(c *x509.Certificate) { c.SubjectKeyId = []byte{9, 9, 9} },
+	}
+	for name, mod := range mods {
+		t.Run(name, func(t *testing.T) {
+			f := buildChain(t, chainOpts{leafParentMod: mod})
+			if got := KeyID(f.leaf.AuthorityKeyId); got == KeyID(f.inter.SubjectKeyId) {
+				t.Fatalf("fixture: AKI %q was not forged", got)
+			}
+			der, err := CreateCRL(f.root, f.rootKey, 1, fixtureBase, []*big.Int{f.inter.SerialNumber})
+			if err != nil {
+				t.Fatal(err)
+			}
+			crl, err := ParseCRL(der)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var r Revocations
+			if r.LeafRevoked(f.leaf, []*x509.Certificate{f.inter}) {
+				t.Fatal("revoked with nothing revoked")
+			}
+			r.AddRoot(crl)
+			if !r.LeafRevoked(f.leaf, []*x509.Certificate{f.inter}) {
+				t.Error("forged-AKI leaf under a revoked key is not revoked")
+			}
+		})
+	}
+	// A leaf serial kept for the key is found whatever the leaf's AKI says.
+	f := buildChain(t, chainOpts{leafParentMod: mods["mismatch"]})
+	var r Revocations
+	r.Leaves = map[string][]string{KeyID(f.inter.SubjectKeyId): {SerialText(f.leaf.SerialNumber)}}
+	if !r.LeafRevoked(f.leaf, []*x509.Certificate{f.inter}) {
+		t.Error("kept leaf serial not found for a forged-AKI leaf")
+	}
+}
+
+func TestLeafRevokedFailsClosed(t *testing.T) {
+	f := buildChain(t, chainOpts{})
+	other := buildChain(t, chainOpts{})
+	var r Revocations
+	if !r.LeafRevoked(f.leaf, []*x509.Certificate{other.inter}) {
+		t.Error("a leaf no listed intermediate verifies is not revoked")
+	}
+	if !r.LeafRevoked(f.leaf, nil) {
+		t.Error("a leaf with no intermediates is not revoked")
+	}
+}

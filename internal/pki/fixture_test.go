@@ -117,9 +117,10 @@ type chainOpts struct {
 	interNB, interNA  time.Time
 	leafNB, leafNA    time.Time
 	interMod, leafMod func(*x509.Certificate)
-	interKey          *ecdsa.PrivateKey // nil: a new P-256 key
-	leafSigner        *ecdsa.PrivateKey // nil: the intermediate's key
-	leafByRoot        bool              // the root signs the leaf directly
+	interKey          *ecdsa.PrivateKey       // nil: a new P-256 key
+	leafSigner        *ecdsa.PrivateKey       // nil: the intermediate's key
+	leafByRoot        bool                    // the root signs the leaf directly
+	leafParentMod     func(*x509.Certificate) // changes the intermediate as the leaf's signer sees it (its key identifier, so the leaf's AKI) while its key still signs
 }
 
 func orTime(t, def time.Time) time.Time {
@@ -154,6 +155,11 @@ func buildChain(t *testing.T, o chainOpts) chainFixture {
 		t.Fatal(err)
 	}
 	parent, signer := inter, interKey
+	if o.leafParentMod != nil {
+		clone := *inter
+		o.leafParentMod(&clone)
+		parent = &clone
+	}
 	if o.leafSigner != nil {
 		// Same name and key identifier, another key: the signature cannot verify.
 		clone := *inter
