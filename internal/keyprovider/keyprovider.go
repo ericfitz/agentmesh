@@ -1,7 +1,8 @@
 // Package keyprovider is the port between the server's token signing key set
 // and wherever a private key lives (signing-keys plan, issues #6 and #8;
-// Eric 2026-10-27). The Store-row provider keeps the key in the database; an
-// external provider (a KMS) keeps it out of the process and only signs.
+// Eric 2026-10-27). The Store-row provider keeps the key in the database; the
+// file provider keeps the intermediate key in an owner-only PEM file (ADR 0019);
+// an external provider (a KMS) keeps it out of the process and only signs.
 // The package imports the standard library and internal/auth/keys only.
 package keyprovider
 

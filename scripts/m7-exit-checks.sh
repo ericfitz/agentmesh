@@ -222,7 +222,8 @@ import_check() {
 	for p in './internal/core/...' './internal/bus/...' ./internal/cli ./internal/mcpserver ./internal/client ./internal/server; do
 		check_deps slack-consumers "$p" internal/slackapi internal/slackbridge internal/slackapi/slackgo
 	done
-	# The keyprovider port is a leaf over internal/auth/keys (go-jose comes
+	# The keyprovider port, the file provider included, is a leaf over
+	# internal/auth/keys (go-jose comes
 	# with it: the allowlist is transitive); the fake adds nothing; the
 	# backends and their SDKs are reached from internal/server/cmd's tagged
 	# files alone.
