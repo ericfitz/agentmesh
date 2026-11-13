@@ -8,9 +8,11 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
+	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -64,6 +66,14 @@ type Config struct {
 	SigningKeyURI                     string `json:"signing_key_uri"`
 	SigningKeyRotationHours           int    `json:"signing_key_rotation_hours"`
 	SigningKeyRotationCooldownSeconds int    `json:"signing_key_rotation_cooldown_seconds"`
+
+	// The trust settings (ADR 0019 section 4.12): accepted here, required at
+	// start by RequireTrust (Plan ruling 10), not by Validate.
+	RootCertificateFile string `json:"root_certificate_file"`
+	IntermediateKeyFile string `json:"intermediate_key_file"`
+	IntermediateKeyURI  string `json:"intermediate_key_uri"`
+	LeafValidityHours   int    `json:"leaf_validity_hours"`
+	InstallationName    string `json:"installation_name"`
 
 	DefaultACL      []ACLEntry `json:"default_acl"`
 	ChannelCreation string     `json:"channel_creation"`
@@ -130,6 +140,8 @@ func Default() Config {
 
 		SigningKeyRotationHours:           720,
 		SigningKeyRotationCooldownSeconds: 3600,
+
+		LeafValidityHours: 168,
 
 		DefaultACL:      shippedDefault(),
 		ChannelCreation: d.ChannelCreation,
@@ -255,6 +267,9 @@ func (c Config) Validate() error {
 	if c.TokenLifetimeSeconds < 1 || c.TokenLifetimeSeconds > MaxTokenLifetimeSeconds {
 		return fmt.Errorf("token_lifetime_seconds must be between 1 and %d, got %d", MaxTokenLifetimeSeconds, c.TokenLifetimeSeconds)
 	}
+	if err := c.checkHalfLeaf("token_lifetime_seconds", c.TokenLifetimeSeconds); err != nil {
+		return err
+	}
 	if _, err := keyprovider.SchemeOf(c.SigningKeyURI); err != nil {
 		return fmt.Errorf("signing_key_uri: %w", err)
 	}
@@ -263,6 +278,9 @@ func (c Config) Validate() error {
 	}
 	if c.SigningKeyRotationCooldownSeconds < 1 || c.SigningKeyRotationCooldownSeconds > 86400 {
 		return fmt.Errorf("signing_key_rotation_cooldown_seconds must be between 1 and 86400, got %d", c.SigningKeyRotationCooldownSeconds)
+	}
+	if err := c.validateTrust(); err != nil {
+		return err
 	}
 	if c.JWKSRefreshSeconds < 10 || c.JWKSRefreshSeconds > 86400 {
 		return fmt.Errorf("jwks_refresh_seconds must be between 10 and 86400, got %d", c.JWKSRefreshSeconds)
@@ -275,6 +293,9 @@ func (c Config) Validate() error {
 	names := map[string]int{}
 	for i, is := range c.Issuers {
 		if err := validateIssuer(is); err != nil {
+			return fmt.Errorf("issuers: entry %d: %w", i, err)
+		}
+		if err := c.checkHalfLeaf("human_token_lifetime_seconds", is.humanLifetimeSeconds()); err != nil {
 			return fmt.Errorf("issuers: entry %d: %w", i, err)
 		}
 		if c.Issuer != "" && is.Issuer == c.Issuer {
@@ -426,6 +447,77 @@ func validateIssuer(is Issuer) error {
 	}
 	if is.HumanTokenLifetimeSeconds < 0 || is.HumanTokenLifetimeSeconds > MaxTokenLifetimeSeconds {
 		return fmt.Errorf("human_token_lifetime_seconds must be 0 (the default, 900) or between 1 and %d, got %d", MaxTokenLifetimeSeconds, is.HumanTokenLifetimeSeconds)
+	}
+	return nil
+}
+
+// humanLifetimeSeconds is the lifetime of the human bearer: 900 when unset.
+func (is Issuer) humanLifetimeSeconds() int {
+	if is.HumanTokenLifetimeSeconds == 0 {
+		return 900
+	}
+	return is.HumanTokenLifetimeSeconds
+}
+
+// LeafValidity is the validity of a server leaf certificate.
+func (c Config) LeafValidity() time.Duration {
+	return time.Duration(c.LeafValidityHours) * time.Hour
+}
+
+// checkHalfLeaf refuses a bearer lifetime above W/2 in seconds (spec 4.6, 4.7),
+// where W is the leaf validity. A leaf hours value outside its range is
+// reported by validateTrust, so it is skipped here.
+func (c Config) checkHalfLeaf(name string, seconds int) error {
+	if c.LeafValidityHours < 2 || c.LeafValidityHours > 720 {
+		return nil
+	}
+	if half := c.LeafValidityHours * 1800; seconds > half {
+		return fmt.Errorf("%s %d is more than half of leaf_validity_hours %d (%d seconds)", name, seconds, c.LeafValidityHours, half)
+	}
+	return nil
+}
+
+// validateTrust checks the trust settings that are set; RequireTrust checks
+// that the ones a server needs are there.
+func (c Config) validateTrust() error {
+	if c.LeafValidityHours < 2 || c.LeafValidityHours > 720 {
+		return fmt.Errorf("leaf_validity_hours must be between 2 and 720, got %d", c.LeafValidityHours)
+	}
+	if c.InstallationName != "" {
+		if err := pki.ValidInstallationName(c.InstallationName); err != nil {
+			return fmt.Errorf("installation_name: %w", err)
+		}
+	}
+	if c.IntermediateKeyURI != "" {
+		scheme, err := keyprovider.SchemeOf(c.IntermediateKeyURI)
+		if err != nil || scheme == "" {
+			if err == nil {
+				err = errors.New("key URI has no scheme")
+			}
+			return fmt.Errorf("intermediate_key_uri (key %q): %w", keyprovider.KeyName(c.IntermediateKeyURI), err)
+		}
+	}
+	if c.IntermediateKeyFile != "" && c.IntermediateKeyURI != "" {
+		return errors.New("at most one of intermediate_key_file and intermediate_key_uri may be set")
+	}
+	return nil
+}
+
+// RequireTrust is nil when the trust settings a server needs are all there:
+// root_certificate_file, installation_name and exactly one of
+// intermediate_key_file and intermediate_key_uri (Plan ruling 10).
+func (c Config) RequireTrust() error {
+	if c.RootCertificateFile == "" {
+		return errors.New("root_certificate_file is required")
+	}
+	if c.InstallationName == "" {
+		return errors.New("installation_name is required")
+	}
+	switch {
+	case c.IntermediateKeyFile == "" && c.IntermediateKeyURI == "":
+		return errors.New("one of intermediate_key_file and intermediate_key_uri is required")
+	case c.IntermediateKeyFile != "" && c.IntermediateKeyURI != "":
+		return errors.New("only one of intermediate_key_file and intermediate_key_uri may be set")
 	}
 	return nil
 }
