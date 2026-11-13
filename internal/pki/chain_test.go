@@ -197,3 +197,21 @@ func TestCheckIntermediateMessages(t *testing.T) {
 		})
 	}
 }
+
+// A nil certificate or root is an error, never a panic: the row loader calls
+// the check for every stored row.
+func TestChecksRefuseNil(t *testing.T) {
+	f := buildChain(t, chainOpts{})
+	if err := CheckIntermediate(nil, f.root, "test-installation"); !errors.Is(err, ErrIntermediateProfile) {
+		t.Fatalf("nil certificate: %v", err)
+	}
+	if err := CheckIntermediate(f.inter, nil, "test-installation"); !errors.Is(err, ErrChainSignature) {
+		t.Fatalf("nil root: %v", err)
+	}
+	if _, err := CheckChain([]*x509.Certificate{f.leaf, nil}, f.root, "x"); !errors.Is(err, ErrChainLength) {
+		t.Fatalf("nil element: %v", err)
+	}
+	if _, err := CheckChain(f.presented(), nil, "x"); !errors.Is(err, ErrChainLength) {
+		t.Fatalf("nil chain root: %v", err)
+	}
+}

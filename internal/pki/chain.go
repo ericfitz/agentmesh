@@ -105,6 +105,12 @@ func CheckIntermediate(c, root *x509.Certificate, installation string) error {
 	fail := func(sentinel error, format string, args ...any) error {
 		return fmt.Errorf("%w: the intermediate certificate "+format, append([]any{sentinel}, args...)...)
 	}
+	if c == nil {
+		return fail(ErrIntermediateProfile, "is missing")
+	}
+	if root == nil {
+		return fail(ErrChainSignature, "cannot be checked without a pinned root")
+	}
 	if err := c.CheckSignatureFrom(root); err != nil {
 		return fail(ErrChainSignature, "does not chain to the pinned root")
 	}
