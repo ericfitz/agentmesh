@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -10,9 +11,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/pki"
+	"github.com/ericfitz/agentmesh/internal/store"
 )
 
 const caUsage = "usage: agentmesh server admin ca csr [-out FILE] | install CERT_FILE | install-crl CRL_FILE | status"
@@ -94,7 +97,7 @@ func caCSR(outFile string) adminAction {
 		pemBytes := pki.EncodePEM("CERTIFICATE REQUEST", der)
 		if outFile != "" {
 			if err := os.WriteFile(outFile, pemBytes, 0o644); err != nil {
-				return &configError{err}
+				return fmt.Errorf("write %s: %w", outFile, err)
 			}
 			return nil
 		}
@@ -177,7 +180,9 @@ func caStatus(ctx context.Context, e hostEnv, w io.Writer) error {
 	}
 	_, _ = fmt.Fprintf(w, "root %s until %s\n", pki.Thumbprint(t.Root.Raw), t.Root.NotAfter.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(w, "installation %s\n", t.Installation)
+	listed := map[string]bool{}
 	for _, c := range m.Intermediates {
+		listed[pki.Thumbprint(c.Raw)] = true
 		configured, err := t.Configured(ctx, c, m.KeyRefs[pki.Thumbprint(c.Raw)])
 		if err != nil {
 			return trustFailure(e.Config, err)
@@ -192,6 +197,9 @@ func caStatus(ctx context.Context, e hostEnv, w io.Writer) error {
 		}
 		_, _ = fmt.Fprintf(w, "intermediate %s %s %s key=%s revoked=%s\n", pki.Thumbprint(c.Raw),
 			c.NotBefore.UTC().Format(time.RFC3339), c.NotAfter.UTC().Format(time.RFC3339), key, revoked)
+	}
+	if err := printIgnored(ctx, t, listed, w); err != nil {
+		return trustFailure(e.Config, err)
 	}
 	if m.RootCRL != nil {
 		_, _ = fmt.Fprintf(w, "root-crl %d\n", pki.CRLNumber(m.RootCRL))
@@ -214,6 +222,41 @@ func caStatus(ctx context.Context, e hostEnv, w io.Writer) error {
 		}
 		_, _ = fmt.Fprintf(w, "leaf %s serial %s until %s\n", pki.Thumbprint(l.Verified.Leaf.Raw),
 			l.Verified.Leaf.SerialNumber.Text(16), l.Verified.Leaf.NotAfter.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+// printIgnored names every stored intermediate row Load dropped, with the
+// reason, so a changed installation_name or root is visible (spec section 4.4).
+// It reads the rows itself: the admin Core's log is discarded.
+func printIgnored(ctx context.Context, t signingkeys.Trust, listed map[string]bool, w io.Writer) error {
+	var rows []store.TrustCertificate
+	err := t.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
+		var err error
+		rows, err = tx.TrustCertificates(ctx, store.TrustIntermediate)
+		return err
+	})
+	if err != nil {
+		return core.FromStore(err)
+	}
+	for _, r := range rows {
+		if listed[r.Thumbprint] {
+			continue
+		}
+		var reason error
+		cert, perr := x509.ParseCertificate(r.DER)
+		switch {
+		case pki.Thumbprint(r.DER) != r.Thumbprint:
+			reason = errors.New("the thumbprint column is not the thumbprint of the DER")
+		case perr != nil:
+			reason = fmt.Errorf("parse certificate: %w", perr)
+		default:
+			reason = pki.CheckIntermediate(cert, t.Root, t.Installation)
+		}
+		if reason == nil {
+			reason = errors.New("not verified")
+		}
+		_, _ = fmt.Fprintf(w, "ignored intermediate %s: %v\n", r.Thumbprint, reason)
 	}
 	return nil
 }

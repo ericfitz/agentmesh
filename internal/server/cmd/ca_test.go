@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -25,6 +27,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/keyprovider/kmsfake"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
+	"github.com/ericfitz/agentmesh/internal/server/config"
 	"github.com/ericfitz/agentmesh/internal/store"
 	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
@@ -507,7 +510,7 @@ func TestCAInputs(t *testing.T) {
 
 func TestOpenRoot(t *testing.T) {
 	f := trusttest.New(t, time.Time{})
-	cfg := func(path string) (c cfgT) { c.RootCertificateFile = path; return }
+	cfg := func(path string) (c config.Config) { c.RootCertificateFile = path; return }
 	if _, err := openRoot(cfg(f.RootFile)); err != nil {
 		t.Fatalf("the good root: %v", err)
 	}
@@ -535,7 +538,7 @@ func TestOpenRoot(t *testing.T) {
 
 func rsaRootPEM(t *testing.T) []byte {
 	t.Helper()
-	k, err := rsaKey()
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +642,7 @@ func craft(t *testing.T, f *trusttest.Fixture, pub crypto.PublicKey, mod func(*x
 
 func leafUnder(t *testing.T, inter *x509.Certificate, key *ecdsa.PrivateKey, now time.Time, v time.Duration) *x509.Certificate {
 	t.Helper()
-	pub, err := newEd25519()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -662,4 +665,75 @@ func sibRevoke(t *testing.T, f, sib *trusttest.Fixture, at time.Time) *x509.Revo
 		t.Fatal(err)
 	}
 	return crl
+}
+
+func TestCAStatusNamesIgnoredIntermediates(t *testing.T) {
+	e := newCAEnv(t)
+	if code, _, errOut := e.ca("install", e.f.CertFile); code != 0 {
+		t.Fatal(errOut)
+	}
+	all := append([]string{"-set", "root_certificate_file=" + e.f.RootFile, "-set", "installation_name=renamed",
+		"-set", "intermediate_key_file=" + e.f.KeyFile, "ca"}, "status")
+	code, out, errOut := e.run(all...)
+	wantExit(t, code, 0, errOut)
+	want := fmt.Sprintf("ignored intermediate %s: ", pki.Thumbprint(e.f.Intermediate.Raw))
+	if !strings.Contains(out, want) || !strings.Contains(out, `names installation "test-installation", expected "renamed"`) {
+		t.Fatalf("status %q lacks %q and its reason", out, want)
+	}
+	if strings.Contains(out, "intermediate "+pki.Thumbprint(e.f.Intermediate.Raw)+" ") {
+		t.Fatalf("an ignored row is listed as verified: %q", out)
+	}
+}
+
+func TestCAFailuresAreExit1(t *testing.T) {
+	t.Run("out-file-unwritable", func(t *testing.T) {
+		e := newCAEnv(t)
+		bad := filepath.Join(t.TempDir(), "no-such-dir", "req.pem")
+		code, _, errOut := e.ca("csr", "-out", bad)
+		wantExit(t, code, 1, errOut)
+	})
+	t.Run("csr-key-service-down", func(t *testing.T) {
+		e := newCAEnv(t)
+		fake := kmsfake.New("awskms")
+		fake.SetDown(true)
+		useFake(t, fake)
+		code, _, errOut := e.caWith("intermediate_key_uri=awskms://alias/x", "csr")
+		wantExit(t, code, 1, errOut)
+	})
+	t.Run("backend-unreachable", func(t *testing.T) {
+		setBackend(t, "awskms", func(string) (keyprovider.Provider, error) {
+			return nil, fmt.Errorf("dial: %w", keyprovider.ErrUnavailable)
+		})
+		for _, verb := range []string{"csr", "status"} {
+			e := newCAEnv(t)
+			code, _, errOut := e.caWith("intermediate_key_uri=awskms://alias/x", verb)
+			wantExit(t, code, 1, errOut)
+		}
+	})
+	t.Run("store-failure", func(t *testing.T) {
+		e := newCAEnv(t)
+		dir := t.TempDir() // a directory is not a database file
+		for _, verb := range []string{"status", "install", "install-crl"} {
+			args := append(e.settings("intermediate_key_file="+e.f.KeyFile), "ca", verb)
+			if verb != "status" {
+				args = append(args, e.f.CertFile)
+			}
+			code, _, errOut := e.runEnv(nil, append([]string{"-sqlite", dir}, args...)...)
+			wantExit(t, code, 1, errOut)
+		}
+	})
+	t.Run("install-crl-lock-held", func(t *testing.T) {
+		e := newCAEnv(t)
+		sib := e.f.Sibling(t, "other-one")
+		_, st := e.core()
+		now := time.Now().UnixMilli()
+		if held, err := st.TryLock(context.Background(), signingkeys.LockName, "another-replica", now, now+time.Hour.Milliseconds()); err != nil || !held {
+			t.Fatalf("lock: %v %v", held, err)
+		}
+		code, _, errOut := e.ca("install-crl", crlFile(t, sibRevoke(t, e.f, sib, time.Now())))
+		wantExit(t, code, 1, errOut)
+		if !strings.Contains(errOut, "try again") {
+			t.Fatalf("stderr %q does not say to retry", errOut)
+		}
+	})
 }

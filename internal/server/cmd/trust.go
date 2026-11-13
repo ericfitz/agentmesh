@@ -44,9 +44,12 @@ func openIntermediateProvider(cfg config.Config) (keyprovider.Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("intermediate_key_uri: %w", err)
 	}
+	if scheme == "" {
+		return nil, errors.New("intermediate_key_uri: has no scheme; want one of awskms, gcpkms, azurekms, hashivault")
+	}
 	open, ok := keyBackends[scheme]
-	if scheme == "" || !ok {
-		return nil, fmt.Errorf("intermediate_key_uri: the %q backend is not in this build (build with -tags %s)", scheme, scheme)
+	if !ok {
+		return nil, fmt.Errorf("intermediate_key_uri: the %s backend is not in this build (build with -tags %s)", scheme, scheme)
 	}
 	return open(cfg.IntermediateKeyURI)
 }

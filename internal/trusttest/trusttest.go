@@ -17,6 +17,7 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
+	"github.com/ericfitz/agentmesh/internal/fileacl"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
@@ -80,8 +81,7 @@ func (f *Fixture) issue(t testing.TB, base, installation string) {
 	f.Installation = installation
 	f.KeyFile = filepath.Join(f.Dir, base+".key")
 	f.CertFile = filepath.Join(f.Dir, base+".pem")
-	restrict := func(p string) error { return os.Chmod(p, 0o600) }
-	if err := keyprovider.CreateKeyFile(f.KeyFile, restrict); err != nil {
+	if err := keyprovider.CreateKeyFile(f.KeyFile, fileacl.OwnerOnly); err != nil {
 		t.Fatalf("trusttest: key file: %v", err)
 	}
 	b, err := os.ReadFile(f.KeyFile)
