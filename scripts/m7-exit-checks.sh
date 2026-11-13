@@ -28,7 +28,7 @@
 # slack-go-importers, awskms-importers, hashivault-importers, gcpkms-importers,
 # azurekms-importers,
 # slackbridge-isolation, slack-consumers, keyprovider-leaf,
-# keyprovider-consumers); the self-test
+# keyprovider-consumers, pki-leaf); the self-test
 # (scripts/check-gates-selftest.sh) requires each probe to trip exactly one.
 #
 # The Slack bridge rules (same output):
@@ -228,6 +228,8 @@ import_check() {
 	# files alone.
 	check_allowlist keyprovider-leaf ./internal/keyprovider "$MOD/internal/keyprovider" "$MOD/internal/auth/keys" github.com/go-jose/go-jose/v4
 	check_allowlist keyprovider-leaf ./internal/keyprovider/kmsfake "$MOD/internal/keyprovider" "$MOD/internal/auth/keys" github.com/go-jose/go-jose/v4
+	# The certificate profiles are a leaf over the standard library alone.
+	check_allowlist pki-leaf ./internal/pki "$MOD/internal/pki"
 	local tags
 	for tags in "" "$M7_TAGS"; do
 		TAGS="$tags"

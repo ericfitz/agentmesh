@@ -75,6 +75,7 @@ verify:      ## Done gate (CLAUDE.md): build, the m4, m6 and m10 dependency rule
 	bash scripts/m10-exit-checks.sh --deps-only
 	bash scripts/m6-exit-checks.sh --deps-only
 	bash scripts/m4-exit-checks.sh --deps-only
+	bash scripts/m7-exit-checks.sh --deps-only
 	$(MAKE) vet
 	$(MAKE) fmt-check
 	$(MAKE) lint
