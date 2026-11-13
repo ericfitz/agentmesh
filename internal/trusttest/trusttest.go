@@ -169,3 +169,13 @@ func (f *Fixture) RevokeIntermediate(t testing.TB, at time.Time) *x509.Revocatio
 	}
 	return crl
 }
+
+// Sets is the three settings as arguments: "-set", "root_certificate_file=...",
+// "-set", "intermediate_key_file=...", "-set", "installation_name=...".
+func (f *Fixture) Sets() []string {
+	return []string{
+		"-set", "root_certificate_file=" + f.RootFile,
+		"-set", "intermediate_key_file=" + f.KeyFile,
+		"-set", "installation_name=" + f.Installation,
+	}
+}
