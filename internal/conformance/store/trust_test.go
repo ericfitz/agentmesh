@@ -263,10 +263,17 @@ func TestTrustNumber(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				errs[i] = handles[i%2].Tx(context.Background(), func(ctx context.Context, tx ab2store.Tx) (err error) {
-					got[i], err = tx.BumpTrustNumber(ctx, 1000)
-					return err
-				})
+				// Postgres runs Tx at SERIALIZABLE with a bounded retry, so eight writers on one
+				// row may exhaust it: a loser gets ErrRetryable and tries again.
+				for range 20 {
+					errs[i] = handles[i%2].Tx(context.Background(), func(ctx context.Context, tx ab2store.Tx) (err error) {
+						got[i], err = tx.BumpTrustNumber(ctx, 1000)
+						return err
+					})
+					if !errors.Is(errs[i], ab2store.ErrRetryable) {
+						return
+					}
+				}
 			}()
 		}
 		close(start)
@@ -275,6 +282,9 @@ func TestTrustNumber(t *testing.T) {
 		for i := range n {
 			if errs[i] != nil {
 				t.Fatalf("bump %d: %v", i, errs[i])
+			}
+			if got[i] <= big || got[i] > big+n {
+				t.Fatalf("number %d outside (%d, %d]: %v", got[i], int64(big), int64(big)+n, got)
 			}
 			if seen[got[i]] {
 				t.Fatalf("number %d returned twice: %v", got[i], got)
