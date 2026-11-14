@@ -204,3 +204,37 @@ func TestFixtureLeavesNothingOutsideTempDir(t *testing.T) {
 		t.Errorf("%s survives its test (err %v)", f.Dir, err)
 	}
 }
+
+func TestManager(t *testing.T) {
+	f := trusttest.New(t, time.Time{})
+	c, st := openCore(t)
+	m := f.Manager(t, c) // installs the intermediate: the store has none
+	tp, na := m.Current()
+	if tp == "" || !na.After(time.Now().Add(167*time.Hour)) || na.After(time.Now().Add(169*time.Hour)) {
+		t.Fatalf("Current = %q, %s: want a leaf valid for 168 hours", tp, na)
+	}
+	var inters, leaves int
+	if err := st.Read(context.Background(), func(ctx context.Context, tx store.Tx) error {
+		rows, err := tx.TrustCertificates(ctx, store.TrustIntermediate)
+		inters = len(rows)
+		if err != nil {
+			return err
+		}
+		rows, err = tx.TrustCertificates(ctx, store.TrustLeaf)
+		leaves = len(rows)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if inters != 1 || leaves != 1 {
+		t.Fatalf("%d intermediates and %d leaves, want 1 and 1", inters, leaves)
+	}
+	f.Manager(t, c) // a row exists: no second install
+	if err := st.Read(context.Background(), func(ctx context.Context, tx store.Tx) error {
+		rows, err := tx.TrustCertificates(ctx, store.TrustIntermediate)
+		inters = len(rows)
+		return err
+	}); err != nil || inters != 1 {
+		t.Fatalf("%d intermediates after the second Manager (%v)", inters, err)
+	}
+}

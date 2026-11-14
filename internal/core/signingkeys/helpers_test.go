@@ -320,6 +320,78 @@ func leafUnder(t *testing.T, inter *x509.Certificate, key *ecdsa.PrivateKey, now
 	return c
 }
 
+// overlongLeaf signs a leaf that pki.IssueLeaf would refuse: valid from now less
+// the backdate to notBefore plus span.
+func overlongLeaf(t *testing.T, f *trusttest.Fixture, now time.Time, span time.Duration) *x509.Certificate {
+	t.Helper()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ski, err := pki.SubjectKeyID(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          randSerial(t),
+		Subject:               pkix.Name{CommonName: "agentmesh leaf"},
+		NotBefore:             now.Add(-pki.LeafBackdate),
+		NotAfter:              now.Add(-pki.LeafBackdate + span),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		UnknownExtKeyUsage:    []asn1.ObjectIdentifier{pki.ExtKeyUsageAgentmesh},
+		BasicConstraintsValid: true,
+		SubjectKeyId:          ski,
+		AuthorityKeyId:        f.Intermediate.SubjectKeyId,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, f.Intermediate, pub, interKey(t, f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// leafFailStore wraps a Store so that PutTrustCertificate of a leaf fails while
+// failLeaf is set (TestFailedInsertLeavesTheLeafUnused).
+type leafFailStore struct {
+	store.Store
+	mu       sync.Mutex
+	failLeaf bool
+}
+
+func (s *leafFailStore) setFailLeaf(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failLeaf = v
+}
+
+func (s *leafFailStore) failing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.failLeaf
+}
+
+func (s *leafFailStore) Tx(ctx context.Context, fn func(ctx context.Context, tx store.Tx) error) error {
+	return s.Store.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
+		return fn(ctx, leafFailTx{Tx: tx, s: s})
+	})
+}
+
+type leafFailTx struct {
+	store.Tx
+	s *leafFailStore
+}
+
+func (x leafFailTx) PutTrustCertificate(ctx context.Context, c store.TrustCertificate) (int64, error) {
+	if c.Kind == store.TrustLeaf && x.s.failing() {
+		return 0, errors.New("injected: the leaf insert failed")
+	}
+	return x.Tx.PutTrustCertificate(ctx, c)
+}
+
 // crlBy signs a CRL listing serials, by issuer with key.
 func crlBy(t *testing.T, issuer *x509.Certificate, key *ecdsa.PrivateKey, number int64, now time.Time, serials ...*big.Int) []byte {
 	t.Helper()

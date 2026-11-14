@@ -287,3 +287,43 @@ func TestCheckRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestIssueLeafRefusesBadValidity(t *testing.T) {
+	f := newFixture(t)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, v := range map[string]time.Duration{
+		"zero":             0,
+		"negative":         -time.Hour,
+		"one-over-ceiling": MaxLeafLifetime - LeafBackdate + time.Second,
+	} {
+		if _, err := IssueLeaf(f.inter, f.interK, pub, f.now, v); !errors.Is(err, ErrLeafValidity) {
+			t.Errorf("%s: err = %v, want ErrLeafValidity", name, err)
+		}
+	}
+	c, err := IssueLeaf(f.inter, f.interK, pub, f.now, MaxLeafLifetime-LeafBackdate)
+	if err != nil {
+		t.Fatalf("the ceiling itself is refused: %v", err)
+	}
+	if _, err := CheckChain([]*x509.Certificate{c, f.inter}, f.root, "prod"); err != nil {
+		t.Fatalf("a leaf at the ceiling does not pass the chain check: %v", err)
+	}
+}
+
+func TestIssueLeafRefusesInvalidIntermediate(t *testing.T) {
+	f := newFixture(t)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, at := range map[string]time.Time{
+		"before-not-before": f.inter.NotBefore.Add(-time.Second),
+		"after-not-after":   f.inter.NotAfter.Add(time.Second),
+	} {
+		if _, err := IssueLeaf(f.inter, f.interK, pub, at, time.Hour); !errors.Is(err, ErrIssuerNotValid) {
+			t.Errorf("%s: err = %v, want ErrIssuerNotValid", name, err)
+		}
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
+	"github.com/ericfitz/agentmesh/internal/store"
 )
 
 const (
@@ -140,6 +141,30 @@ func (f *Fixture) Install(t testing.TB, c *core.Core) {
 	if _, err := f.Trust(c).InstallIntermediate(context.Background(), f.Intermediate); err != nil {
 		t.Fatalf("trusttest: install: %v", err)
 	}
+}
+
+// Manager starts a leaf manager over c: it installs the fixture's intermediate
+// when c's Store holds none, then calls signingkeys.New with a leaf validity of
+// 168 hours. It is fatal on an error.
+func (f *Fixture) Manager(t testing.TB, c *core.Core) *signingkeys.Manager {
+	t.Helper()
+	ctx := context.Background()
+	var rows []store.TrustCertificate
+	if err := c.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
+		var err error
+		rows, err = tx.TrustCertificates(ctx, store.TrustIntermediate)
+		return err
+	}); err != nil {
+		t.Fatalf("trusttest: %v", err)
+	}
+	if len(rows) == 0 {
+		f.Install(t, c)
+	}
+	m, err := signingkeys.New(ctx, signingkeys.Options{Trust: f.Trust(c), LeafValidity: 168 * time.Hour})
+	if err != nil {
+		t.Fatalf("trusttest: manager: %v", err)
+	}
+	return m
 }
 
 // Renew issues another certificate for the same key, valid from at for days.

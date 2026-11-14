@@ -15,6 +15,15 @@ import (
 	"time"
 )
 
+// ErrLeafValidity: IssueLeaf was asked for a validity that is not positive or
+// is above MaxLeafLifetime less LeafBackdate (the longest leaf CheckChain
+// accepts).
+var ErrLeafValidity = errors.New("pki: the leaf validity is out of range")
+
+// ErrIssuerNotValid: IssueLeaf was asked to sign under an intermediate that is
+// not valid at the issue time.
+var ErrIssuerNotValid = errors.New("pki: the intermediate is not valid at the issue time")
+
 // ErrRequestKey: the request's key is not ECDSA P-256. IssueIntermediate wraps
 // it, so the root tool can tell a refused input (exit 2) from a failure (exit 1).
 var ErrRequestKey = errors.New("pki: the request's key is not ECDSA P-256")
@@ -130,8 +139,17 @@ func IssueIntermediate(root *x509.Certificate, rootKey crypto.Signer, csr *x509.
 // IssueLeaf signs a leaf for pub under intermediate with the intermediate's
 // key: CA false, digital signature, the agentmesh usage, a random 128-bit
 // serial number, valid from now less LeafBackdate for validity, cut to the
-// intermediate's "not after".
+// intermediate's "not after". It refuses a validity that is not positive or is
+// above MaxLeafLifetime less LeafBackdate (ErrLeafValidity) and an
+// intermediate that is not valid at now (ErrIssuerNotValid).
 func IssueLeaf(intermediate *x509.Certificate, key crypto.Signer, pub ed25519.PublicKey, now time.Time, validity time.Duration) (*x509.Certificate, error) {
+	if validity <= 0 || validity > MaxLeafLifetime-LeafBackdate {
+		return nil, fmt.Errorf("%w: %s, want above 0 and at most %s", ErrLeafValidity, validity, MaxLeafLifetime-LeafBackdate)
+	}
+	if now.Before(intermediate.NotBefore) || now.After(intermediate.NotAfter) {
+		return nil, fmt.Errorf("%w: %s is outside %s to %s", ErrIssuerNotValid, now.UTC().Format(time.RFC3339),
+			intermediate.NotBefore.UTC().Format(time.RFC3339), intermediate.NotAfter.UTC().Format(time.RFC3339))
+	}
 	sn, err := serial()
 	if err != nil {
 		return nil, err

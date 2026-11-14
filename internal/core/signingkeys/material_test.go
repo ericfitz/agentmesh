@@ -105,7 +105,7 @@ func TestLoadVerifiesRows(t *testing.T) {
 		}},
 		{"leaf-one-second-over-the-ceiling", func(t *testing.T, e *env) bad {
 			e.f.Install(t, e.c)
-			leaf := leafFor(t, e.f, e.clk.now(), pki.MaxLeafLifetime-pki.LeafBackdate+time.Second)
+			leaf := overlongLeaf(t, e.f, e.clk.now(), pki.MaxLeafLifetime+time.Second)
 			e.putLeaf(t, leaf, keyID(e.f.Intermediate))
 			return bad{store.TrustLeaf, pki.Thumbprint(leaf.Raw)}
 		}},

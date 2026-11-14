@@ -27,7 +27,7 @@ func TestExtKeyUsageShape(t *testing.T) {
 		}
 	}
 	f := newFixture(t)
-	leaf := f.leaf(t, f.now, MaxLeafLifetime)
+	leaf := f.leaf(t, f.now, MaxLeafLifetime-LeafBackdate)
 	if !HasAgentmeshUsage(leaf) {
 		t.Error("leaf lacks the agentmesh usage")
 	}
