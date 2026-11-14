@@ -11,3 +11,7 @@ func (m *Manager) Issue(ctx context.Context) error { return m.issue(ctx) }
 
 // Wake is the channel Reload fills when it makes an issue due and Run waits on.
 func (m *Manager) Wake() <-chan struct{} { return m.wake }
+
+// SetRunParkedHook sets the function Run calls just before it waits for its
+// timer, the wake channel or its context (nil clears it).
+func SetRunParkedHook(f func()) { runParkedHook = f }

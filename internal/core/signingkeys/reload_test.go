@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math/big"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -210,15 +211,35 @@ func TestIntermediateRenewalPickedUp(t *testing.T) {
 func TestRootExpiryStops(t *testing.T) {
 	ctx := context.Background()
 	e, m, p := renewEnv(t)
+	// An intermediate that ends with the root, so a leaf's period ends with the root's.
+	rootEnd := e.f.Root.NotAfter
+	e.at(rootEnd.Sub(e.clk.now()) - 2*time.Hour)
+	renewed := e.f.Renew(t, rootEnd.Add(-48*time.Hour), 2)
+	if _, err := e.tr.InstallIntermediate(ctx, renewed); err != nil {
+		t.Fatal(err)
+	}
+	m.Step(ctx)
+	if m.Stopped() != "" {
+		t.Fatalf("Stopped = %q before the root's end", m.Stopped())
+	}
+	e.clk.advance(rootEnd.Sub(e.clk.now()) - time.Hour)
+	m.Step(ctx)
 	iss, err := token.NewIssuer(ctx, "http://localhost:8420", m, time.Hour, e.clk.now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _, err := iss.Mint(ctx, token.MintInput{Identity: "alice", Kind: token.KindAgent})
+	raw, exp, err := iss.Mint(ctx, token.MintInput{Identity: "alice", Kind: token.KindAgent})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.at(e.f.Root.NotAfter.Sub(e.clk.now()) + time.Second)
+	if exp.After(rootEnd) {
+		t.Fatalf("bearer expires %s, after the root's end %s", exp, rootEnd)
+	}
+	calls := p.calls.Load()
+
+	// One second past the root's end the leaf is still inside its leeway: only the
+	// stop keeps it out of the key set.
+	e.clk.advance(rootEnd.Sub(e.clk.now()) + time.Second)
 	m.Step(ctx)
 	if got := m.Stopped(); got != "root_expired" {
 		t.Fatalf("Stopped = %q", got)
@@ -230,7 +251,7 @@ func TestRootExpiryStops(t *testing.T) {
 	if set.Signer != nil || len(set.Keys) != 0 {
 		t.Fatalf("an expired root still publishes: %+v", set)
 	}
-	if p.calls.Load() != 0 {
+	if p.calls.Load() != calls {
 		t.Fatal("a stopped manager used the key")
 	}
 	iss.Invalidate()
@@ -343,8 +364,8 @@ func TestRollbackWrittenBack(t *testing.T) {
 		if got := e.leafCRLRow(t).Number; got != 3000 || e.trustNumber(t) != before {
 			t.Fatal("wrote back without the lock")
 		}
-		if !e.logged("write-back") {
-			t.Fatalf("no log line for the deferred write-back:\n%s", e.logs.String())
+		if c := strings.Count(e.logs.String(), "write-back"); c != 1 {
+			t.Fatalf("%d write-back log lines for one deferred reload, want 1:\n%s", c, e.logs.String())
 		}
 		if err := e.st.Unlock(ctx, signingkeys.LockName, "someone-else"); err != nil {
 			t.Fatal(err)
@@ -437,30 +458,37 @@ func TestReloadCallsOnChange(t *testing.T) {
 	}
 }
 
-// Reload fills the manager's wake channel, and Run wakes on it and issues.
+// Reload fills the manager's wake channel, and Run wakes on it and issues. Run
+// is parked in its wait (its timer is 30 s on a clock that does not move) before
+// the revocation, so only the wake can make it issue.
 func TestRunWakesOnRevocation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	e, m, _ := renewEnv(t)
+	parked := make(chan struct{}, 1)
+	signingkeys.SetRunParkedHook(func() {
+		select {
+		case parked <- struct{}{}:
+		default:
+		}
+	})
 	done := make(chan struct{})
 	go func() { m.Run(ctx, nil); close(done) }()
-	defer func() { cancel(); <-done }()
-	// Run's first Step ran or will run; wait for it to settle on its timer.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, nd := m.Current(); !nd.IsZero() {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("no current leaf")
-		}
-		time.Sleep(2 * time.Millisecond)
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		signingkeys.SetRunParkedHook(nil)
+	})
+	select {
+	case <-parked:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run never parked")
 	}
 	old, serial := e.onlyLeaf(t)
 	e.revokeLeaf(t, 5, serial)
 	if err := m.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		if tp, _ := m.Current(); tp != "" && tp != old {
 			return
@@ -469,5 +497,38 @@ func TestRunWakesOnRevocation(t *testing.T) {
 			t.Fatal("Run was not woken by the revocation")
 		}
 		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// A write-back is a change: OnChange runs once for it.
+func TestOnChangeAfterWriteBack(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.f.Install(t, e.c)
+	var n atomic.Int64
+	m, err := signingkeys.New(ctx, signingkeys.Options{Trust: e.tr, LeafValidity: week, OnChange: func() { n.Add(1) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.revokeLeaf(t, 5000, big.NewInt(99))
+	for range 2 {
+		if err := m.Reload(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	der := crlBy(t, e.f.Intermediate, interKey(t, e.f), 3000, e.clk.now())
+	if _, err := rawDB(t, e).Exec("UPDATE trust_material SET thumbprint = ?, der = ?, number = 3000 WHERE kind = 'leaf_crl'",
+		pki.Thumbprint(der), der); err != nil {
+		t.Fatal(err)
+	}
+	base := n.Load()
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n.Load() != base+1 {
+		t.Fatalf("OnChange ran %d times for a write-back, want 1", n.Load()-base)
+	}
+	if !e.logged("crls=1") {
+		t.Fatalf("the log does not report the number written:\n%s", e.logs.String())
 	}
 }

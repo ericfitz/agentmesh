@@ -67,18 +67,14 @@ func leave(owner string) {
 	delete(holders.owners, owner)
 }
 
-const msgLockHeld = "the trust lock is held by another caller; try again"
+// errLockHeld is the one refusal withLock gives when another caller holds the
+// lock; isLockHeld recognizes it by identity.
+var errLockHeld = core.E(bus.CodeUnavailable, "the trust lock is held by another caller; try again")
 
-func lockHeld() error {
-	return core.E(bus.CodeUnavailable, msgLockHeld)
-}
+func lockHeld() error { return errLockHeld }
 
-// isLockHeld reports whether err is the refusal withLock gives when another
-// caller holds the lock.
-func isLockHeld(err error) bool {
-	var be *bus.Error
-	return errors.As(err, &be) && be.Code == bus.CodeUnavailable && be.Message == msgLockHeld
-}
+// isLockHeld reports whether err is that refusal.
+func isLockHeld(err error) bool { return errors.Is(err, errLockHeld) }
 
 // withLock runs fn while this caller holds the trust lock, in this process and
 // in the Store, and releases it afterwards. Held by another owner, or by

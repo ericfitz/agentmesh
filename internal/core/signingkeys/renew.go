@@ -178,6 +178,9 @@ func (m *Manager) Run(ctx context.Context, _ notify.Notifier) {
 			wait = 0
 		}
 		timer := time.NewTimer(wait)
+		if runParkedHook != nil {
+			runParkedHook()
+		}
 		select {
 		case <-ctx.Done():
 			timer.Stop()

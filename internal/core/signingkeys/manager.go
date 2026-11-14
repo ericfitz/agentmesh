@@ -20,6 +20,9 @@ import (
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
+// runParkedHook, when set (export_test.go), is called by Run just before it waits.
+var runParkedHook func()
+
 // MinLeafValidity and MaxLeafValidity bound Options.LeafValidity (W).
 const (
 	MinLeafValidity = 2 * time.Hour

@@ -2,6 +2,7 @@ package signingkeys
 
 import (
 	"context"
+	"time"
 
 	"github.com/ericfitz/agentmesh/internal/store"
 )
@@ -43,12 +44,18 @@ type reloaded struct {
 // it also runs inside LoadKeys, on a request's goroutine, and inside
 // RotateSigningKey, which holds the issuing mutex.
 func (m *Manager) Reload(ctx context.Context) error {
+	// Pick reads the key file: it runs between two holds of mu, on the loaded
+	// material (LoadKeys keeps one hold, as it needs the set from it).
 	m.mu.Lock()
-	r, err := m.reloadReactLocked(ctx)
+	l, err := m.loadLocked(ctx)
 	m.mu.Unlock()
 	if err != nil {
 		return err
 	}
+	p, perr := m.trust.Pick(ctx, l.mat)
+	m.mu.Lock()
+	r := m.reactLocked(l, p, perr)
+	m.mu.Unlock()
 	m.finishReload(ctx, r)
 	return nil
 }
@@ -68,34 +75,57 @@ func (m *Manager) stopReason(p Picked, mat Material) string {
 	return ""
 }
 
-// reloadReactLocked loads and reacts; caller holds mu.
-func (m *Manager) reloadReactLocked(ctx context.Context) (reloaded, error) {
-	now := m.trust.Now()
-	wasOK := m.inPeriod(m.cur, now)
-	wasStopped := m.stopped
+// loaded is what the load step of a reload captured for the reactions.
+type loaded struct {
+	now        time.Time
+	wasOK      bool
+	wasStopped string
+	changed    bool
+	mat        Material
+	notify     func()
+}
+
+// loadLocked loads the material; caller holds mu.
+func (m *Manager) loadLocked(ctx context.Context) (loaded, error) {
+	l := loaded{now: m.trust.Now(), wasOK: m.inPeriod(m.cur, m.trust.Now()), wasStopped: m.stopped}
 	changed, err := m.reloadLocked(ctx)
 	if err != nil {
-		return reloaded{}, err
+		return loaded{}, err
 	}
-	r := reloaded{changed: changed, rollback: m.mat.Rollback, notify: m.onChange}
+	l.changed, l.mat, l.notify = changed, m.mat, m.onChange
+	return l, nil
+}
 
-	p, perr := m.trust.Pick(ctx, m.mat)
+// reactLocked applies the reactions to what Pick found; caller holds mu.
+func (m *Manager) reactLocked(l loaded, p Picked, perr error) reloaded {
+	r := reloaded{changed: l.changed, rollback: l.mat.Rollback, notify: l.notify}
 	if perr != nil {
 		// Nothing says the key is gone: keep the state the last reload decided.
 		r.pickErr = perr
 	} else {
-		m.stopped = m.stopReason(p, m.mat)
+		m.stopped = m.stopReason(p, l.mat)
 	}
 	r.stopped = m.stopped
-	if m.stopped != wasStopped {
+	if m.stopped != l.wasStopped {
 		r.changed = true
 	}
-	okAfter := m.inPeriod(m.cur, now)
-	if wasOK && !okAfter && m.cur != nil && m.revoked[m.cur.thumbprint] {
+	okAfter := m.inPeriod(m.cur, l.now)
+	if l.wasOK && !okAfter && m.cur != nil && m.revoked[m.cur.thumbprint] {
 		r.ownLeaf = m.cur.thumbprint
 	}
-	r.wake = m.stopped == "" && !okAfter && (wasOK || wasStopped != "")
-	return r, nil
+	r.wake = m.stopped == "" && !okAfter && (l.wasOK || l.wasStopped != "")
+	return r
+}
+
+// reloadReactLocked loads and reacts under one hold of mu (LoadKeys needs the
+// set from the same hold); caller holds mu.
+func (m *Manager) reloadReactLocked(ctx context.Context) (reloaded, error) {
+	l, err := m.loadLocked(ctx)
+	if err != nil {
+		return reloaded{}, err
+	}
+	p, perr := m.trust.Pick(ctx, l.mat)
+	return m.reactLocked(l, p, perr), nil
 }
 
 // finishReload does what a reload leaves that needs no lock of the manager: log
@@ -117,7 +147,7 @@ func (m *Manager) finishReload(ctx context.Context, r reloaded) {
 		default:
 		}
 	}
-	wrote := len(r.rollback) != 0 && m.writeBack(ctx, r.rollback)
+	wrote := len(r.rollback) != 0 && m.writeBack(ctx, r.rollback) > 0
 	if (r.changed || wrote) && r.notify != nil {
 		r.notify()
 	}
@@ -126,13 +156,13 @@ func (m *Manager) finishReload(ctx context.Context, r reloaded) {
 // writeBack puts the CRLs a rollback removed back (Decision 27: restore from
 // backup): under the trust lock, one transaction writes each held CRL whose
 // stored row is older or gone and raises the trust number. Held elsewhere, it
-// waits for the next reload with one log line and no error. It reports whether
-// it wrote.
-func (m *Manager) writeBack(ctx context.Context, held []store.TrustCRL) (wrote bool) {
+// waits for the next reload with one log line and no error. It reports how many
+// CRLs it wrote.
+func (m *Manager) writeBack(ctx context.Context, held []store.TrustCRL) (written int) {
 	t := m.trust
 	err := t.withLock(ctx, func(func(context.Context) error) error {
 		return t.Store.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
-			wrote = false
+			written = 0
 			stored, err := tx.CRLs(ctx)
 			if err != nil {
 				return err
@@ -148,9 +178,9 @@ func (m *Manager) writeBack(ctx context.Context, held []store.TrustCRL) (wrote b
 				if err := tx.PutCRL(ctx, h); err != nil {
 					return err
 				}
-				wrote = true
+				written++
 			}
-			if !wrote {
+			if written == 0 {
 				return nil
 			}
 			_, err = tx.BumpTrustNumber(ctx, t.NowMs())
@@ -159,14 +189,14 @@ func (m *Manager) writeBack(ctx context.Context, held []store.TrustCRL) (wrote b
 	})
 	switch {
 	case err == nil:
-		if wrote {
-			t.Log.Warn("trust material rollback written back", "crls", len(held))
+		if written > 0 {
+			t.Log.Warn("trust material rollback written back", "crls", written)
 		}
-		return wrote
+		return written
 	case isLockHeld(err):
 		t.Log.Warn("trust material rollback: the write-back waits for the next reload, the trust lock is held elsewhere")
 	default:
 		t.Log.Warn("trust material rollback: the write-back failed", "error", failureLine(err))
 	}
-	return false
+	return 0
 }
