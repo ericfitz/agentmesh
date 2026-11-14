@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/ericfitz/agentmesh/internal/auth/token"
-	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 )
@@ -386,26 +385,18 @@ func TestConcurrentStepsIssueOnce(t *testing.T) {
 func TestRunStopsWithContext(t *testing.T) {
 	_, m, _ := renewEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	hints := notify.NewMemory()
 	done := make(chan struct{})
 	go func() {
-		m.Run(ctx, hints)
+		m.Run(ctx, nil)
 		close(done)
 	}()
-	// A hint that carries no message wakes Run; it keeps running.
-	hints.Publish(notify.Hint{})
-	select {
-	case <-done:
-		t.Fatal("Run returned before its context ended")
-	case <-time.After(20 * time.Millisecond):
-	}
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop with its context")
 	}
-	// An already canceled context and a nil notifier.
+	// An already canceled context returns at once.
 	done2 := make(chan struct{})
 	go func() {
 		m.Run(ctx, nil)
@@ -416,4 +407,47 @@ func TestRunStopsWithContext(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run with a canceled context did not return")
 	}
+}
+
+// Ruling 13 wins over the retry floor: a clock stepped outside the leaf's
+// period issues at once although a retry is pending less than a minute ahead.
+func TestClockStepBeatsPendingRetry(t *testing.T) {
+	ctx := context.Background()
+	e, m, p := renewEnv(t)
+	p.down.Store(true)
+	e.at(week - 30*time.Second)
+	m.Step(ctx) // fails with the leaf still in its period: the retry is a minute ahead
+	n := p.calls.Load()
+	p.down.Store(false)
+	e.at(week + 10*time.Second) // the leaf expired; the retry is 20 s ahead
+	m.Step(ctx)
+	if p.calls.Load() != n+1 {
+		t.Fatalf("%d provider calls after the clock left the leaf's period, want %d", p.calls.Load(), n+1)
+	}
+	if tp, _ := m.Current(); tp == "" {
+		t.Fatal("no usable leaf after the step")
+	}
+}
+
+func TestStepNextDueEdges(t *testing.T) {
+	ctx := context.Background()
+	t.Run("renewal inside the reload interval", func(t *testing.T) {
+		e, m, _ := renewEnv(t)
+		e.at(84*time.Hour - 10*time.Second)
+		if next, want := m.Step(ctx), time.UnixMilli(startMs).Add(84*time.Hour); !next.Equal(want) {
+			t.Fatalf("next = %v, want exactly %v", next, want)
+		}
+	})
+	t.Run("retry inside the reload interval", func(t *testing.T) {
+		e, m, p := renewEnv(t)
+		p.down.Store(true)
+		e.at(week - 4*time.Minute) // a failure with 4 minutes left: retry a minute ahead
+		m.Step(ctx)
+		e.at(week - 4*time.Minute + 45*time.Second)
+		now := e.clk.now()
+		next := m.Step(ctx)
+		if want := time.UnixMilli(startMs).Add(week - 3*time.Minute); !next.Equal(want) || next.Before(now) {
+			t.Fatalf("next = %v, want the retry time %v", next, want)
+		}
+	})
 }

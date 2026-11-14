@@ -90,8 +90,9 @@ func (m *Manager) renewLocked(ctx context.Context) {
 	m.mu.Lock()
 	cur := m.cur
 	inPeriod := cur != nil && cur.verified.ValidAt(now, 0)
-	if !inPeriod && m.retryAt.After(now.Add(minRetry)) {
-		// A retry timed for a leaf the clock has left (a stepped clock).
+	if !inPeriod && !m.retryAt.IsZero() && (!m.retryOutside || m.retryAt.After(now.Add(minRetry))) {
+		// A retry timed for a leaf the clock has since left (a stepped clock):
+		// Ruling 13 wins over the retry schedule.
 		m.retryAt = time.Time{}
 	}
 	due := !inPeriod || !now.Before(cur.issuedAt.Add(m.validity/2))
@@ -113,6 +114,7 @@ func (m *Manager) renewLocked(ctx context.Context) {
 	}
 	msg := failureLine(err)
 	m.failure = &Failure{At: now, Message: msg}
+	m.retryOutside = m.cur == nil || !m.cur.verified.ValidAt(now, 0)
 	m.retryAt = now.Add(m.retryDelay(now))
 	m.trust.Log.Warn("signingkeys: issuing the leaf failed", "error", msg, "retry_at", m.retryAt.UTC().Format(time.RFC3339))
 }
@@ -160,14 +162,8 @@ func (m *Manager) nextDue() time.Time {
 // returned time is on the core's clock: Run waits the difference between it and
 // the core's now on a real timer, so a stepped clock only shortens or lengthens
 // one wait (Step is at most token.ReloadInterval ahead). hints may be nil; a
-// hint that carries no message (Seq 0) wakes Run early.
-func (m *Manager) Run(ctx context.Context, hints notify.Notifier) {
-	var wake <-chan notify.Hint
-	if hints != nil {
-		ch, cancel := hints.Subscribe()
-		defer cancel()
-		wake = ch
-	}
+// hints is unused until Task 29 makes a hint that carries no message wake Run.
+func (m *Manager) Run(ctx context.Context, _ notify.Notifier) {
 	for ctx.Err() == nil {
 		next := m.Step(ctx)
 		wait := next.Sub(m.trust.Now())
@@ -175,20 +171,11 @@ func (m *Manager) Run(ctx context.Context, hints notify.Notifier) {
 			wait = 0
 		}
 		timer := time.NewTimer(wait)
-	sleep:
-		for {
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
-				break sleep
-			case h := <-wake:
-				if h.Seq == 0 {
-					timer.Stop()
-					break sleep
-				}
-			}
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
 	}
 }

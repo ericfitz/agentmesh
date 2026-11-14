@@ -99,7 +99,9 @@ type Manager struct {
 	// the time of a pending retry (zero: none) and the last failed issue.
 	lastReload time.Time
 	retryAt    time.Time
-	failure    *Failure
+	// retryOutside: the retry was timed while the clock was outside the current leaf's period.
+	retryOutside bool
+	failure      *Failure
 }
 
 var _ token.KeySource = (*Manager)(nil)
