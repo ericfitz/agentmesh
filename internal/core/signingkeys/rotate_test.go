@@ -2,6 +2,7 @@ package signingkeys_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -543,5 +544,123 @@ func TestRotateIgnoresUnverifiedRows(t *testing.T) {
 	}
 	if !strings.Contains(e.logs.String(), "ignored") {
 		t.Fatal("the unverifiable row was not logged")
+	}
+}
+
+func wantUnavailableFinal(t *testing.T, err error) *bus.Error {
+	t.Helper()
+	var be *bus.Error
+	if !errors.As(err, &be) || be.Code != bus.CodeUnavailable {
+		t.Fatalf("err = %v, want an unavailable", err)
+	}
+	return be
+}
+
+// No failure of the signing steps is a 500: each maps to an unavailable, and
+// only an outage or a timeout is retryable.
+func TestRotateErrorMapping(t *testing.T) {
+	ctx := context.Background()
+	t.Run("stopped: intermediate revoked", func(t *testing.T) {
+		e, m, _ := renewEnv(t)
+		e.admin(t, "root")
+		if _, err := e.tr.InstallRootCRL(ctx, e.f.RevokeIntermediate(t, e.clk.now())); err != nil {
+			t.Fatal(err)
+		}
+		s := e.snap(t)
+		_, err := rotate(ctx, m, "k")
+		if be := wantUnavailableFinal(t, err); be.Retryable {
+			t.Fatal("a revoked intermediate is retryable")
+		}
+		e.wantSnap(t, s)
+	})
+	t.Run("stopped: intermediate expired", func(t *testing.T) {
+		e, m, _ := renewEnv(t)
+		e.admin(t, "root")
+		e.at(400 * 24 * time.Hour)
+		_, err := rotate(ctx, m, "k")
+		if be := wantUnavailableFinal(t, err); be.Retryable {
+			t.Fatal("an expired intermediate is retryable")
+		}
+	})
+	t.Run("outage", func(t *testing.T) {
+		e, m, p := renewEnv(t)
+		e.admin(t, "root")
+		p.down.Store(true)
+		_, err := rotate(ctx, m, "k")
+		if be := wantUnavailableFinal(t, err); !be.Retryable {
+			t.Fatal("an outage is not retryable")
+		}
+	})
+	t.Run("timeout", func(t *testing.T) {
+		e, m, p := renewEnv(t)
+		e.admin(t, "root")
+		p.err = fmt.Errorf("sign: %w", context.DeadlineExceeded)
+		p.down.Store(true)
+		_, err := rotate(ctx, m, "k")
+		if be := wantUnavailableFinal(t, err); !be.Retryable {
+			t.Fatal("a timeout is not retryable")
+		}
+	})
+	t.Run("any other key failure", func(t *testing.T) {
+		e, m, p := renewEnv(t)
+		e.admin(t, "root")
+		p.err = errors.New("the key file is unreadable")
+		p.down.Store(true)
+		s := e.snap(t)
+		_, err := rotate(ctx, m, "k")
+		be := wantUnavailableFinal(t, err)
+		if be.Retryable || !strings.Contains(be.Error(), "the key file is unreadable") {
+			t.Fatalf("err = %v, want a non-retryable unavailable naming the cause", err)
+		}
+		e.wantSnap(t, s)
+	})
+}
+
+// The process holds a leaf CRL newer than the stored one (a rolled-back
+// database): the rotation numbers from the held one and keeps its entries.
+func TestRotateNumbersFromTheHeldCRL(t *testing.T) {
+	ctx := context.Background()
+	e, m, _ := renewEnv(t)
+	e.admin(t, "root")
+	held := int64(startMs) + 10_000_000
+	e.revokeLeaf(t, held, big.NewInt(99))
+	if err := m.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	older := crlBy(t, e.f.Intermediate, interKey(t, e.f), 3000, e.clk.now())
+	if _, err := rawDB(t, e).Exec("UPDATE trust_material SET thumbprint = ?, der = ?, number = 3000 WHERE kind = 'leaf_crl'",
+		pki.Thumbprint(older), older); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rotate(ctx, m, "k"); err != nil {
+		t.Fatal(err)
+	}
+	row, crl, _ := e.leafCRL(t)
+	if row.Number != held+1 {
+		t.Fatalf("CRL number %d, want %d (the held one plus one)", row.Number, held+1)
+	}
+	if !crlSet(crl)["63"] {
+		t.Fatalf("the held CRL's entry is gone: %v", crlSet(crl))
+	}
+	if e.logged("held elsewhere") || !e.logged("by the operation that is reloading") {
+		t.Fatalf("the write-back log is misleading:\n%s", e.logs.String())
+	}
+}
+
+// A leaf of another key that is revoked already needs no "not covered" line.
+func TestRotateNotCoveredSkipsRevoked(t *testing.T) {
+	ctx := context.Background()
+	e, m := rotEnv(t)
+	k2 := newP256(t)
+	inter2 := craft(t, e.f, &k2.PublicKey, nil)
+	e.putIntermediate(t, inter2, "")
+	leaf := leafUnder(t, inter2, k2, e.clk.now(), week)
+	e.putLeaf(t, leaf, keyID(inter2))
+	e.putCRL(t, store.TrustLeafCRL, keyID(inter2), crlBy(t, inter2, k2, 5, e.clk.now(), leaf.SerialNumber))
+	if _, err := rotate(ctx, m, "k"); err != nil {
+		t.Fatal(err)
+	}
+	if e.logged(pki.Thumbprint(leaf.Raw)) {
+		t.Fatalf("a revoked leaf of another key was logged as not covered:\n%s", e.logs.String())
 	}
 }

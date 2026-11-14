@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/ericfitz/agentmesh/internal/auth/token"
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/pki"
@@ -28,9 +29,27 @@ type RevokeInput struct {
 	Serial *big.Int          // one serial number, listed as given (Ruling 32)
 }
 
-// RevokeResult is what Revoke did.
+// RevokedEntry is one line the host command prints for a revocation: the serial
+// number (hex) of the entry, the thumbprint of its certificate when a row or the
+// input gave one ("" for a bare serial number no row has) and the count of
+// Decision 16 (that of the leaf's row, 0 for none).
+type RevokedEntry struct {
+	Serial        string
+	Thumbprint    string
+	HumanMessages int64
+}
+
+// maxSerialBits is the longest serial number a CRL entry may carry: 20 octets
+// (RFC 5280) as a positive DER integer leaves 159 bits.
+const maxSerialBits = 159
+
+// RevokeResult is what Revoke did. Revoked is the leaves this call newly listed
+// (the Bus form); Entries is what the host command prints: for All the same
+// leaves, for Cert and Serial the one entry of the input, listed now or already
+// (Changed false), with the serial number a bare serial needs.
 type RevokeResult struct {
 	Revoked     []bus.RevokedLeaf
+	Entries     []RevokedEntry
 	NotCovered  []string // thumbprints of unexpired leaves under another intermediate key (Ruling 4)
 	TrustNumber int64
 	Changed     bool // false: every serial number was already listed; nothing was written
@@ -55,6 +74,8 @@ func (in RevokeInput) validate() error {
 		return refuse("the certificate is empty or has no usable serial number")
 	case in.Serial != nil && in.Serial.Sign() <= 0:
 		return refuse("the serial number must be positive")
+	case in.Serial != nil && in.Serial.BitLen() > maxSerialBits:
+		return refuse("the serial number is longer than 20 octets")
 	}
 	return nil
 }
@@ -73,12 +94,15 @@ func (x target) text() string { return pki.SerialText(x.serial) }
 // thumbprints of those under another key (Ruling 4: not covered).
 func coveredLeaves(mat Material, key string, now time.Time, keep string) (covered []target, notCovered []string) {
 	for _, l := range mat.Leaves {
-		if now.After(l.Verified.NotAfter) {
+		// A leaf still verifies token.Leeway past its end, so it counts as unexpired.
+		if now.After(l.Verified.NotAfter.Add(token.Leeway)) {
 			continue
 		}
 		tp := pki.Thumbprint(l.Verified.Leaf.Raw)
 		if keyIDOf(l.Verified.Intermediate) != key {
-			notCovered = append(notCovered, tp)
+			if !l.Revoked {
+				notCovered = append(notCovered, tp)
+			}
 			continue
 		}
 		if tp != keep {
@@ -234,16 +258,24 @@ func (t Trust) Revoke(ctx context.Context, mem *Memory, in RevokeInput) (RevokeR
 		if err != nil {
 			return err
 		}
+		shown := newly // what the host prints: the newly listed leaves, or the one input
+		if !in.All {
+			shown = targets
+		}
 		if !signed {
 			res.TrustNumber = mat.Number
-			return nil
+			return t.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
+				var err error
+				res.Entries, err = entriesOf(ctx, tx, shown)
+				return err
+			})
 		}
 		if err := renew(ctx); err != nil {
 			return err
 		}
 		return t.Store.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
-			res.Revoked, res.Changed = nil, false
-			revoked, err := revokedLeaves(ctx, tx, newly)
+			res.Revoked, res.Entries, res.Changed = nil, nil, false
+			entries, err := entriesOf(ctx, tx, shown)
 			if err != nil {
 				return err
 			}
@@ -254,7 +286,7 @@ func (t Trust) Revoke(ctx context.Context, mem *Memory, in RevokeInput) (RevokeR
 			if err != nil {
 				return err
 			}
-			res.Revoked, res.TrustNumber, res.Changed = revoked, n, true
+			res.Revoked, res.Entries, res.TrustNumber, res.Changed = revokedOf(entries, newly), entries, n, true
 			return nil
 		})
 	})
@@ -264,21 +296,34 @@ func (t Trust) Revoke(ctx context.Context, mem *Memory, in RevokeInput) (RevokeR
 	return res, nil
 }
 
-// revokedLeaves is the report of the leaves a CRL newly lists, with the human
-// messages each signed.
-func revokedLeaves(ctx context.Context, tx store.Tx, newly []target) ([]bus.RevokedLeaf, error) {
-	out := make([]bus.RevokedLeaf, 0, len(newly))
-	for _, x := range newly {
-		if x.thumbprint == "" {
-			continue // a bare serial number: no leaf to report
-		}
+// entriesOf is the report lines of targets, with the human messages each
+// signed.
+func entriesOf(ctx context.Context, tx store.Tx, targets []target) ([]RevokedEntry, error) {
+	out := make([]RevokedEntry, 0, len(targets))
+	for _, x := range targets {
 		n, err := countSigned(ctx, tx, x.id)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, bus.RevokedLeaf{Thumbprint: x.thumbprint, HumanMessages: n})
+		out = append(out, RevokedEntry{Serial: x.text(), Thumbprint: x.thumbprint, HumanMessages: n})
 	}
 	return out, nil
+}
+
+// revokedOf is the Bus form of the entries of the newly listed leaves; a bare
+// serial number has no thumbprint and is not a leaf of the Bus form.
+func revokedOf(entries []RevokedEntry, newly []target) []bus.RevokedLeaf {
+	isNew := make(map[string]bool, len(newly))
+	for _, x := range newly {
+		isNew[x.text()] = true
+	}
+	out := make([]bus.RevokedLeaf, 0, len(newly))
+	for _, e := range entries {
+		if isNew[e.Serial] && e.Thumbprint != "" {
+			out = append(out, bus.RevokedLeaf{Thumbprint: e.Thumbprint, HumanMessages: e.HumanMessages})
+		}
+	}
+	return out
 }
 
 func signedByConfigured(c *x509.Certificate, configured []*x509.Certificate) bool {

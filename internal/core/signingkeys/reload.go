@@ -196,7 +196,7 @@ func (m *Manager) writeBack(ctx context.Context, held []store.TrustCRL) (written
 		}
 		return written
 	case isLockHeld(err):
-		t.Log.Warn("trust material rollback: the write-back waits for the next reload, the trust lock is held elsewhere")
+		t.Log.Warn("trust material rollback: the write-back waits for the next reload, the trust lock is held by another caller or by the operation that is reloading")
 	default:
 		t.Log.Warn("trust material rollback: the write-back failed", "error", failureLine(err))
 	}

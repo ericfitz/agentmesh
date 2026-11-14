@@ -177,6 +177,9 @@ func TestRevokeByCert(t *testing.T) {
 	if err != nil || !res.Changed || len(res.Revoked) != 1 || res.Revoked[0].Thumbprint != pki.Thumbprint(noRow.Raw) || res.Revoked[0].HumanMessages != 0 {
 		t.Fatalf("without a row: %+v, %v", res, err)
 	}
+	if want := (signingkeys.RevokedEntry{Serial: pki.SerialText(noRow.SerialNumber), Thumbprint: pki.Thumbprint(noRow.Raw)}); len(res.Entries) != 1 || res.Entries[0] != want {
+		t.Fatalf("entries: %+v, want %+v", res.Entries, want)
+	}
 	_, crl, _ := e.leafCRL(t)
 	set := crlSet(crl)
 	if len(set) != 2 || !set[pki.SerialText(withRow.SerialNumber)] || !set[pki.SerialText(noRow.SerialNumber)] {
@@ -204,14 +207,31 @@ func TestRevokeBySerial(t *testing.T) {
 	if err != nil || !res.Changed || len(res.Revoked) != 1 || res.Revoked[0].Thumbprint != pki.Thumbprint(own.Raw) {
 		t.Fatalf("a serial number of a stored leaf: %+v, %v", res, err)
 	}
+	if len(res.Entries) != 1 || res.Entries[0] != (signingkeys.RevokedEntry{Serial: pki.SerialText(own.SerialNumber), Thumbprint: pki.Thumbprint(own.Raw)}) {
+		t.Fatalf("entries for a stored leaf: %+v", res.Entries)
+	}
 	unknown := big.NewInt(424242)
 	res, err = e.tr.Revoke(ctx, e.mem, signingkeys.RevokeInput{Serial: unknown})
 	if err != nil || !res.Changed || len(res.Revoked) != 0 {
 		t.Fatalf("a serial number no row has: %+v, %v", res, err)
 	}
+	// The host command still prints one entry with count 0 (spec 4.8).
+	bare := signingkeys.RevokedEntry{Serial: pki.SerialText(unknown)}
+	if len(res.Entries) != 1 || res.Entries[0] != bare {
+		t.Fatalf("entries for a bare serial number: %+v, want %+v", res.Entries, bare)
+	}
+	res, err = e.tr.Revoke(ctx, e.mem, signingkeys.RevokeInput{Serial: unknown})
+	if err != nil || res.Changed || len(res.Entries) != 1 || res.Entries[0] != bare {
+		t.Fatalf("a bare serial number listed already: %+v, %v", res, err)
+	}
+	// The longest serial number is 20 octets: 159 bits as a positive integer.
+	long := new(big.Int).Lsh(big.NewInt(1), 158)
+	if res, err = e.tr.Revoke(ctx, e.mem, signingkeys.RevokeInput{Serial: long}); err != nil || !res.Changed {
+		t.Fatalf("a serial number of 159 bits: %+v, %v", res, err)
+	}
 	_, crl, _ := e.leafCRL(t)
 	set := crlSet(crl)
-	if len(set) != 2 || !set[pki.SerialText(own.SerialNumber)] || !set[pki.SerialText(unknown)] {
+	if len(set) != 3 || !set[pki.SerialText(own.SerialNumber)] || !set[pki.SerialText(unknown)] {
 		t.Fatalf("CRL entries %v: serial numbers are listed as given", set)
 	}
 }
@@ -237,6 +257,9 @@ func TestRevokeAlreadyListed(t *testing.T) {
 		if err != nil || res.Changed || len(res.Revoked) != 0 {
 			t.Fatalf("%s: %+v, %v", name, res, err)
 		}
+		if wantEntries := map[string]int{"all": 0, "cert": 1, "serial": 1}[name]; len(res.Entries) != wantEntries {
+			t.Fatalf("%s: %d entries, want %d", name, len(res.Entries), wantEntries)
+		}
 		if res.TrustNumber != n || e.trustNumber(t) != n {
 			t.Fatalf("%s: trust number %d / %d, want %d", name, res.TrustNumber, e.trustNumber(t), n)
 		}
@@ -259,6 +282,8 @@ func TestRevokeInputs(t *testing.T) {
 		"all and cert":      {All: true, Cert: cert},
 		"cert and serial":   {Cert: cert, Serial: big.NewInt(5)},
 		"zero serial":       {Serial: big.NewInt(0)},
+		"serial too long":   {Serial: new(big.Int).Lsh(big.NewInt(1), 160)},
+		"serial 160 bits":   {Serial: new(big.Int).Lsh(big.NewInt(1), 159)},
 		"negative serial":   {Serial: big.NewInt(-7)},
 		"all three":         {All: true, Cert: cert, Serial: big.NewInt(5)},
 		"cert without data": {Cert: &x509.Certificate{}},
@@ -433,5 +458,25 @@ func TestRemoveExpiredLeavesBatch(t *testing.T) {
 	}
 	if n, err := e.tr.RemoveExpiredLeaves(ctx); err != nil || n != 1 {
 		t.Fatalf("second call removed %d, %v; want 1", n, err)
+	}
+}
+
+// A leaf still verifies token.Leeway past its end, so a revocation covers it.
+func TestRevokeCoversLeavesInLeeway(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.f.Install(t, e.c)
+	start := time.UnixMilli(startMs)
+	a := leafFor(t, e.f, start, 2*time.Hour)               // 61 s past its end below
+	b := leafFor(t, e.f, start, 2*time.Hour+2*time.Second) // 59 s past its end below
+	e.putLeaf(t, a, keyID(e.f.Intermediate))
+	e.putLeaf(t, b, keyID(e.f.Intermediate))
+	e.at(2*time.Hour + 61*time.Second)
+	res, err := e.tr.Revoke(ctx, e.mem, signingkeys.RevokeInput{All: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Revoked) != 1 || res.Revoked[0].Thumbprint != pki.Thumbprint(b.Raw) {
+		t.Fatalf("revoked %v, want only the leaf 59 s past its end", res.Revoked)
 	}
 }

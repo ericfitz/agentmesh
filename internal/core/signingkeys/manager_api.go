@@ -6,6 +6,7 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
+	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -47,16 +48,26 @@ func (m *Manager) ListSigningKeys(ctx context.Context, admin string) (bus.Signin
 	return l, nil
 }
 
-// rotateError maps what a rotation returned: a stopped manager is an
-// unavailable that is not retryable (an operator must act), and any other
-// error is left to core.FromStore.
-func rotateError(err error) error {
-	for _, e := range []error{ErrNoIntermediate, ErrIntermediateExpired, ErrIntermediateRevoked, ErrRootExpired} {
-		if errors.Is(err, e) {
-			return bus.Errorf(bus.CodeUnavailable, false, "%s", err.Error())
-		}
+// issueFailure maps a failure of the signing steps of a rotation (a leaf, the
+// CRL) so that none is a 500 (the no-500 rule): an outage or a timeout of the
+// key service or key file is a retryable unavailable; a stopped manager (no
+// stored intermediate, expired, revoked, root expired) and any other failure of
+// the key (a mismatch, an unreadable file, a refused signature) is an
+// unavailable that is not retryable, because an operator must act. Errors that
+// are bus errors already pass.
+func issueFailure(log interface{ Error(string, ...any) }, err error) error {
+	if err == nil {
+		return nil
 	}
-	return core.FromStore(providerError(err))
+	var be *bus.Error
+	if errors.As(err, &be) {
+		return err
+	}
+	retryable := errors.Is(err, keyprovider.ErrUnavailable) || errors.Is(err, context.DeadlineExceeded)
+	if !retryable {
+		log.Error("signingkeys: a forced renewal could not sign", "error", failureLine(err))
+	}
+	return &bus.Error{Code: bus.CodeUnavailable, Message: "cannot issue a leaf certificate: " + failureLine(err), Retryable: retryable, Cause: err}
 }
 
 // RotateSigningKey is the forced renewal (section 4.8, the seven steps in
@@ -117,14 +128,14 @@ func (m *Manager) RotateSigningKey(ctx context.Context, admin string, in bus.Rot
 
 		pl, err := m.mintLeaf(ctx, mat)
 		if err != nil {
-			return err
+			return issueFailure(t.Log, err)
 		}
 		key, now := keyIDOf(pl.picked.Use), t.Now()
 		targets, notCovered := coveredLeaves(mat, key, now, pl.row.Thumbprint)
 		t.logNotCovered(notCovered)
 		crl, newly, _, err := t.nextLeafCRL(ctx, mat, pl.picked, now, targets, true)
 		if err != nil {
-			return err
+			return issueFailure(t.Log, err)
 		}
 		if err := renew(ctx); err != nil {
 			return err
@@ -136,10 +147,11 @@ func (m *Manager) RotateSigningKey(ctx context.Context, admin string, in bus.Rot
 				return err
 			}
 			r, err := t.WithReceipt(ctx, tx, admin, in.IdempotencyKey, payload, &out, func() error {
-				revoked, err := revokedLeaves(ctx, tx, newly)
+				entries, err := entriesOf(ctx, tx, newly)
 				if err != nil {
 					return err
 				}
+				revoked := revokedOf(entries, newly)
 				if _, err := tx.PutTrustCertificate(ctx, pl.row); err != nil {
 					return err
 				}
@@ -165,7 +177,7 @@ func (m *Manager) RotateSigningKey(ctx context.Context, admin string, in bus.Rot
 		return nil
 	})
 	if err != nil {
-		return bus.SigningKeyRotation{}, rotateError(err)
+		return bus.SigningKeyRotation{}, core.FromStore(err)
 	}
 	return out, nil
 }
