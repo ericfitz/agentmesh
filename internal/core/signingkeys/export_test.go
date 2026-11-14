@@ -6,5 +6,5 @@ import "context"
 // (nil clears it): the tests count chain verifications through it.
 func SetChainCheckHook(f func()) { chainCheckHook = f }
 
-// Issue issues one leaf the way a renewal does (tests only; Task 18 adds Step).
+// Issue issues one leaf the way a renewal does (tests only; Step is the production path).
 func (m *Manager) Issue(ctx context.Context) error { return m.issue(ctx) }

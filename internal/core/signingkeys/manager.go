@@ -56,6 +56,7 @@ type Options struct {
 // logged).
 type leafKey struct {
 	gen        uint64 // the load generation at the swap
+	issuedAt   time.Time
 	thumbprint string
 	verified   pki.Verified
 	signer     leafSigner
@@ -93,6 +94,12 @@ type Manager struct {
 	cur      *leafKey
 	prev     *leafKey
 	onChange func()
+
+	// Renewal state (Step; guarded by mu): the time of the last reload Step ran,
+	// the time of a pending retry (zero: none) and the last failed issue.
+	lastReload time.Time
+	retryAt    time.Time
+	failure    *Failure
 }
 
 var _ token.KeySource = (*Manager)(nil)
@@ -289,7 +296,11 @@ func (m *Manager) signerFor(ctx context.Context, p Picked) (keyprovider.Signer, 
 func (m *Manager) issue(ctx context.Context) error {
 	m.issueMu.Lock()
 	defer m.issueMu.Unlock()
+	return m.issueLocked(ctx)
+}
 
+// issueLocked is issue for a caller that holds issueMu.
+func (m *Manager) issueLocked(ctx context.Context) error {
 	m.mu.Lock()
 	mat := m.mat
 	m.mu.Unlock()
@@ -341,7 +352,7 @@ func (m *Manager) issue(ctx context.Context) error {
 	}
 
 	m.mu.Lock()
-	m.prev, m.cur = m.cur, &leafKey{gen: m.gen, thumbprint: thumb, verified: v, signer: leafSigner{priv: priv}}
+	m.prev, m.cur = m.cur, &leafKey{gen: m.gen, issuedAt: now, thumbprint: thumb, verified: v, signer: leafSigner{priv: priv}}
 	notify := m.onChange
 	m.mu.Unlock()
 	if notify != nil {
