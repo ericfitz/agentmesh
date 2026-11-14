@@ -147,7 +147,7 @@ func withTrust(t *testing.T, environ, args []string) []string {
 		}
 	}
 	if db == "" {
-		return args
+		t.Fatalf("withTrust: no SQLite file in the arguments, the -config file or the environment: %v", args)
 	}
 	return append(append([]string(nil), args...), trusttest.SQLiteSets(t, db)...)
 }

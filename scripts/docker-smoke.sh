@@ -90,7 +90,7 @@ agentmesh_run() { docker run --rm --user "$(id -u):$(id -g)" -v "$DATA:/data" --
 agentmesh_run ca init -dir /data/ca >/dev/null || fail "ca init failed"
 agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca csr -out /data/intermediate.csr >/dev/null ||
   fail "ca csr failed"
-agentmesh_run ca sign -dir /data/ca /data/intermediate.csr >"$DATA/intermediate.pem" 2>/dev/null || fail "ca sign failed"
+agentmesh_run ca sign -dir /data/ca /data/intermediate.csr >"$DATA/intermediate.pem" || fail "ca sign failed"
 agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca install /data/intermediate.pem >/dev/null ||
   fail "ca install failed"
 

@@ -272,10 +272,9 @@ require_live() {
 # bootstrap_ca gives the server a CA: the root (ca init), the intermediate
 # request (admin ca csr), the signed certificate (ca sign) and its installation
 # (admin ca install), all through the built binary, in "$DIR/ca" and "$DIR".
-# It sets CA_SETS to the server's three trust settings. Each step is skipped
-# when its result exists, so a second run finds the root and the signed
-# certificate and `ca install` is given the same certificate (it answers
-# unchanged); a second `ca sign` would issue a new serial number and add a row.
+# It sets CA_SETS to the server's three trust settings. `up` always starts from
+# an empty directory, so every `up` makes a fresh CA (a new root, key and
+# certificate); `down` removes the directory, CA included.
 CA_SETS=()
 bootstrap_ca() {
   local db=$1 root=$DIR/ca
@@ -283,11 +282,11 @@ bootstrap_ca() {
   CA_SETS=(-set "root_certificate_file=$root/root.pem"
     -set "intermediate_key_file=$DIR/intermediate.key"
     -set "installation_name=$INSTALLATION")
-  [ -f "$root/root.pem" ] || am ca init -dir "$root" >>"$DIR/harness.log" 2>&1 ||
+  am ca init -dir "$root" >>"$DIR/harness.log" 2>&1 ||
     die 3 "ca init failed (see $DIR/harness.log)"
   am server admin -sqlite "$db" "${CA_SETS[@]}" ca csr -out "$csr" >>"$DIR/harness.log" 2>&1 ||
     die 3 "ca csr failed (see $DIR/harness.log)"
-  [ -f "$cert" ] || am ca sign -dir "$root" "$csr" >"$cert" 2>>"$DIR/harness.log" ||
+  am ca sign -dir "$root" "$csr" >"$cert" 2>>"$DIR/harness.log" ||
     { rm -f "$cert"; die 3 "ca sign failed (see $DIR/harness.log)"; }
   am server admin -sqlite "$db" "${CA_SETS[@]}" ca install "$cert" >>"$DIR/harness.log" 2>&1 ||
     die 3 "ca install failed (see $DIR/harness.log)"

@@ -3,18 +3,20 @@
 # The server needs a CA before it starts (ADR 0019): a root, kept offline in a real deployment, and the
 # installation's intermediate certificate in the database. deploy/ca/ (git-ignored, never committed) holds
 # root.pem and intermediate.key, which both replicas mount; the root's own directory (root.key)
-# stays outside deploy/ in a real deployment. Once, from the repository root, with the image built
-# (make docker-image) and the stack's database running (docker compose -f deploy/docker-compose.yml up -d postgres):
+# stays outside deploy/ in a real deployment (this example puts it in deploy/ca/root, which is git-ignored with
+# the rest of deploy/ca/). Once, from the repository root, with the image built (make docker-image) and
+# the stack's database running (docker compose -f deploy/docker-compose.yml up -d postgres):
 #
+#   export AGENTMESH_UID=$(id -u) AGENTMESH_GID=$(id -g)   # the containers run as you, so they own the key file
 #   mkdir -p deploy/ca && umask 077
 #   RUN="docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint /agentmesh agentmesh-a"
-#   agentmesh ca init -dir ./root-ca              # the root tool; copy root-ca/root.pem to deploy/ca/root.pem
+#   agentmesh ca init -dir deploy/ca/root         # the root tool; then: cp deploy/ca/root/root.pem deploy/ca/root.pem
 #   $RUN server admin ca csr -out /ca/intermediate.csr   # makes /ca/intermediate.key on first use
-#   agentmesh ca sign -dir ./root-ca deploy/ca/intermediate.csr > deploy/ca/intermediate.pem
+#   agentmesh ca sign -dir deploy/ca/root deploy/ca/intermediate.csr > deploy/ca/intermediate.pem
 #   $RUN server admin ca install /ca/intermediate.pem    # stores the certificate in Postgres
 #
-# (`agentmesh` is the binary on the host: `make build`.) The containers run as AGENTMESH_UID:AGENTMESH_GID (example.env), so
-# the key file the host user owns is readable by them. See docs/ops for the full procedure.
+# (`agentmesh` is the binary on the host: `make build`.) Keep the same AGENTMESH_UID and AGENTMESH_GID when you
+# start the stack (`docker compose up`), or the replicas cannot read the key file.
 services:
   postgres:
     image: cgr.dev/chainguard/postgres:latest@sha256:0926ac7262a2c1963179eb939cd5d610e1be3ecca90b4b5cad8db8df16fab87e # Postgres 18; its LANG is en_US.UTF-8, so the initdb locale is UTF-8, which the server's Open requires
