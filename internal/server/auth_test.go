@@ -1160,3 +1160,13 @@ func (s ed25519Signer) Public() crypto.PublicKey { return s.k.Public() }
 func (s ed25519Signer) SignContext(_ context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return s.k.Sign(rand.Reader, digest, opts)
 }
+
+func TestExpiresInRoundsAndNeverGoesNegative(t *testing.T) {
+	now := time.Unix(1000, 0)
+	if got := expiresIn(now.Add(3599999900*time.Microsecond), now); got != 3600 {
+		t.Errorf("3599.9999 s = %d, want 3600", got)
+	}
+	if got := expiresIn(now.Add(-time.Minute), now); got != 0 {
+		t.Errorf("past expiry = %d, want 0", got)
+	}
+}

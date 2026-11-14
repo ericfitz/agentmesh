@@ -146,7 +146,7 @@ func (a *api) tokenExchange(ctx context.Context, b *gen.TokenFormdataRequestBody
 	return noStoreToken{gen.Token200JSONResponse{
 		AccessToken:     raw,
 		TokenType:       "Bearer",
-		ExpiresIn:       int64(exp.Sub(a.core.Now()).Seconds()),
+		ExpiresIn:       expiresIn(exp, a.core.Now()),
 		IssuedTokenType: &typ,
 	}}
 }

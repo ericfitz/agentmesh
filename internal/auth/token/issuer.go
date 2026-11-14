@@ -9,7 +9,6 @@ package token
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
@@ -307,7 +306,7 @@ func (i *Issuer) Mint(ctx context.Context, in MintInput) (string, time.Time, err
 	}
 	now := i.now()
 	// A process never signs outside its leaf's validity period.
-	if a := set.Active; (!a.NotBefore.IsZero() && now.Before(a.NotBefore)) || (!a.NotAfter.IsZero() && now.After(a.NotAfter)) {
+	if a := set.Active; (!a.NotBefore.IsZero() && now.Before(a.NotBefore)) || (!a.NotAfter.IsZero() && !now.Before(a.NotAfter)) {
 		return "", time.Time{}, fmt.Errorf("%w: the signing certificate is not valid at this time", ErrSignerUnavailable)
 	}
 	ja := jose.EdDSA
@@ -412,19 +411,15 @@ func (i *Issuer) JWKS(ctx context.Context) jose.JSONWebKeySet {
 			continue
 		}
 		if len(k.Chain) > 0 {
+			// validate parsed every certificate of the chain, so these parses cannot fail.
 			certs := make([]*x509.Certificate, 0, len(k.Chain))
 			for _, der := range k.Chain {
-				c, err := x509.ParseCertificate(der)
-				if err != nil {
-					break
+				if c, err := x509.ParseCertificate(der); err == nil {
+					certs = append(certs, c)
 				}
-				certs = append(certs, c)
 			}
-			if len(certs) != len(k.Chain) {
-				continue // validate admitted the leaf; a bad intermediate is never published
-			}
-			sum := sha256.Sum256(k.Chain[0])
-			j.Certificates, j.CertificateThumbprintSHA256 = certs, sum[:]
+			thumb, _ := base64.RawURLEncoding.DecodeString(thumbprintS256(k.Chain[0]))
+			j.Certificates, j.CertificateThumbprintSHA256 = certs, thumb
 		}
 		out.Keys = append(out.Keys, j)
 	}

@@ -108,7 +108,12 @@ func TestCertificateKeyValidate(t *testing.T) {
 	badInter := c.key
 	badInter.Chain = [][]byte{c.der, []byte("not DER")}
 
+	ecCert := Key{KID: c.key.KID, Algorithm: keys.EdDSA, Public: c.key.Public}
+	ecCert.Chain = [][]byte{makeCert(t, ecKey.Public(), ecKey, t0.Add(-time.Hour), t0.Add(time.Hour))}
+	ecCert.KID = thumbprintOf(ecCert.Chain[0]) // right thumbprint, but the certificate holds an ECDSA key
+
 	cases := map[string]Key{
+		"leaf cert holds ECDSA":     ecCert,
 		"intermediate not DER":      badInter,
 		"kid is not the thumbprint": badKID,
 		"public is not the cert's":  otherPub,
@@ -132,6 +137,9 @@ func TestCertificateKeyValidate(t *testing.T) {
 
 func TestSetWithoutSigner(t *testing.T) {
 	_, k := ksKey(t, keys.EdDSA)
+	if err := (KeySet{Active: k}).validate(); err == nil {
+		t.Error("a nil-signer set with a non-zero Active and no keys was accepted")
+	}
 	cases := map[string]KeySet{
 		"zero active, other keys": {Keys: []Key{k}},
 		"no keys":                 {},
@@ -263,8 +271,8 @@ func TestVerifyChecksValidity(t *testing.T) {
 		"starts in 61 seconds": {c.key.NotBefore.Add(-61 * time.Second), false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			// Claims are checked at the same instant; keep the token's own
-			// iat/exp out of the way by minting at tc.now's issuer clock.
+			// The issuer's clock is tc.now, so the token's own iat/exp (a minute
+			// either side of it) never decide the outcome.
 			clk2 := &clock{t: tc.now}
 			j := certIssuer(t, c, clk2)
 			// Sign with the leaf directly: Mint would refuse outside the period.
@@ -337,5 +345,26 @@ func TestJWKSCarriesChain(t *testing.T) {
 	plain, _ := newIssuer(t, keys.EdDSA, issURL, nil).JWKS(context.Background()).Keys[0].MarshalJSON()
 	if strings.Contains(string(plain), "x5c") || strings.Contains(string(plain), "x5t") {
 		t.Errorf("a key without a chain carries a certificate member: %s", plain)
+	}
+}
+
+func TestMintValidityEdges(t *testing.T) {
+	nb, na := t0.Add(-time.Hour), t0.Add(time.Hour)
+	c := newCertKey(t, nb, na)
+	mint := func(at time.Time) (time.Time, error) {
+		_, exp, err := certIssuer(t, c, &clock{t: at}).Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
+		return exp, err
+	}
+	if _, err := mint(na); !errors.Is(err, ErrSignerUnavailable) {
+		t.Errorf("now == NotAfter: err %v, want ErrSignerUnavailable", err)
+	}
+	if exp, err := mint(na.Add(-time.Second)); err != nil || !exp.Equal(na) {
+		t.Errorf("NotAfter-1s: exp %v, err %v, want exp == NotAfter", exp, err)
+	}
+	if _, err := mint(nb.Add(-time.Second)); !errors.Is(err, ErrSignerUnavailable) {
+		t.Errorf("NotBefore-1s: err %v, want ErrSignerUnavailable", err)
+	}
+	if _, err := mint(nb); err != nil {
+		t.Errorf("now == NotBefore: %v", err)
 	}
 }

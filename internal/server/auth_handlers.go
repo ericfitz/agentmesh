@@ -134,7 +134,7 @@ func (a *api) clientCredentials(ctx context.Context, iss *token.Issuer, b *gen.T
 	return noStoreToken{gen.Token200JSONResponse{
 		AccessToken: raw,
 		TokenType:   "Bearer",
-		ExpiresIn:   int64(math.Round(exp.Sub(a.core.Now()).Seconds())), // the issuer's clock reads a few microseconds before this one
+		ExpiresIn:   expiresIn(exp, a.core.Now()),
 	}}
 }
 
@@ -201,4 +201,11 @@ func (a *api) Register(ctx context.Context, req gen.RegisterRequestObject) (gen.
 		Algorithm: gen.RegistrationAlgorithm(res.Algorithm),
 		Created:   res.Created,
 	}, nil
+}
+
+// expiresIn is the expires_in of a token answer: the whole seconds from now to
+// exp, rounded (the issuer's clock reads a few microseconds before the
+// handler's, so truncation would answer 3599) and never negative.
+func expiresIn(exp, now time.Time) int64 {
+	return max(0, int64(math.Round(exp.Sub(now).Seconds())))
 }
