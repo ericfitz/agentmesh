@@ -8,3 +8,6 @@ func SetChainCheckHook(f func()) { chainCheckHook = f }
 
 // Issue issues one leaf the way a renewal does (tests only; Step is the production path).
 func (m *Manager) Issue(ctx context.Context) error { return m.issue(ctx) }
+
+// Wake is the channel Reload fills when it makes an issue due and Run waits on.
+func (m *Manager) Wake() <-chan struct{} { return m.wake }

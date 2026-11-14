@@ -8,6 +8,8 @@ package trusttest
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
@@ -165,6 +167,48 @@ func (f *Fixture) Manager(t testing.TB, c *core.Core) *signingkeys.Manager {
 		t.Fatalf("trusttest: manager: %v", err)
 	}
 	return m
+}
+
+// Leaf issues a leaf with the fixture's intermediate key at now for validity and
+// inserts its row, as another replica would; tests sign bearers with the key it
+// returns. It is fatal on an error.
+func (f *Fixture) Leaf(t testing.TB, c *core.Core, now time.Time, validity time.Duration) (ed25519.PrivateKey, *x509.Certificate) {
+	t.Helper()
+	b, err := os.ReadFile(f.KeyFile)
+	if err != nil {
+		t.Fatalf("trusttest: %v", err)
+	}
+	block, _ := pem.Decode(b)
+	if block == nil {
+		t.Fatalf("trusttest: %s holds no PEM block", f.KeyFile)
+	}
+	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("trusttest: %v", err)
+	}
+	inter, ok := k.(*ecdsa.PrivateKey)
+	if !ok {
+		t.Fatalf("trusttest: the key is %T, want ECDSA", k)
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("trusttest: %v", err)
+	}
+	leaf, err := pki.IssueLeaf(f.Intermediate, inter, pub, now, validity)
+	if err != nil {
+		t.Fatalf("trusttest: leaf: %v", err)
+	}
+	err = c.Store.Tx(context.Background(), func(ctx context.Context, tx store.Tx) error {
+		_, err := tx.PutTrustCertificate(ctx, store.TrustCertificate{
+			Kind: store.TrustLeaf, Thumbprint: pki.Thumbprint(leaf.Raw), DER: leaf.Raw,
+			IssuerKey: pki.KeyID(f.Intermediate.SubjectKeyId), NotAfter: leaf.NotAfter.UnixMilli(), CreatedAt: c.NowMs(),
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("trusttest: leaf row: %v", err)
+	}
+	return priv, leaf
 }
 
 // Renew issues another certificate for the same key, valid from at for days.

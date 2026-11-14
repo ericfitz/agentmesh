@@ -2,6 +2,7 @@ package signingkeys
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -231,6 +232,13 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 		leaf, err := parseCertificate(row.Thumbprint, row.DER)
 		var best pki.Verified
 		found := false
+		if err == nil {
+			if _, ok := leaf.PublicKey.(ed25519.PublicKey); !ok {
+				// The chain check does not look at the leaf's key type, and a key set
+				// that lists another type does not validate: refuse it here.
+				err = fmt.Errorf("the leaf's key is %T, want Ed25519", leaf.PublicKey)
+			}
+		}
 		if err == nil {
 			err = fmt.Errorf("no stored intermediate has the issuer key %q", row.IssuerKey)
 			for _, im := range byKey[row.IssuerKey] {

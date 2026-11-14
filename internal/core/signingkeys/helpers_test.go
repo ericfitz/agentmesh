@@ -309,7 +309,14 @@ func leafFor(t *testing.T, f *trusttest.Fixture, now time.Time, v time.Duration)
 
 func leafUnder(t *testing.T, inter *x509.Certificate, key *ecdsa.PrivateKey, now time.Time, v time.Duration) *x509.Certificate {
 	t.Helper()
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	_, c := leafUnderKey(t, inter, key, now, v)
+	return c
+}
+
+// leafUnderKey is leafUnder with the leaf's private key.
+func leafUnderKey(t *testing.T, inter *x509.Certificate, key *ecdsa.PrivateKey, now time.Time, v time.Duration) (ed25519.PrivateKey, *x509.Certificate) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,14 +324,20 @@ func leafUnder(t *testing.T, inter *x509.Certificate, key *ecdsa.PrivateKey, now
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c
+	return priv, c
 }
 
 // overlongLeaf signs a leaf that pki.IssueLeaf would refuse: valid from now less
 // the backdate to notBefore plus span.
 func overlongLeaf(t *testing.T, f *trusttest.Fixture, now time.Time, span time.Duration) *x509.Certificate {
+	c, _ := overlongLeafKey(t, f, now, span)
+	return c
+}
+
+// overlongLeafKey is overlongLeaf with the leaf's private key.
+func overlongLeafKey(t *testing.T, f *trusttest.Fixture, now time.Time, span time.Duration) (*x509.Certificate, ed25519.PrivateKey) {
 	t.Helper()
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +364,7 @@ func overlongLeaf(t *testing.T, f *trusttest.Fixture, now time.Time, span time.D
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c
+	return c, priv
 }
 
 // leafFailStore wraps a Store so that PutTrustCertificate of a leaf fails while
@@ -435,5 +448,13 @@ func wantUnavailable(t *testing.T, err error) {
 	var be *bus.Error
 	if !errors.As(err, &be) || be.Code != bus.CodeUnavailable || !be.Retryable {
 		t.Fatalf("err = %v, want a retryable unavailable", err)
+	}
+}
+
+// storeLeafRow is a leaf row filed under cert's thumbprint that holds der.
+func storeLeafRow(cert *x509.Certificate, der []byte, issuerKey string) store.TrustCertificate {
+	return store.TrustCertificate{
+		Kind: store.TrustLeaf, Thumbprint: pki.Thumbprint(cert.Raw), DER: der,
+		IssuerKey: issuerKey, NotAfter: cert.NotAfter.UnixMilli(),
 	}
 }

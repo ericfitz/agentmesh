@@ -72,7 +72,7 @@ func (m *Manager) Step(ctx context.Context) time.Time {
 	}
 	m.mu.Unlock()
 	if reloadDue {
-		if _, err := m.reload(ctx); err != nil {
+		if err := m.Reload(ctx); err != nil {
 			m.trust.Log.Warn("signingkeys: reload of the trust material failed", "error", failureLine(err))
 		}
 	}
@@ -88,8 +88,12 @@ func (m *Manager) Step(ctx context.Context) time.Time {
 func (m *Manager) renewLocked(ctx context.Context) {
 	now := m.trust.Now()
 	m.mu.Lock()
+	if m.stopped != "" {
+		m.mu.Unlock()
+		return
+	}
 	cur := m.cur
-	inPeriod := cur != nil && cur.verified.ValidAt(now, 0)
+	inPeriod := m.inPeriod(cur, now)
 	if !inPeriod && !m.retryAt.IsZero() && (!m.retryOutside || m.retryAt.After(now.Add(minRetry))) {
 		// A retry timed for a leaf the clock has since left (a stepped clock):
 		// Ruling 13 wins over the retry schedule.
@@ -114,14 +118,14 @@ func (m *Manager) renewLocked(ctx context.Context) {
 	}
 	msg := failureLine(err)
 	m.failure = &Failure{At: now, Message: msg}
-	m.retryOutside = m.cur == nil || !m.cur.verified.ValidAt(now, 0)
+	m.retryOutside = !m.inPeriod(m.cur, now)
 	m.retryAt = now.Add(m.retryDelay(now))
 	m.trust.Log.Warn("signingkeys: issuing the leaf failed", "error", msg, "retry_at", m.retryAt.UTC().Format(time.RFC3339))
 }
 
 // retryDelay is the wait after a failed issue at now. Caller holds mu.
 func (m *Manager) retryDelay(now time.Time) time.Duration {
-	if m.cur == nil || !m.cur.verified.ValidAt(now, 0) {
+	if !m.inPeriod(m.cur, now) {
 		return minRetry
 	}
 	d := m.cur.verified.NotAfter.Sub(now) / 8
@@ -139,9 +143,11 @@ func (m *Manager) nextDue() time.Time {
 	next := m.lastReload.Add(token.ReloadInterval)
 	var t time.Time
 	switch {
+	case m.stopped != "":
+		t = next // nothing to issue until a reload ends the stop
 	case !m.retryAt.IsZero():
 		t = m.retryAt
-	case m.cur != nil && m.cur.verified.ValidAt(now, 0):
+	case m.inPeriod(m.cur, now):
 		t = m.cur.issuedAt.Add(m.validity / 2)
 	default:
 		t = now
@@ -163,6 +169,7 @@ func (m *Manager) nextDue() time.Time {
 // the core's now on a real timer, so a stepped clock only shortens or lengthens
 // one wait (Step is at most token.ReloadInterval ahead). hints may be nil; a
 // hints is unused until Task 29 makes a hint that carries no message wake Run.
+// Run also wakes when Reload makes an issue due (the manager's wake channel).
 func (m *Manager) Run(ctx context.Context, _ notify.Notifier) {
 	for ctx.Err() == nil {
 		next := m.Step(ctx)
@@ -176,6 +183,8 @@ func (m *Manager) Run(ctx context.Context, _ notify.Notifier) {
 			timer.Stop()
 			return
 		case <-timer.C:
+		case <-m.wake:
+			timer.Stop()
 		}
 	}
 }

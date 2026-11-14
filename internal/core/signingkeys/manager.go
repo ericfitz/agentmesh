@@ -102,6 +102,12 @@ type Manager struct {
 	// retryOutside: the retry was timed while the clock was outside the current leaf's period.
 	retryOutside bool
 	failure      *Failure
+
+	// stopped is "" or why the manager no longer issues or signs (Reload; guarded
+	// by mu). wake is the one-slot channel Reload fills when it makes an issue
+	// due and Run waits on.
+	stopped string
+	wake    chan struct{}
 }
 
 var _ token.KeySource = (*Manager)(nil)
@@ -120,8 +126,8 @@ func New(ctx context.Context, o Options) (*Manager, error) {
 	if o.LeafValidity < MinLeafValidity || o.LeafValidity > MaxLeafValidity {
 		return nil, fmt.Errorf("signingkeys: the leaf validity is %s, want %s to %s", o.LeafValidity, MinLeafValidity, MaxLeafValidity)
 	}
-	m := &Manager{trust: o.Trust, validity: o.LeafValidity, onChange: o.OnChange}
-	if _, err := m.reload(ctx); err != nil {
+	m := &Manager{trust: o.Trust, validity: o.LeafValidity, onChange: o.OnChange, wake: make(chan struct{}, 1)}
+	if err := m.Reload(ctx); err != nil {
 		return nil, err
 	}
 	if err := m.issue(ctx); err != nil {
@@ -142,18 +148,25 @@ func (m *Manager) SetOnChange(f func()) {
 func (m *Manager) Trust() Trust { return m.trust }
 
 // usable reports whether l can sign now: its chain is inside its period with
-// the token leeway and it is not revoked. A leaf issued since the last load is
-// usable (the load has not seen its row yet); after a load that no longer
-// verifies it, it is not (the key set has no Active either). Caller holds mu.
+// the token leeway and it is not revoked. A leaf the last load saw is usable
+// when it verified and is not revoked; one issued since is usable (the load
+// has not seen its row yet); after a load that no longer verifies it, it is not
+// (the key set has no Active either). Caller holds mu.
 func (m *Manager) usable(l *leafKey, now time.Time) bool {
-	if l == nil || !l.verified.ValidAt(now, token.Leeway) {
+	if l == nil || m.stopped != "" || !l.verified.ValidAt(now, token.Leeway) {
 		return false
 	}
-	if l.gen == m.gen {
-		return true
+	if revoked, seen := m.revoked[l.thumbprint]; seen {
+		return !revoked
 	}
-	revoked, verified := m.revoked[l.thumbprint]
-	return verified && !revoked
+	return l.gen == m.gen
+}
+
+// inPeriod reports whether l is current as the renewal rules count it: the
+// clock is inside its period (no leeway) and the last load did not find it
+// revoked, so a revoked leaf is treated as an expired one. Caller holds mu.
+func (m *Manager) inPeriod(l *leafKey, now time.Time) bool {
+	return l != nil && l.verified.ValidAt(now, 0) && !m.revoked[l.thumbprint]
 }
 
 // Current is the thumbprint and "not after" of the leaf this process signs
@@ -167,17 +180,22 @@ func (m *Manager) Current() (thumbprint string, notAfter time.Time) {
 	return m.cur.thumbprint, m.cur.verified.NotAfter
 }
 
-// LoadKeys implements token.KeySource: it reloads, then returns the set.
+// LoadKeys implements token.KeySource: it reloads (Reload), then returns the
+// set.
 func (m *Manager) LoadKeys(ctx context.Context) (token.KeySet, error) {
 	// The reload and the set are one hold of mu: a leaf swapped in by issue
 	// between them would be missing from the loaded material, and the set
 	// would carry no Active and no Signer although a leaf can sign.
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, err := m.reloadLocked(ctx); err != nil {
+	r, err := m.reloadReactLocked(ctx)
+	if err != nil {
+		m.mu.Unlock()
 		return token.KeySet{}, err
 	}
-	return m.keySet(m.trust.Now()), nil
+	set := m.keySet(m.trust.Now())
+	m.mu.Unlock()
+	m.finishReload(ctx, r)
+	return set, nil
 }
 
 // keySet is every leaf of the loaded material that is not revoked and whose
@@ -186,6 +204,9 @@ func (m *Manager) LoadKeys(ctx context.Context) (token.KeySet, error) {
 // mu.
 func (m *Manager) keySet(now time.Time) token.KeySet {
 	var set token.KeySet
+	if m.stopped == "root_expired" {
+		return set
+	}
 	for _, l := range m.mat.Leaves {
 		if l.Revoked || !l.Verified.ValidAt(now, token.Leeway) {
 			continue
@@ -198,7 +219,7 @@ func (m *Manager) keySet(now time.Time) token.KeySet {
 			NotBefore: l.Verified.NotBefore,
 			NotAfter:  l.Verified.NotAfter,
 		}
-		if m.cur != nil && k.KID == m.cur.thumbprint {
+		if m.stopped == "" && m.cur != nil && k.KID == m.cur.thumbprint {
 			set.Active, set.Signer = k, m.cur.signer
 			set.Keys = append([]token.Key{k}, set.Keys...)
 			continue
@@ -208,19 +229,10 @@ func (m *Manager) keySet(now time.Time) token.KeySet {
 	return set
 }
 
-// reload is the load without reactions: Trust.Load with the manager's Memory,
-// then the snapshot is swapped. changed: the trust number or the set of
-// verified leaves differs from the last load. LoadKeys here and Step in Task
-// 18 call it; Task 19 builds the exported Reload on it (the reactions) and
-// moves both callers to that.
-func (m *Manager) reload(ctx context.Context) (changed bool, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.reloadLocked(ctx)
-}
-
-// reloadLocked is reload for a caller that holds mu; Task 19's Reload builds
-// on it.
+// reloadLocked is the load without reactions: Trust.Load with the manager's
+// Memory, then the snapshot is swapped. changed: the trust number, the set of
+// verified leaves or one leaf's revoked flag differs from the last load (never
+// the first load). Reload and LoadKeys build on it; caller holds mu.
 func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 	mat, err := m.trust.Load(ctx, &m.mem)
 	if err != nil {
@@ -230,10 +242,12 @@ func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 	for _, l := range mat.Leaves {
 		revoked[pki.Thumbprint(l.Verified.Leaf.Raw)] = l.Revoked
 	}
-	changed = !m.loaded || mat.Number != m.mat.Number || len(revoked) != len(m.revoked)
-	for tp := range revoked {
-		if _, ok := m.revoked[tp]; !ok {
-			changed = true
+	changed = m.loaded && (mat.Number != m.mat.Number || len(revoked) != len(m.revoked))
+	if m.loaded {
+		for tp, r := range revoked {
+			if old, ok := m.revoked[tp]; !ok || old != r {
+				changed = true
+			}
 		}
 	}
 	m.mat, m.revoked, m.loaded = mat, revoked, true
