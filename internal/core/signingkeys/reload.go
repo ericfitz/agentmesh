@@ -96,7 +96,9 @@ func (m *Manager) loadLocked(ctx context.Context) (loaded, error) {
 	return l, nil
 }
 
-// reactLocked applies the reactions to what Pick found; caller holds mu.
+// reactLocked applies the reactions to what Pick found; caller holds mu. It
+// tolerates a Pick taken from material older than m.mat (the window between
+// Reload's two holds of mu); the next reload corrects it.
 func (m *Manager) reactLocked(l loaded, p Picked, perr error) reloaded {
 	r := reloaded{changed: l.changed, rollback: l.mat.Rollback, notify: l.notify}
 	if perr != nil {

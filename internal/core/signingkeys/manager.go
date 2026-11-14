@@ -51,7 +51,13 @@ const msgNotCertKey = "the configured key is not the certificate's key"
 type Options struct {
 	Trust        Trust         // Provider is required
 	LeafValidity time.Duration // W: 2 to 720 hours
-	OnChange     func()        // runs after this process's leaf or its view of the trust material changed; nil is fine
+	// OnChange runs after this process's leaf or its view of the trust material
+	// changed; nil is fine. Reload, a renewal and RotateSigningKey call it
+	// synchronously, so inside RotateSigningKey it runs while the manager's
+	// issuing mutex and the "trust" lock are held: the callback must not take
+	// either of them or call back into the manager's issuing paths (Step,
+	// RotateSigningKey). Current, LoadKeys and Reload are safe to call.
+	OnChange func()
 }
 
 // leafKey is the leaf this process signs with and the private key it alone
@@ -260,10 +266,10 @@ func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 
 // check applies the start rules to what Pick found (the manager writes no
 // matching rule of its own: Plan ruling 12).
-func (m *Manager) check(p Picked, mat Material) error {
-	now := m.trust.Now()
-	if now.After(m.trust.Root.NotAfter) {
-		return fmt.Errorf("%w: it expired at %s", ErrRootExpired, m.trust.Root.NotAfter.UTC().Format(time.RFC3339))
+func (t Trust) check(p Picked, mat Material) error {
+	now := t.Now()
+	if now.After(t.Root.NotAfter) {
+		return fmt.Errorf("%w: it expired at %s", ErrRootExpired, t.Root.NotAfter.UTC().Format(time.RFC3339))
 	}
 	if len(p.Configured) == 0 {
 		return ErrNoIntermediate
@@ -279,10 +285,10 @@ func (m *Manager) check(p Picked, mat Material) error {
 
 // signerFor opens the picked intermediate's key (Decision 48): the file form
 // reads the key file, a key service signs with the reference the row pins.
-func (m *Manager) signerFor(ctx context.Context, p Picked) (keyprovider.Signer, error) {
+func (t Trust) signerFor(ctx context.Context, p Picked) (keyprovider.Signer, error) {
 	var key keyprovider.Key
-	if m.trust.Provider.Name() == keyprovider.NameFile {
-		k, err := m.trust.nextKey(ctx)
+	if t.Provider.Name() == keyprovider.NameFile {
+		k, err := t.nextKey(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +304,7 @@ func (m *Manager) signerFor(ctx context.Context, p Picked) (keyprovider.Signer, 
 		}
 		key = k
 	}
-	s, err := m.trust.Provider.Signer(ctx, key)
+	s, err := t.Provider.Signer(ctx, key)
 	if err != nil {
 		return nil, fmt.Errorf("signingkeys: open the intermediate key: %w", err)
 	}
@@ -323,59 +329,93 @@ func (m *Manager) issueLocked(ctx context.Context) error {
 	m.mu.Lock()
 	mat := m.mat
 	m.mu.Unlock()
-	p, err := m.trust.Pick(ctx, mat)
+	pl, err := m.mintLeaf(ctx, mat)
 	if err != nil {
 		return err
-	}
-	if err := m.check(p, mat); err != nil {
-		return err
-	}
-	now := m.trust.Now()
-
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return fmt.Errorf("signingkeys: generate the leaf key: %w", err)
-	}
-	signCtx, cancel := context.WithTimeout(ctx, SignTimeout)
-	defer cancel()
-	signer, err := m.signerFor(signCtx, p)
-	if err != nil {
-		return err
-	}
-	if !samePublic(signer.Public(), p.Use.PublicKey) {
-		m.trust.Log.Error(msgNotCertKey, "intermediate", pki.Thumbprint(p.Use.Raw))
-		return fmt.Errorf("signingkeys: %s", msgNotCertKey)
-	}
-	leaf, err := pki.IssueLeaf(p.Use, CryptoSigner(signCtx, signer), pub, now, m.validity)
-	if err != nil {
-		return fmt.Errorf("signingkeys: sign the leaf: %w", err)
-	}
-	v, err := pki.VerifyChain([]*x509.Certificate{leaf, p.Use}, m.trust.Root, m.trust.Installation, now, token.Leeway)
-	if err != nil {
-		m.trust.Log.Error(msgNotCertKey, "intermediate", pki.Thumbprint(p.Use.Raw), "reason", err.Error())
-		return fmt.Errorf("signingkeys: %s: %w", msgNotCertKey, err)
-	}
-	thumb := pki.Thumbprint(leaf.Raw)
-	row := store.TrustCertificate{
-		Kind: store.TrustLeaf, Thumbprint: thumb, DER: leaf.Raw, IssuerKey: keyIDOf(p.Use),
-		NotAfter: leaf.NotAfter.UnixMilli(), CreatedAt: m.trust.NowMs(),
 	}
 	// No trust lock: a leaf row is append-only under a random serial and does not
 	// change the trust number (section 4.9: the bundle carries no leaf).
 	err = m.trust.Store.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
-		_, err := tx.PutTrustCertificate(ctx, row)
+		_, err := tx.PutTrustCertificate(ctx, pl.row)
 		return err
 	})
 	if err != nil {
 		return core.FromStore(err)
 	}
-
-	m.mu.Lock()
-	m.prev, m.cur = m.cur, &leafKey{gen: m.gen, issuedAt: now, thumbprint: thumb, verified: v, signer: leafSigner{priv: priv}}
-	notify := m.onChange
-	m.mu.Unlock()
-	if notify != nil {
+	if notify := m.adopt(pl); notify != nil {
 		notify()
 	}
 	return nil
+}
+
+// pendingLeaf is a leaf that is signed and has passed the chain check but has no
+// row yet: the intermediate it was signed under (Picked), the row to store and
+// the key the manager signs with once the row is stored.
+type pendingLeaf struct {
+	picked Picked
+	row    store.TrustCertificate
+	key    *leafKey
+}
+
+// mintLeaf is the signing half of an issue, over the loaded material mat: pick
+// the intermediate, an Ed25519 key in memory, pki.IssueLeaf with the
+// intermediate's signer under SignTimeout and the chain check of the new leaf
+// at the current time. It writes nothing and changes no state of the manager
+// (RotateSigningKey stores the row inside its own transaction). Caller holds
+// issueMu.
+func (m *Manager) mintLeaf(ctx context.Context, mat Material) (pendingLeaf, error) {
+	p, err := m.trust.Pick(ctx, mat)
+	if err != nil {
+		return pendingLeaf{}, err
+	}
+	if err := m.trust.check(p, mat); err != nil {
+		return pendingLeaf{}, err
+	}
+	now := m.trust.Now()
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return pendingLeaf{}, fmt.Errorf("signingkeys: generate the leaf key: %w", err)
+	}
+	signCtx, cancel := context.WithTimeout(ctx, SignTimeout)
+	defer cancel()
+	signer, err := m.trust.signerFor(signCtx, p)
+	if err != nil {
+		return pendingLeaf{}, err
+	}
+	if !samePublic(signer.Public(), p.Use.PublicKey) {
+		m.trust.Log.Error(msgNotCertKey, "intermediate", pki.Thumbprint(p.Use.Raw))
+		return pendingLeaf{}, fmt.Errorf("signingkeys: %s", msgNotCertKey)
+	}
+	leaf, err := pki.IssueLeaf(p.Use, CryptoSigner(signCtx, signer), pub, now, m.validity)
+	if err != nil {
+		return pendingLeaf{}, fmt.Errorf("signingkeys: sign the leaf: %w", err)
+	}
+	v, err := pki.VerifyChain([]*x509.Certificate{leaf, p.Use}, m.trust.Root, m.trust.Installation, now, token.Leeway)
+	if err != nil {
+		m.trust.Log.Error(msgNotCertKey, "intermediate", pki.Thumbprint(p.Use.Raw), "reason", err.Error())
+		return pendingLeaf{}, fmt.Errorf("signingkeys: %s: %w", msgNotCertKey, err)
+	}
+	thumb := pki.Thumbprint(leaf.Raw)
+	return pendingLeaf{
+		picked: p,
+		row: store.TrustCertificate{
+			Kind: store.TrustLeaf, Thumbprint: thumb, DER: leaf.Raw, IssuerKey: keyIDOf(p.Use),
+			NotAfter: leaf.NotAfter.UnixMilli(), CreatedAt: m.trust.NowMs(),
+		},
+		key: &leafKey{issuedAt: now, thumbprint: thumb, verified: v, signer: leafSigner{priv: priv}},
+	}, nil
+}
+
+// adopt makes a minted leaf, whose row is stored, the current one and the
+// former one the previous, and clears the last failed issue. It returns the
+// OnChange function for the caller to run when it holds no lock of the
+// manager's own that OnChange must not take (see Options.OnChange).
+func (m *Manager) adopt(pl pendingLeaf) (notify func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pl.key.gen = m.gen
+	m.prev, m.cur = m.cur, pl.key
+	m.failure, m.retryAt = nil, time.Time{}
+	return m.onChange
 }
