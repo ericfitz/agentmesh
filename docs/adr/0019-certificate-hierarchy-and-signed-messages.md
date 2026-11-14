@@ -94,6 +94,10 @@ Decisions 47 to 49 are his answers to the open questions of the spec 1 plan (`do
 48. **With a key service, a process signs with the newest valid installed intermediate.** (Plan open question 3, option A; this makes Plan ruling 12 his.) A process picks the newest valid stored intermediate whose pinned key reference has the configured URI's scheme. Ruling 9 stands: the key version is pinned at `ca install`, so a new version made inside the key service, by hand or by its own rotation schedule, changes nothing until the operator runs `ca csr` and `ca install` again; leaves rotate automatically at W/2 whatever holds the intermediate key. Not taken: resolving the URI at every start and matching by public key (B), and recording the URI's printable name beside the reference (C).
 49. **Spec 1's text is approved.** (Plan open question 4.) Eric approved the text of spec 1's third and fourth revisions, which carries out Decisions 22 to 39. The plan rulings in spec 1 sections 12 and 13 stay rulings he may overrule. Spec 2's rewrite is not covered.
 
+## The assigned enterprise number (Eric, 2026-11-13, human-made)
+
+50. **The Private Enterprise Number is 67669.** IANA assigned the number 67669 to Trojan Unicorn Ventures LLC on 2026-11-13 (registry: https://www.iana.org/assignments/enterprise-numbers/). The agentmesh extended key usage of Decision 36 is therefore `1.3.6.1.4.1.67669.1.1`. This is the record Ruling 42 and plan Task 37 wait for: the stand-in 32473 of Decision 47 is replaced by 67669, and the branch `adr-0019-spec-1` may merge once Task 37 has landed and the rest of spec 1 is done.
+
 ## Plan rulings Eric approved with the design sections (2026-11-11)
 
 Each was proposed during the design session and approved by Eric as part of a design section. They are not among his numbered decisions, and he may overrule any of them. Where a later decision of his changed one, the item says so.
@@ -225,7 +229,7 @@ Eric has not decided these. Each is a proposal he may overrule.
 9. A client profile that points at an `http` server on another host stops working until its URL is `https` or the override switch is set (Decision 19). Today any `http` URL is accepted (`internal/profile/config.go:132-153`).
 10. The discover document grows by the trust bundle, a few kilobytes, and is fetched once by every client process that opens a server profile.
 11. The server never reads its own signed messages back. The two places that did are gone with Decisions 17 and 20 (Decision 40).
-12. Every server has an installation name, in its configuration and in its intermediate certificate, and an outside CA's procedure has to issue the name and the extended key usage (Decision 23). The usage's identifier is `1.3.6.1.4.1.<PEN>.1.1`, and the number is pending at IANA; spec 1 cannot ship without it (Decision 36).
+12. Every server has an installation name, in its configuration and in its intermediate certificate, and an outside CA's procedure has to issue the name and the extended key usage (Decision 23). The usage's identifier is `1.3.6.1.4.1.67669.1.1` (Decisions 36 and 50).
 13. A root renewal is an action on every client, a same-key renewal included (Decision 34).
 14. A client keeps one more file, the revocations it has seen, and makes one more discover call when a human message fails for want of trust (Decisions 27 and 33).
 15. A session's state file records what the session has taken: its open time, the human messages it has seen, and what it received or sent. A human message from before a session opened is not delivered to it, and a human message is delivered to a session once (Decision 40). For a Slack post both go by its Slack timestamp: one made before a session opened is not delivered to it as human, a catch-up included, and one ingested twice is taken once (Decision 46).
