@@ -601,6 +601,21 @@ func TestRotateErrorMapping(t *testing.T) {
 			t.Fatal("a timeout is not retryable")
 		}
 	})
+	t.Run("canceled: the caller is gone", func(t *testing.T) {
+		e, m, p := renewEnv(t)
+		e.admin(t, "root")
+		p.err = fmt.Errorf("sign: %w", context.Canceled)
+		p.down.Store(true)
+		s := e.snap(t)
+		_, err := rotate(ctx, m, "k")
+		if be := wantUnavailableFinal(t, err); !be.Retryable {
+			t.Fatal("a canceled renewal is not retryable")
+		}
+		if e.logged("could not sign") {
+			t.Fatalf("a canceled renewal was logged as an error:\n%s", e.logs.String())
+		}
+		e.wantSnap(t, s)
+	})
 	t.Run("any other key failure", func(t *testing.T) {
 		e, m, p := renewEnv(t)
 		e.admin(t, "root")

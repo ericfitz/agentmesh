@@ -53,8 +53,9 @@ func (m *Manager) ListSigningKeys(ctx context.Context, admin string) (bus.Signin
 // key service or key file is a retryable unavailable; a stopped manager (no
 // stored intermediate, expired, revoked, root expired) and any other failure of
 // the key (a mismatch, an unreadable file, a refused signature) is an
-// unavailable that is not retryable, because an operator must act. Errors that
-// are bus errors already pass.
+// unavailable that is not retryable, because an operator must act. A canceled
+// context is the caller gone: retryable and not logged. Errors that are bus
+// errors already pass.
 func issueFailure(log interface{ Error(string, ...any) }, err error) error {
 	if err == nil {
 		return nil
@@ -63,7 +64,8 @@ func issueFailure(log interface{ Error(string, ...any) }, err error) error {
 	if errors.As(err, &be) {
 		return err
 	}
-	retryable := errors.Is(err, keyprovider.ErrUnavailable) || errors.Is(err, context.DeadlineExceeded)
+	gone := errors.Is(err, context.Canceled) // the caller went away: not an error of the key
+	retryable := gone || errors.Is(err, keyprovider.ErrUnavailable) || errors.Is(err, context.DeadlineExceeded)
 	if !retryable {
 		log.Error("signingkeys: a forced renewal could not sign", "error", failureLine(err))
 	}
