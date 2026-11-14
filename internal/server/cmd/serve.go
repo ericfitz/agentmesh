@@ -47,9 +47,10 @@ type Config struct {
 	Registration identities.Mode
 	Issuer       *token.Issuer     // nil: local mode, the token endpoint answers 503
 	External     []*token.External // configured external issuers (Decision 57)
-	// SigningKeys runs the signing key rotation and removal maintenance jobs;
-	// nil: they are off.
-	SigningKeys *signingkeys.Service
+	// SigningKeys is the leaf manager (ADR 0019 section 4.6): Serve runs its
+	// renewal loop and serves the signing key operations through it; nil: the
+	// loop is off and those operations answer unavailable.
+	SigningKeys *signingkeys.Manager
 	Embedder    core.Embedder // nil: text search only; embed.Install when set
 	// Inspector judges content writes before they commit; nil: no inspection.
 	Inspector core.Inspector
@@ -149,7 +150,6 @@ func Serve(ctx context.Context, c Config) error {
 	var wg sync.WaitGroup
 	defer func() { stopMaint(); wg.Wait() }()
 	m := maintenance.New(cr)
-	m.SigningKeys = c.SigningKeys
 	if br != nil {
 		m.Archiver = br
 		// The runner competes for the slack-bridge lock beside maintenance and
@@ -161,6 +161,13 @@ func Serve(ctx context.Context, c Config) error {
 			if err := br.Run(mctx); err != nil {
 				cr.Log.Error("slack bridge", "err", err)
 			}
+		}()
+	}
+	if c.SigningKeys != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.SigningKeys.Run(mctx, nil)
 		}()
 	}
 	wg.Add(1)

@@ -57,22 +57,6 @@ expect_exit "$NAME-nocfg" 2 'exactly one of sqlite or postgres is required' "$IM
 echo "step 2b: a store without listen exits 2"
 expect_exit "$NAME-nolisten" 2 'listen is required' -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db "$IMAGE"
 
-echo "step 2c: every key provider backend is in the image"
-# The image carries all four backends (BUILD_TAGS in the Dockerfile; open note signing-keys 1); an untagged binary
-# answers every scheme with "not in this build". With the placeholder URI "<scheme>://none" the three URI-checking
-# backends refuse it as a configuration error (exit 2); hashivault does too, because New checks its environment
-# (VAULT_ADDR, VAULT_TOKEN), which the container leaves unset. No key service is needed. The log must carry the
-# backend's own text; expect_exit also fails when the log quotes the URI ("://none").
-for spec in awskms:2:'agentmesh server: awskms:' gcpkms:2:'agentmesh server: gcpkms:' azurekms:2:'agentmesh server: azurekms:' \
-  hashivault:2:'agentmesh server: hashivault:'; do
-  scheme="${spec%%:*}"
-  rest="${spec#*:}"
-  want="${rest%%:*}"
-  text="${rest#*:}"
-  expect_exit "$NAME-nolisten" "$want" "$text" -e AGENTMESH_SERVER_LISTEN=0.0.0.0:8420 \
-    -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db -e "AGENTMESH_SERVER_SIGNING_KEY_URI=$scheme://none" "$IMAGE"
-done
-
 echo "step 3: version"
 got="$(docker run --rm --entrypoint /agentmesh "$IMAGE" version)"
 [ "$got" = smoke ] || fail "version printed \"$got\", want smoke"
@@ -93,6 +77,25 @@ agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca csr -ou
 agentmesh_run ca sign -dir /data/ca /data/intermediate.csr >"$DATA/intermediate.pem" || fail "ca sign failed"
 agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca install /data/intermediate.pem >/dev/null ||
   fail "ca install failed"
+
+echo "step 4c: every key provider backend is in the image"
+# The image carries all four backends (BUILD_TAGS in the Dockerfile; open note signing-keys 1); an untagged binary
+# answers every scheme with "not in this build". With the placeholder URI "<scheme>://none" the three URI-checking
+# backends refuse it as a configuration error (exit 2); hashivault does too, because New checks its environment
+# (VAULT_ADDR, VAULT_TOKEN), which the container leaves unset. The start checks the root first, so the container
+# mounts the CA of step 4b. No key service is needed. The log must carry the
+# backend's own text; expect_exit also fails when the log quotes the URI ("://none").
+for spec in awskms:2:'agentmesh server: awskms:' gcpkms:2:'agentmesh server: gcpkms:' azurekms:2:'agentmesh server: azurekms:' \
+  hashivault:2:'agentmesh server: hashivault:'; do
+  scheme="${spec%%:*}"
+  rest="${spec#*:}"
+  want="${rest%%:*}"
+  text="${rest#*:}"
+  expect_exit "$NAME-nolisten" "$want" "$text" --user "$(id -u):$(id -g)" -v "$DATA:/data" \
+    -e AGENTMESH_SERVER_LISTEN=0.0.0.0:8420 -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db \
+    -e AGENTMESH_SERVER_ROOT_CERTIFICATE_FILE=/data/ca/root.pem -e AGENTMESH_SERVER_INSTALLATION_NAME=smoke-installation \
+    -e "AGENTMESH_SERVER_INTERMEDIATE_KEY_URI=$scheme://none" "$IMAGE"
+done
 
 echo "step 5: serving container"
 docker run -d --name "$NAME" -p 127.0.0.1::8420 --user "$(id -u):$(id -g)" -v "$DATA:/data" \
@@ -154,7 +157,8 @@ case "$logs" in
   *':8420 (sqlite, registration open'*) ;;
   *) fail "log lacks the listening line with 'registration open': $logs" ;;
 esac
-case "$logs" in *'generated signing key'*) ;; *) fail "log lacks 'generated signing key': $logs" ;; esac
+case "$logs" in *', leaf '*) ;; *) fail "the listening line lacks ', leaf ': $logs" ;; esac
+case "$logs" in *'generated signing key'* | *'adopted signing key'*) fail "log has a retired signing key line: $logs" ;; esac
 
 echo "step 9: compose example validates; its .env is neither committed nor in the build context"
 git -C "$ROOT" check-ignore -q deploy/.env || fail "deploy/.env is not git-ignored"

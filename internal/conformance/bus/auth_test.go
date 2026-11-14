@@ -6,11 +6,13 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -28,18 +30,16 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/identities"
-	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/dbtest"
 	"github.com/ericfitz/agentmesh/internal/gen"
-	"github.com/ericfitz/agentmesh/internal/keyprovider"
+	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/server/cmd"
-	ab2store "github.com/ericfitz/agentmesh/internal/store"
 )
 
 // listeningRE captures the engine, mode, issuer URL, port and kid from the
 // line `agentmesh server listening on ADDR (ENGINE, registration MODE,
-// issuer URL, kid KID)`.
-var listeningRE = regexp.MustCompile(`listening on (\S+) \((\w+), registration (\w+), issuer (http://[^:,]+:(\d+)), kid (\S+)\)`)
+// issuer URL, leaf THUMBPRINT until TIME)`.
+var listeningRE = regexp.MustCompile(`listening on (\S+) \((\w+), registration (\w+), issuer (http://[^:,]+:(\d+)), leaf (\S+) until (\S+)\)`)
 
 // authWho is one identity of the exit test.
 type authWho struct {
@@ -51,12 +51,12 @@ type authWho struct {
 
 // mintBearer signs a client assertion for name against the issuer's token
 // endpoint and exchanges it through c.
-func mintBearer(ctx context.Context, c *gen.ClientWithResponses, issuer *token.Issuer, name string, key crypto.Signer) (string, error) {
+func mintBearer(ctx context.Context, c *gen.ClientWithResponses, issuerURL, name string, key crypto.Signer) (string, error) {
 	kid, err := keys.KID(key.Public())
 	if err != nil {
 		return "", err
 	}
-	raw, err := assertion.Sign(assertion.Input{Identity: name, Audience: issuer.URL(), Key: key, KID: kid, Now: time.Now()})
+	raw, err := assertion.Sign(assertion.Input{Identity: name, Audience: issuerURL, Key: key, KID: kid, Now: time.Now()})
 	if err != nil {
 		return "", err
 	}
@@ -79,27 +79,11 @@ func TestAuthEndToEnd(t *testing.T) {
 		defer cancel()
 		st, _, dsn := openStoreDSN(t, e)
 
-		// The test creates the signing key before the server starts, so it
-		// holds the real key to forge against its kid and to back-date a
-		// token; the server's Run then loads the row (the second-start path).
 		c, err := core.New(st, core.Defaults(), core.Options{Now: time.Now})
 		if err != nil {
 			t.Fatal(err)
 		}
 		svc := identities.Service{Core: c}
-		keysSvc := signingkeys.Service{Core: c, Provider: keyprovider.StoreProvider{}, Settings: signingkeys.DefaultSettings()}
-		activeRow, created, err := keysSvc.EnsureActive(ctx)
-		if err != nil || !created {
-			t.Fatalf("EnsureActive = created %v, %v", created, err)
-		}
-		serverKey, _, err := keys.ParsePrivatePEM([]byte(activeRow.PrivateKeyPEM))
-		if err != nil {
-			t.Fatal(err)
-		}
-		serverKID, err := keys.KID(serverKey.Public())
-		if err != nil {
-			t.Fatal(err)
-		}
 
 		storeFlag := "-sqlite"
 		if e.Name == "postgres" {
@@ -109,7 +93,7 @@ func TestAuthEndToEnd(t *testing.T) {
 		done := make(chan int, 1)
 		trust := serverTrust(t, st)
 		go func() {
-			done <- cmd.Run(ctx, append([]string{"-listen", "0.0.0.0:0", storeFlag, dsn, "-set", "signing_key_rotation_cooldown_seconds=3"}, trust.Sets()...), nil, &stdout, &stderr)
+			done <- cmd.Run(ctx, append([]string{"-listen", "0.0.0.0:0", storeFlag, dsn}, trust.Sets()...), nil, &stdout, &stderr)
 		}()
 		stopped := false
 		stop := func() {
@@ -142,7 +126,7 @@ func TestAuthEndToEnd(t *testing.T) {
 			}
 		}
 
-		engine, mode, issuerURL, port, kid := m[2], m[3], m[4], m[5], m[6]
+		engine, mode, issuerURL, port, serverKID, until := m[2], m[3], m[4], m[5], m[6], m[7]
 		if engine != e.Name {
 			t.Errorf("engine = %q, want %q", engine, e.Name)
 		}
@@ -152,12 +136,12 @@ func TestAuthEndToEnd(t *testing.T) {
 		if issuerURL != "http://0.0.0.0:"+port {
 			t.Errorf("issuer = %q, want http://0.0.0.0:%s", issuerURL, port)
 		}
-		if kid != serverKID {
-			t.Errorf("kid = %q, want the pre-created key's %q", kid, serverKID)
+		if _, err := time.Parse(time.RFC3339, until); err != nil {
+			t.Errorf("leaf end %q is not an RFC 3339 time: %v", until, err)
 		}
 		out := stdout.String()
-		if strings.Contains(out, "generated signing key") {
-			t.Errorf("stdout says a signing key was generated, but the row existed:\n%s", out)
+		if strings.Contains(out, "generated signing key") || strings.Contains(out, ", kid ") {
+			t.Errorf("stdout has a line of the retired key set:\n%s", out)
 		}
 		if !strings.Contains(out, "issuer is unset") {
 			t.Errorf("stdout lacks the issuer-is-unset warning:\n%s", out)
@@ -170,10 +154,6 @@ func TestAuthEndToEnd(t *testing.T) {
 		// http://0.0.0.0:<port>: the issuer is a configured string, not the
 		// request host (choice 7).
 		base := "http://127.0.0.1:" + port
-		issuer, err := token.NewIssuer(context.Background(), issuerURL, token.StaticKeys(serverKey), time.Hour, time.Now)
-		if err != nil {
-			t.Fatal(err)
-		}
 		newClient := func(bearer string) *gen.ClientWithResponses {
 			var opts []gen.ClientOption
 			if bearer != "" {
@@ -215,7 +195,7 @@ func TestAuthEndToEnd(t *testing.T) {
 		}
 		login := func(w *authWho) {
 			t.Helper()
-			bearer, err := mintBearer(ctx, anon, issuer, w.name, w.key)
+			bearer, err := mintBearer(ctx, anon, issuerURL, w.name, w.key)
 			if err != nil {
 				t.Fatalf("authenticate %s: %v", w.name, err)
 			}
@@ -257,8 +237,13 @@ func TestAuthEndToEnd(t *testing.T) {
 			}
 		})
 		t.Run("forged-bearer-refused", func(t *testing.T) {
-			// Signed by a key that is not the server's, but carrying the
-			// server's iss, aud and kid and a valid subject and expiry.
+			// Signed by a key of its own, but carrying the server's iss, aud and
+			// the kid of a real leaf (the server's current one, read from the
+			// start line and the key set) and a valid subject and expiry: only
+			// the signature check stops it.
+			if got := jwksKIDsOf(t, base); !slices.Contains(got, serverKID) {
+				t.Fatalf("the key set %v lacks the current leaf %s", got, serverKID)
+			}
 			_, priv, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				t.Fatal(err)
@@ -391,7 +376,7 @@ func TestAuthEndToEnd(t *testing.T) {
 			if status, body := getChannels(t, base, pat.bearer); status != http.StatusOK {
 				t.Fatalf("pat's minted bearer after reset-credential = %d %s, want 200 until exp (Decision (Eric, 2026-10-21), Milestone 5 item 4)", status, body)
 			}
-			if _, err := mintBearer(ctx, anon, issuer, "pat", pat.key); ab2bus.CodeOf(err) != ab2bus.CodeUnauthenticated {
+			if _, err := mintBearer(ctx, anon, issuerURL, "pat", pat.key); ab2bus.CodeOf(err) != ab2bus.CodeUnauthenticated {
 				t.Fatalf("token with the old key = %v, want unauthenticated", err)
 			}
 			newKey, err := keys.Generate(keys.EdDSA)
@@ -402,22 +387,19 @@ func TestAuthEndToEnd(t *testing.T) {
 			if err != nil || rr.Created {
 				t.Fatalf("Register with the new key = %+v, %v; want Created false", rr, err)
 			}
-			if _, err := mintBearer(ctx, anon, issuer, "pat", newKey); err != nil {
+			if _, err := mintBearer(ctx, anon, issuerURL, "pat", newKey); err != nil {
 				t.Fatalf("token with the new key: %v", err)
 			}
 		})
 
 		// (10) A stale bearer is replaced on the token endpoint, refused elsewhere.
 		t.Run("stale-bearer-on-token-endpoint", func(t *testing.T) {
-			past, err := token.NewIssuer(context.Background(), issuerURL, token.StaticKeys(serverKey), time.Hour, func() time.Time { return time.Now().Add(-2 * time.Hour) })
-			if err != nil {
-				t.Fatal(err)
-			}
-			expired, _, err := past.Mint(context.Background(), token.MintInput{Identity: "root", Kind: token.KindAgent})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := mintBearer(ctx, newClient(expired), issuer, "root", root.key); err != nil {
+			// Signed by a real leaf (another replica's, in the key set) whose
+			// bearer expired an hour ago.
+			priv, leaf := trust.Leaf(t, c, time.Now(), 24*time.Hour)
+			now := time.Now()
+			expired := signLeafBearer(t, priv, leaf, issuerURL, "root", now.Add(-2*time.Hour), time.Hour)
+			if _, err := mintBearer(ctx, newClient(expired), issuerURL, "root", root.key); err != nil {
 				t.Fatalf("token endpoint with an expired bearer: %v", err)
 			}
 			if status, body := getChannels(t, base, expired); status != http.StatusUnauthorized {
@@ -430,34 +412,22 @@ func TestAuthEndToEnd(t *testing.T) {
 		// exchanges again, and a second rotation follows at once (no cooldown
 		// applies to the API form).
 		t.Run("signing-key-rotation", func(t *testing.T) {
-			before := root.bearer // signed by the key created at the start
+			before := root.bearer // signed by the leaf the server issued at its start
 			set, err := root.bus.ListSigningKeys(ctx)
-			if err != nil || len(set.Keys) != 1 || set.Keys[0].State != ab2bus.SigningKeyCurrent || set.Keys[0].Thumbprint != serverKID {
-				t.Fatalf("ListSigningKeys = %+v, %v; want the one pre-created key", set, err)
+			if err != nil || len(set.Keys) != 2 || set.Keys[0].State != ab2bus.SigningKeyCurrent || set.Keys[0].Thumbprint != serverKID {
+				t.Fatalf("ListSigningKeys = %+v, %v; want the server's leaf current, then the other replica's leaf", set, err)
 			}
 			rot, err := root.bus.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
-			if err != nil || rot.Current.Thumbprint == serverKID || len(rot.Revoked) != 1 || rot.Revoked[0].Thumbprint != serverKID {
-				t.Fatalf("RotateSigningKey = %+v, %v; want a new current key and %s revoked", rot, err, serverKID)
+			if err != nil || rot.Current.Thumbprint == serverKID || len(rot.Revoked) != 2 || !revokedHas(rot.Revoked, serverKID) {
+				t.Fatalf("RotateSigningKey = %+v, %v; want a new current leaf and %s revoked", rot, err, serverKID)
 			}
-
-			resp, err := tcpClient(t).Get(base + "/v1/auth/jwks")
-			if err != nil {
-				t.Fatal(err)
-			}
-			var jwks struct {
-				Keys []struct {
-					KID string `json:"kid"`
-				} `json:"keys"`
-			}
-			err = json.NewDecoder(resp.Body).Decode(&jwks)
-			_ = resp.Body.Close()
-			if err != nil || len(jwks.Keys) != 1 || jwks.Keys[0].KID != rot.Current.Thumbprint {
-				t.Fatalf("JWKS = %+v, %v; want the one new key", jwks, err)
+			if got := jwksKIDsOf(t, base); len(got) != 1 || got[0] != rot.Current.Thumbprint {
+				t.Fatalf("JWKS kids = %v; want the one new leaf %s", got, rot.Current.Thumbprint)
 			}
 			if status, body := getChannels(t, base, before); status != http.StatusUnauthorized {
-				t.Fatalf("a bearer signed by the revoked key = %d %s, want 401", status, body)
+				t.Fatalf("a bearer signed by the revoked leaf = %d %s, want 401", status, body)
 			}
-			fresh, err := mintBearer(ctx, anon, issuer, "root", root.key)
+			fresh, err := mintBearer(ctx, anon, issuerURL, "root", root.key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -468,44 +438,32 @@ func TestAuthEndToEnd(t *testing.T) {
 				t.Fatalf("a bearer from the exchange after the rotation = %d %s, want 200", status, body)
 			}
 
-			// The second rotation, at once: the key just made is the revoked one.
-			var revokedPEM string
-			if err := st.Read(ctx, func(ctx context.Context, tx ab2store.Tx) error {
-				rows, err := tx.ListSigningKeys(ctx)
-				for _, r := range rows {
-					if r.KID == rot.Current.Thumbprint {
-						revokedPEM = r.PrivateKeyPEM
-					}
-				}
-				return err
-			}); err != nil || revokedPEM == "" {
-				t.Fatalf("reading the key %s: %v", rot.Current.Thumbprint, err)
+			// The second rotation, at once (no cooldown applies to the API
+			// form): a leaf another replica issued meanwhile verifies until it
+			// is revoked by the rotation, and then does not.
+			kpriv, kleaf := trust.Leaf(t, c, time.Now(), 24*time.Hour)
+			other := signLeafBearer(t, kpriv, kleaf, issuerURL, "root", time.Now(), time.Hour)
+			// A listing reloads the server's view (it sees the new row and the
+			// issuer's cache goes stale), so the bearer is not an unknown key.
+			if set, err := remote.New(newClient(fresh)).ListSigningKeys(ctx); err != nil || len(set.Keys) < 2 {
+				t.Fatalf("ListSigningKeys = %+v, %v; want the other replica's leaf listed", set, err)
 			}
-			revokedKey, _, err := keys.ParsePrivatePEM([]byte(revokedPEM))
-			if err != nil {
-				t.Fatal(err)
+			if status, body := getChannels(t, base, other); status != http.StatusOK {
+				t.Fatalf("a bearer from another replica's leaf = %d %s, want 200", status, body)
 			}
 			// root.bus carries the bearer the first rotation revoked; the second
 			// goes through a Bus over the bearer from the exchange.
 			rev, err := remote.New(newClient(fresh)).RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
-			if err != nil || len(rev.Revoked) != 1 || rev.Revoked[0].Thumbprint != rot.Current.Thumbprint {
-				t.Fatalf("second RotateSigningKey = %+v, %v; want %s revoked", rev, err, rot.Current.Thumbprint)
+			if err != nil || len(rev.Revoked) != 2 || !revokedHas(rev.Revoked, rot.Current.Thumbprint) || !revokedHas(rev.Revoked, pki.Thumbprint(kleaf.Raw)) {
+				t.Fatalf("second RotateSigningKey = %+v, %v; want %s and the other replica's leaf revoked", rev, err, rot.Current.Thumbprint)
 			}
-			local, err := token.NewIssuer(context.Background(), issuerURL, token.StaticKeys(revokedKey), time.Hour, time.Now)
-			if err != nil {
-				t.Fatal(err)
-			}
-			forged, _, err := local.Mint(context.Background(), token.MintInput{Identity: "root", Kind: token.KindAgent})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if status, body := getChannels(t, base, forged); status != http.StatusUnauthorized {
-				t.Fatalf("a bearer signed by the revoked key = %d %s, want 401", status, body)
+			if status, body := getChannels(t, base, other); status != http.StatusUnauthorized {
+				t.Fatalf("a bearer signed by the revoked leaf = %d %s, want 401", status, body)
 			}
 			if status, body := getChannels(t, base, fresh); status != http.StatusUnauthorized {
 				t.Fatalf("the first rotation's bearer after the second rotation = %d %s, want 401", status, body)
 			}
-			again, err := mintBearer(ctx, anon, issuer, "root", root.key)
+			again, err := mintBearer(ctx, anon, issuerURL, "root", root.key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -553,4 +511,63 @@ func getChannels(t *testing.T, base, bearer string) (int, string) {
 	defer func() { _ = resp.Body.Close() }()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
+}
+
+// revokedHas reports whether a rotation's revoked list names thumbprint.
+func revokedHas(list []ab2bus.RevokedLeaf, thumbprint string) bool {
+	for _, k := range list {
+		if k.Thumbprint == thumbprint {
+			return true
+		}
+	}
+	return false
+}
+
+// jwksKIDsOf is the kids GET /v1/auth/jwks lists at base.
+func jwksKIDsOf(t *testing.T, base string) []string {
+	t.Helper()
+	resp, err := tcpClient(t).Get(base + "/v1/auth/jwks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var jwks struct {
+		Keys []struct {
+			KID string `json:"kid"`
+		} `json:"keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&jwks); err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, k := range jwks.Keys {
+		out = append(out, k.KID)
+	}
+	return out
+}
+
+// signLeafBearer signs an access token for identity with a leaf's Ed25519 key
+// the way the server does (type at+jwt, the leaf's thumbprint as kid), issued at
+// iat for life.
+func signLeafBearer(t *testing.T, priv ed25519.PrivateKey, leaf *x509.Certificate, issuerURL, identity string, iat time.Time, life time.Duration) string {
+	t.Helper()
+	tp := pki.Thumbprint(leaf.Raw)
+	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", tp).WithHeader("x5t#S256", tp)
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: priv}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := jwt.Claims{
+		Issuer: issuerURL, Subject: identity, Audience: jwt.Audience{issuerURL}, ID: fmt.Sprintf("jti-%d", iat.UnixNano()),
+		IssuedAt: jwt.NewNumericDate(iat), Expiry: jwt.NewNumericDate(iat.Add(life)),
+	}
+	extra := struct {
+		ClientID string `json:"client_id"`
+		Kind     string `json:"agentmesh_kind"`
+	}{identity, token.KindAgent}
+	raw, err := jwt.Signed(signer).Claims(claims).Claims(extra).Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }

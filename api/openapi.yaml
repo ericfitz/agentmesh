@@ -5174,7 +5174,11 @@ components:
             kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
             alg: EdDSA
             use: sig
-      description: "A JSON Web Key Set: the active signing key and any retiring key that still verifies the bearers it signed."
+            x5t#S256: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+            x5c:
+              - MIIBLjCB4aADAgECAhRhZ2VudG1lc2gtZXhhbXBsZS1sZWFmMAUGAytlcDAmMSQwIgYDVQQDDBthZ2VudG1lc2ggZXhhbXBsZSBpbnRlcm1lZGlhdGUwHhcNMjYwMTAxMDAwMDAwWhcNMjYwMTA4MDAwMDAwWjAbMRkwFwYDVQQDDBBhZ2VudG1lc2ggbGVhZgAw
+              - MIIBTzCCARGgAwIBAgIUYWdlbnRtZXNoLWV4YW1wbGUtaW50ZXIwCgYIKoZIzj0EAwIwHTEbMBkGA1UEAwwSYWdlbnRtZXNoIGV4YW1wbGUgcm9vdDAeFw0yNjAxMDEwMDAwMDBaFw0yNzAxMDEwMDAwMDBaMCYxJDAiBgNVBAMMG2FnZW50bWVzaCBleGFtcGxlIGludGVybWVkaWF0ZQ
+      description: "A JSON Web Key Set: one key per unexpired, unrevoked leaf certificate the server has verified, the current one first. Each key also carries x5t#S256 (the leaf's thumbprint, equal to the kid) and x5c (the leaf's certificate, then its intermediate's, base64 DER)."
       type: object
       required: [keys]
       properties:

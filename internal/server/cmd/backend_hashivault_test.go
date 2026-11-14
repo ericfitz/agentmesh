@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -51,22 +50,21 @@ func TestHashivaultUnsetEnvironmentExits2(t *testing.T) {
 	for _, v := range []string{"VAULT_ADDR", "BAO_ADDR", "VAULT_TOKEN", "BAO_TOKEN"} {
 		t.Setenv(v, "")
 	}
-	const uri = "signing_key_uri=hashivault://agentmesh"
-	db := filepath.Join(t.TempDir(), "ab2.db")
-	if code, _, stderr := runOnce(nil, "-listen", "127.0.0.1:0", "-sqlite", db, "-set", uri); code != 2 || !strings.Contains(stderr, "hashivault: VAULT_ADDR") {
+	const uri = "intermediate_key_uri=hashivault://agentmesh"
+	if code, _, stderr := startWithKeyURI(t, uri); code != 2 || !strings.Contains(stderr, "hashivault: VAULT_ADDR") {
 		t.Fatalf("start: exit %d, stderr %q; want 2", code, stderr)
 	}
 	e := newCAEnv(t)
-	if code, _, errOut := e.run(append(e.settings("intermediate_key_uri="+strings.TrimPrefix(uri, "signing_key_uri=")), "signing-key", "rotate")...); code != 2 || !strings.Contains(errOut, "hashivault: VAULT_ADDR") {
+	if code, _, errOut := e.run(append(e.settings(uri), "signing-key", "rotate")...); code != 2 || !strings.Contains(errOut, "hashivault: VAULT_ADDR") {
 		t.Fatalf("rotate: exit %d, stderr %q; want 2", code, errOut)
 	}
 	t.Setenv("VAULT_ADDR", "http://127.0.0.1:1")
-	if code, _, stderr := runOnce(nil, "-listen", "127.0.0.1:0", "-sqlite", db, "-set", uri); code != 2 || !strings.Contains(stderr, "VAULT_TOKEN") {
+	if code, _, stderr := startWithKeyURI(t, uri); code != 2 || !strings.Contains(stderr, "VAULT_TOKEN") {
 		t.Fatalf("no token: exit %d, stderr %q; want 2", code, stderr)
 	}
 	t.Setenv("VAULT_ADDR", "ftp://x")
 	t.Setenv("VAULT_TOKEN", "t0ken")
-	if code, _, stderr := runOnce(nil, "-listen", "127.0.0.1:0", "-sqlite", db, "-set", uri); code != 2 || strings.Contains(stderr, "t0ken") {
+	if code, _, stderr := startWithKeyURI(t, uri); code != 2 || strings.Contains(stderr, "t0ken") {
 		t.Fatalf("bad address: exit %d, stderr %q; want 2", code, stderr)
 	}
 }

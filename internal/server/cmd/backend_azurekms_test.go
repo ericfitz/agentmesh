@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -55,13 +54,12 @@ func TestAzurekmsBackendIsRegistered(t *testing.T) {
 // for the start and for rotate: exit 2.
 func TestAzurekmsUnsetCredentialSelectorExits2(t *testing.T) {
 	t.Setenv("AZURE_TOKEN_CREDENTIALS", "")
-	const uri = "signing_key_uri=azurekms://kv-test.vault.azure.net/signing-key"
-	db := filepath.Join(t.TempDir(), "ab2.db")
-	if code, _, stderr := runOnce(nil, "-listen", "127.0.0.1:0", "-sqlite", db, "-set", uri); code != 2 || !strings.Contains(stderr, "AZURE_TOKEN_CREDENTIALS") {
+	const uri = "intermediate_key_uri=azurekms://kv-test.vault.azure.net/signing-key"
+	if code, _, stderr := startWithKeyURI(t, uri); code != 2 || !strings.Contains(stderr, "AZURE_TOKEN_CREDENTIALS") {
 		t.Fatalf("start: exit %d, stderr %q; want 2", code, stderr)
 	}
 	e := newCAEnv(t)
-	if code, _, errOut := e.run(append(e.settings("intermediate_key_uri="+strings.TrimPrefix(uri, "signing_key_uri=")), "signing-key", "rotate")...); code != 2 || !strings.Contains(errOut, "AZURE_TOKEN_CREDENTIALS") {
+	if code, _, errOut := e.run(append(e.settings(uri), "signing-key", "rotate")...); code != 2 || !strings.Contains(errOut, "AZURE_TOKEN_CREDENTIALS") {
 		t.Fatalf("rotate: exit %d, stderr %q; want 2", code, errOut)
 	}
 }

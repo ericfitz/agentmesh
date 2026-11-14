@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
@@ -101,3 +103,62 @@ func trustFailure(cfg config.Config, err error) error {
 
 // ownerOnlyRestrict is what ca csr hands keyprovider.CreateKeyFile.
 var ownerOnlyRestrict = fileacl.OwnerOnly
+
+// openStartTrust is the part of the start that needs no Store (section 4.15):
+// the required settings, the pinned root (and that it has not expired at now),
+// and the intermediate key provider; the file form reads the key once, so a
+// missing, exposed or non-P-256 key file stops the start. Every failure is a
+// *configError (exit 2), except a backend that reports its key service
+// unreachable (exit 1); nothing here reads a key from a key service.
+func openStartTrust(ctx context.Context, cfg config.Config, now time.Time) (*x509.Certificate, keyprovider.Provider, error) {
+	if err := cfg.RequireTrust(); err != nil {
+		return nil, nil, &configError{err}
+	}
+	root, err := openRoot(cfg)
+	if err != nil {
+		return nil, nil, &configError{err}
+	}
+	if now.After(root.NotAfter) {
+		return nil, nil, &configError{fmt.Errorf("root_certificate_file %s: %w: it expired at %s",
+			cfg.RootCertificateFile, signingkeys.ErrRootExpired, root.NotAfter.UTC().Format(time.RFC3339))}
+	}
+	p, err := openIntermediateProvider(cfg)
+	if err != nil {
+		if errors.Is(err, keyprovider.ErrUnavailable) {
+			return nil, nil, err // a key service outage is a runtime failure (exit 1)
+		}
+		return nil, nil, &configError{err}
+	}
+	if cfg.IntermediateKeyFile != "" {
+		if _, err := p.Next(ctx); err != nil {
+			return nil, nil, &configError{fmt.Errorf("intermediate_key_file: %w", err)}
+		}
+	}
+	return root, p, nil
+}
+
+// startFailure maps an error of signingkeys.New to the start's error kinds: the
+// four states an operator must change (no matching intermediate, expired,
+// revoked, root expired) and a key file that cannot sign are configuration
+// errors (exit 2); a Store failure, a key service outage and a canceled start
+// keep their own (exit 1).
+func startFailure(cfg config.Config, err error) error {
+	switch {
+	case errors.Is(err, signingkeys.ErrNoIntermediate), errors.Is(err, signingkeys.ErrIntermediateExpired),
+		errors.Is(err, signingkeys.ErrIntermediateRevoked), errors.Is(err, signingkeys.ErrRootExpired):
+		return &configError{err}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return err
+	}
+	return trustFailure(cfg, err)
+}
+
+// startExit is the exit code of an error of the start sequence: 2 for a
+// *configError, else 1.
+func startExit(err error) int {
+	var ce *configError
+	if errors.As(err, &ce) {
+		return 2
+	}
+	return 1
+}

@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,12 +21,12 @@ import (
 	"github.com/ericfitz/agentmesh/internal/core/identities"
 	"github.com/ericfitz/agentmesh/internal/core/maintenance"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
-	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/slackapi"
 	"github.com/ericfitz/agentmesh/internal/slackapi/slackfake"
 	"github.com/ericfitz/agentmesh/internal/slackbridge"
 	"github.com/ericfitz/agentmesh/internal/store"
 	"github.com/ericfitz/agentmesh/internal/store/sqlite"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 func openSQLite(t *testing.T, path string) store.Store {
@@ -520,53 +519,6 @@ func TestServeSlackBridge(t *testing.T) {
 	})
 }
 
-// Serve gives maintenance the signing key service only when the caller passes
-// one: a server runs the rotation and removal jobs, local mode does not.
-func TestServeSigningKeyJobs(t *testing.T) {
-	names := func(withKeys bool) []string {
-		st := openSQLite(t, filepath.Join(t.TempDir(), "ab2.db"))
-		cfg := oneSecond()
-		c := Config{Store: st, Cfg: cfg}
-		if withKeys {
-			cr, err := core.New(st, *cfg, core.Options{Now: time.Now})
-			if err != nil {
-				t.Fatal(err)
-			}
-			c.SigningKeys = &signingkeys.Service{Core: cr, Provider: keyprovider.StoreProvider{}, Settings: signingkeys.DefaultSettings()}
-		}
-		got := make(chan []string, 1)
-		c.OnTick = func(ran bool, report []maintenance.JobResult) {
-			if !ran {
-				return
-			}
-			var n []string
-			for _, r := range report {
-				n = append(n, r.Name)
-			}
-			select {
-			case got <- n:
-			default:
-			}
-		}
-		_, stop := startServe(t, c)
-		defer func() { _ = stop() }()
-		select {
-		case n := <-got:
-			return n
-		case <-time.After(5 * time.Second):
-			t.Fatal("no maintenance tick")
-			return nil
-		}
-	}
-	with, without := names(true), names(false)
-	if !slices.Contains(with, "signing key rotation") || !slices.Contains(with, "signing key removal") {
-		t.Errorf("jobs with the service: %v", with)
-	}
-	if slices.Contains(without, "signing key rotation") || slices.Contains(without, "signing key removal") || len(with) != len(without)+2 {
-		t.Errorf("jobs without it: %v (with: %d)", without, len(with))
-	}
-}
-
 // Serve wires the admin API's signing key operations only when the caller
 // passes a key service: without one they answer unavailable (a typed-nil
 // interface would panic instead), with one an administrator lists the key set.
@@ -585,10 +537,7 @@ func TestServeSigningKeysAdminAPI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c.SigningKeys = &signingkeys.Service{Core: cr, Provider: keyprovider.StoreProvider{}, Settings: signingkeys.DefaultSettings()}
-			if _, _, err := c.SigningKeys.EnsureActive(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			c.SigningKeys = trusttest.New(t, time.Time{}).Manager(t, cr)
 		}
 		addr, _ := startServe(t, c)
 		req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/admin/signing-keys", nil)
@@ -607,7 +556,7 @@ func TestServeSigningKeysAdminAPI(t *testing.T) {
 	if st, body := get(t, Config{}); st != 503 || !strings.Contains(body, `"code":"unavailable"`) || !strings.Contains(body, bus.SigningKeysNotConfigured) {
 		t.Errorf("without a service: %d %s", st, body)
 	}
-	if st, body := get(t, Config{SigningKeys: &signingkeys.Service{}}); st != 200 || !strings.Contains(body, `"state":"current"`) {
+	if st, body := get(t, Config{SigningKeys: &signingkeys.Manager{}}); st != 200 || !strings.Contains(body, `"state":"current"`) {
 		t.Errorf("with a service: %d %s", st, body)
 	}
 }

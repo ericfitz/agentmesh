@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
@@ -338,7 +339,7 @@ func TestServerRefusesReadableSQLite(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var o, e testkit.LockedBuffer
-	if code := Run(ctx, []string{"-listen", "127.0.0.1:0", "-sqlite", db}, nil, &o, &e); code == 0 || !strings.Contains(e.String(), db) {
+	if code := Run(ctx, append([]string{"-listen", "127.0.0.1:0", "-sqlite", db}, trusttest.New(t, time.Time{}).Sets()...), nil, &o, &e); code == 0 || !strings.Contains(e.String(), db) {
 		t.Errorf("server: exit %d stderr %q, want non-zero naming %s", code, e.String(), db)
 	}
 	var ao, ae testkit.LockedBuffer

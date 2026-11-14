@@ -229,7 +229,7 @@ func runMain(m *testing.M) int {
 }
 
 var (
-	listeningRE = regexp.MustCompile(`agentmesh server listening on (\S+) \((sqlite|postgres), registration (\S+), issuer (\S+), kid (\S+)\)`)
+	listeningRE = regexp.MustCompile(`agentmesh server listening on (\S+) \((sqlite|postgres), registration (\S+), issuer (\S+), leaf (\S+) until (\S+)\)`)
 	tokenRE     = regexp.MustCompile(`(?m)^token: (abe_\S+)$`)
 )
 
