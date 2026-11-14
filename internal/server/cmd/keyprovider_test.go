@@ -178,8 +178,8 @@ func setBackend(t *testing.T, scheme string, open func(string) (keyprovider.Prov
 func TestAdminRotateExitCodesForProviderFailures(t *testing.T) {
 	rotate := func(t *testing.T, uri string) (int, string) {
 		t.Helper()
-		e := newAdminEnv(t)
-		code, _, errOut := e.run("-set", "signing_key_uri="+uri, "signing-key", "rotate")
+		e := newCAEnv(t)
+		code, _, errOut := e.run(append(e.settings("intermediate_key_uri="+uri), "signing-key", "rotate")...)
 		return code, errOut
 	}
 	t.Run("a backend not in this build", func(t *testing.T) {

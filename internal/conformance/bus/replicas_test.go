@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/ericfitz/agentmesh/internal/auth/assertion"
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
@@ -599,7 +600,7 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		_, _, dsn := openStoreDSN(t, e)
+		_, reopen, dsn := openStoreDSN(t, e)
 		const cooldown = "signing_key_rotation_cooldown_seconds=1"
 		a := startReplica(t, ctx, "A", e, dsn, "-set", cooldown)
 		b := startReplica(t, ctx, "B", e, dsn, "-set", cooldown)
@@ -634,13 +635,25 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 		}
 		admin := func(args ...string) (int, string, string) { return adminWith(cooldown, args...) }
 
-		// (1) Two host rotations at once: one wins, one meets the cooldown.
-		t.Run("concurrent-rotate-one-active", func(t *testing.T) {
-			// The host commands use a 3 s cooldown here and the key is older
-			// than that, so both may rotate; a loser that stalls up to 3 s
-			// after the winner still meets the winner's young key.
-			const wide = "signing_key_rotation_cooldown_seconds=3"
-			time.Sleep(3200 * time.Millisecond)
+		// (1) Two host rotations at once (ADR 0019 section 4.8): the trust lock
+		// admits one at a time, so each exits 0 or, meeting the lock, 1 saying to
+		// try again; at least one wins, and afterwards every leaf is revoked.
+		t.Run("concurrent-host-rotate", func(t *testing.T) {
+			f := trusttest.New(t, time.Time{})
+			if code, _, se := adminWith(cooldown, append(f.Sets(), "ca", "install", f.CertFile)...); code != 0 {
+				t.Fatalf("ca install: %d %s", code, se)
+			}
+			st, err := reopen()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hc, err := core.New(st, core.Defaults(), core.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				f.Leaf(t, hc, time.Now(), 24*time.Hour)
+			}
 			var codes [2]int
 			var errs [2]string
 			var wg sync.WaitGroup
@@ -648,31 +661,32 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					codes[i], _, errs[i] = adminWith(wide, "signing-key", "rotate")
+					codes[i], _, errs[i] = adminWith(cooldown, append(f.Sets(), "signing-key", "rotate")...)
 				}()
 			}
 			wg.Wait()
-			zero, one := 0, 0
+			zero := 0
 			for i, c := range codes {
 				switch c {
 				case 0:
 					zero++
 				case 1:
-					one++
-					if !strings.Contains(errs[i], "the next rotation is allowed at") {
-						t.Errorf("the losing rotation's stderr = %q, want the cooldown text", errs[i])
+					if !strings.Contains(errs[i], "try again") {
+						t.Errorf("the losing rotation's stderr = %q, want the retry text", errs[i])
 					}
+				default:
+					t.Errorf("rotation %d: exit %d, stderr %q", i, c, errs[i])
 				}
 			}
-			if zero != 1 || one != 1 {
-				t.Fatalf("exit codes %v (stderr %q, %q), want exactly one 0 and one 1", codes, errs[0], errs[1])
+			if zero == 0 {
+				t.Fatalf("exit codes %v (stderr %q, %q), want at least one 0", codes, errs[0], errs[1])
 			}
-			code, out, se := admin("signing-key", "list")
+			code, out, se := adminWith(cooldown, append(f.Sets(), "signing-key", "list")...)
 			if code != 0 {
 				t.Fatalf("list: %d %s", code, se)
 			}
-			if n := strings.Count(out, " active "); n != 1 || strings.Count(out, " retiring ") != 1 {
-				t.Fatalf("list after the race:\n%s\nwant one active and one retiring key", out)
+			if n := strings.Count(out, " revoked\n"); n != 3 || strings.Contains(out, " other\n") {
+				t.Fatalf("list after the race:\n%s\nwant three revoked leaves", out)
 			}
 		})
 
