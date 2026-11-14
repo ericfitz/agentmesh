@@ -5170,14 +5170,14 @@ components:
         keys:
           - kty: OKP
             crv: Ed25519
-            x: sOdMZWLCddpuUshtE1kZytlM8SPVCfOKjiUO9WHLkVU
-            kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+            x: EjV_CeU5I70K3W_WWKhXUG0S0SB9Wfket5hB1CtmBgk
+            kid: zwSrBikCim_ftMfqmb9hdJyUhQVlZvWAizrqYnCW9eA
             alg: EdDSA
             use: sig
-            x5t#S256: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+            x5t#S256: zwSrBikCim_ftMfqmb9hdJyUhQVlZvWAizrqYnCW9eA
             x5c:
-              - MIIBLjCB4aADAgECAhRhZ2VudG1lc2gtZXhhbXBsZS1sZWFmMAUGAytlcDAmMSQwIgYDVQQDDBthZ2VudG1lc2ggZXhhbXBsZSBpbnRlcm1lZGlhdGUwHhcNMjYwMTAxMDAwMDAwWhcNMjYwMTA4MDAwMDAwWjAbMRkwFwYDVQQDDBBhZ2VudG1lc2ggbGVhZgAw
-              - MIIBTzCCARGgAwIBAgIUYWdlbnRtZXNoLWV4YW1wbGUtaW50ZXIwCgYIKoZIzj0EAwIwHTEbMBkGA1UEAwwSYWdlbnRtZXNoIGV4YW1wbGUgcm9vdDAeFw0yNjAxMDEwMDAwMDBaFw0yNzAxMDEwMDAwMDBaMCYxJDAiBgNVBAMMG2FnZW50bWVzaCBleGFtcGxlIGludGVybWVkaWF0ZQ
+              - MIIBfDCCASKgAwIBAgIRAPCaLygslbKih/MOJKLsKI0wCgYIKoZIzj0EAwIwHDEaMBgGA1UEAxMRdGVzdC1pbnN0YWxsYXRpb24wHhcNMjYxMTE0MjM0MTUwWhcNMjYxMTIxMjM0MjUwWjAZMRcwFQYDVQQDEw5hZ2VudG1lc2ggbGVhZjAqMAUGAytlcAMhABI1fwnlOSO9Ct1v1lioV1BtEtEgfVn5HreYQdQrZgYJo3cwdTAOBgNVHQ8BAf8EBAMCB4AwFQYDVR0lBA4wDAYKKwYBBAGB/VkBATAMBgNVHRMBAf8EAjAAMB0GA1UdDgQWBBSmMuFvI7xFQZWZTeeiizFQgX21lzAfBgNVHSMEGDAWgBRY76ZOL/Smr1z7eRs6BQ/L5RA/0zAKBggqhkjOPQQDAgNIADBFAiBWhgJ9BU2+NG6HCwvs2qWoSFSUDmxhYmuyHGnoyYPmEwIhAOoWO1nJP8kWT7Tb7Q9pOd7sEhCLmz27+eM0fAdpjynH
+              - MIIBrTCCAVKgAwIBAgIRAMg72kyAkU+vCCpFxVLLJNcwCgYIKoZIzj0EAwIwFDESMBAGA1UEAxMJdGVzdCByb290MB4XDTI2MTExNDIyNDI1MFoXDTI3MTExNDIyNDI1MFowHDEaMBgGA1UEAxMRdGVzdC1pbnN0YWxsYXRpb24wWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAQzON6lKlJrqpWQUqrHrEvWxQPWeNXH/zTPSaGWVYBwGoOC7z4hphq+Ej7UOGbaLMKNnxkob7WC4VpcE1JYZ7Cio30wezAOBgNVHQ8BAf8EBAMCAQYwFQYDVR0lBA4wDAYKKwYBBAGB/VkBATASBgNVHRMBAf8ECDAGAQH/AgEAMB0GA1UdDgQWBBRY76ZOL/Smr1z7eRs6BQ/L5RA/0zAfBgNVHSMEGDAWgBSyNcHd7l/3EmAtbP4dIivzHnJ9qTAKBggqhkjOPQQDAgNJADBGAiEA3KFZ2j3/TT+1I6AdqB1aYDjN9LR9xHcPLoyEmEjQ1/gCIQCTGsdnULX5C6dfJwRTt42G4L0K138hmSedBAgQ3hA+wQ==
       description: "A JSON Web Key Set: one key per unexpired, unrevoked leaf certificate the server has verified, the current one first. Each key also carries x5t#S256 (the leaf's thumbprint, equal to the kid) and x5c (the leaf's certificate, then its intermediate's, base64 DER)."
       type: object
       required: [keys]
