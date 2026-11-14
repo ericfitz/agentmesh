@@ -14,14 +14,14 @@ import (
 // records the rotate input; the rest of the Bus is the opened one.
 type fakeKeysBus struct {
 	bus.Bus
-	keys []bus.SigningKey
+	list bus.SigningKeyList
 	res  bus.SigningKeyRotation
 	err  error
 	got  bus.RotateSigningKeyInput
 }
 
-func (f *fakeKeysBus) ListSigningKeys(context.Context) ([]bus.SigningKey, error) {
-	return f.keys, f.err
+func (f *fakeKeysBus) ListSigningKeys(context.Context) (bus.SigningKeyList, error) {
+	return f.list, f.err
 }
 
 func (f *fakeKeysBus) RotateSigningKey(_ context.Context, in bus.RotateSigningKeyInput) (bus.SigningKeyRotation, error) {
@@ -41,34 +41,40 @@ func TestSigningKeysList(t *testing.T) {
 	e := adminEnv(t)
 	fake := useFakeKeys(t)
 	run := runner(e, RunSigningKeys)
-	fake.keys = []bus.SigningKey{
-		{KID: "K1", State: "active", Provider: "store", Algorithm: "EdDSA", CreatedAt: 5},
-		{KID: "K0", State: "retiring", Provider: "awskms", ProviderRef: "awskms:///alias/x", Algorithm: "ES256", CreatedAt: 1, RetiredAt: 5, RemoveAfter: 99},
+	fake.list = bus.SigningKeyList{
+		Keys: []bus.SigningKey{
+			{Thumbprint: "T1", Serial: "S1", IssuerThumbprint: "I1", State: bus.SigningKeyCurrent, NotBefore: 5, NotAfter: 99},
+			{Thumbprint: "T0", Serial: "S0", IssuerThumbprint: "I1", State: bus.SigningKeyPrevious, NotBefore: 1, NotAfter: 50},
+		},
+		TrustNumber: 77,
 	}
 	code, out, er := run("list")
 	if code != 0 {
 		t.Fatalf("list: %d %s", code, er)
 	}
-	var got []map[string]any
-	if err := json.Unmarshal([]byte(out), &got); err != nil || len(got) != 2 {
+	var got struct {
+		Keys        []map[string]any `json:"keys"`
+		TrustNumber float64          `json:"trust_number"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || len(got.Keys) != 2 || got.TrustNumber != 77 {
 		t.Fatalf("out %q: %v", out, err)
 	}
-	want0 := map[string]any{"kid": "K1", "state": "active", "provider": "store", "provider_ref": "", "algorithm": "EdDSA", "created_at": float64(5), "retired_at": float64(0), "remove_after": float64(0)}
+	want0 := map[string]any{"thumbprint": "T1", "serial": "S1", "issuer_thumbprint": "I1", "not_before": float64(5), "not_after": float64(99), "state": "current"}
 	w0, _ := json.Marshal(want0)
-	g0, _ := json.Marshal(got[0])
+	g0, _ := json.Marshal(got.Keys[0])
 	if string(w0) != string(g0) {
 		t.Fatalf("key 0 = %s\nwant %s", g0, w0)
 	}
-	if got[1]["provider_ref"] != "awskms:///alias/x" || got[1]["remove_after"] != float64(99) {
-		t.Fatalf("key 1 = %v", got[1])
+	if got.Keys[1]["state"] != "previous" || got.Keys[1]["not_after"] != float64(50) {
+		t.Fatalf("key 1 = %v", got.Keys[1])
 	}
 	if strings.Contains(strings.ToLower(out), "private") {
 		t.Fatalf("out names a private key: %s", out)
 	}
 
-	// An empty set prints [], never null.
-	fake.keys = nil
-	if code, out, _ = run("list"); code != 0 || strings.TrimSpace(out) != "[]" {
+	// An empty set prints keys as [], never null.
+	fake.list = bus.SigningKeyList{}
+	if code, out, _ = run("list"); code != 0 || !strings.Contains(out, `"keys": []`) {
 		t.Fatalf("empty list: %d %q", code, out)
 	}
 }
@@ -78,35 +84,31 @@ func TestSigningKeysRotate(t *testing.T) {
 	fake := useFakeKeys(t)
 	run := runner(e, RunSigningKeys)
 	fake.res = bus.SigningKeyRotation{
-		Active:   bus.SigningKey{KID: "K2", State: "active", Provider: "store", Algorithm: "EdDSA", CreatedAt: 9},
-		Previous: bus.SigningKey{KID: "K1", State: "retiring", Provider: "store", Algorithm: "EdDSA", CreatedAt: 5, RetiredAt: 9, RemoveAfter: 99},
+		Current:     bus.SigningKey{Thumbprint: "T2", Serial: "S2", IssuerThumbprint: "I1", State: bus.SigningKeyCurrent, NotBefore: 9, NotAfter: 99},
+		Revoked:     []bus.RevokedLeaf{{Thumbprint: "T1", HumanMessages: 0}},
+		TrustNumber: 78,
 	}
-	code, out, er := run("rotate")
+	code, out, er := run("rotate", "-key", "K")
 	if code != 0 {
 		t.Fatalf("rotate: %d %s", code, er)
 	}
-	if fake.got.RevokePrevious || fake.got.IdempotencyKey != "" {
+	if fake.got.IdempotencyKey != "K" {
 		t.Fatalf("input = %+v", fake.got)
 	}
 	var got struct {
-		Active   map[string]any `json:"active"`
-		Previous map[string]any `json:"previous"`
-		Revoked  bool           `json:"revoked"`
+		Current     map[string]any   `json:"current"`
+		Revoked     []map[string]any `json:"revoked"`
+		TrustNumber float64          `json:"trust_number"`
 	}
-	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Active["kid"] != "K2" || got.Previous["kid"] != "K1" || got.Revoked {
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Current["thumbprint"] != "T2" || len(got.Revoked) != 1 ||
+		got.Revoked[0]["thumbprint"] != "T1" || got.Revoked[0]["human_messages"] != float64(0) || got.TrustNumber != 78 {
 		t.Fatalf("out %q: %v", out, err)
 	}
 
-	fake.res.Revoked = true
-	code, out, er = run("rotate", "-revoke-previous", "-key", "K")
-	if code != 0 || !fake.got.RevokePrevious || fake.got.IdempotencyKey != "K" || !strings.Contains(out, `"revoked": true`) {
-		t.Fatalf("revoking rotate: %d %q %s; input %+v", code, out, er, fake.got)
-	}
-
-	// No previous key: the member is absent.
-	fake.res = bus.SigningKeyRotation{Active: fake.res.Active}
+	// Nothing revoked prints revoked as [], never null.
+	fake.res = bus.SigningKeyRotation{Current: fake.res.Current}
 	code, out, _ = run("rotate")
-	if code != 0 || strings.Contains(out, `"previous"`) {
+	if code != 0 || !strings.Contains(out, `"revoked": []`) {
 		t.Fatalf("first rotate: %d %s", code, out)
 	}
 }
@@ -115,10 +117,10 @@ func TestSigningKeysBusError(t *testing.T) {
 	e := adminEnv(t)
 	fake := useFakeKeys(t)
 	run := runner(e, RunSigningKeys)
-	fake.err = bus.Errorf(bus.CodeConflict, false, "inside the cooldown")
+	fake.err = bus.Errorf(bus.CodeConflict, false, "a conflict")
 	for _, args := range [][]string{{"list"}, {"rotate"}} {
 		code, out, er := run(args...)
-		if code != 1 || out != "" || !strings.Contains(er, "agentmesh: conflict: inside the cooldown") {
+		if code != 1 || out != "" || !strings.Contains(er, "agentmesh: conflict: a conflict") {
 			t.Fatalf("%v: %d %q %q", args, code, out, er)
 		}
 	}
@@ -129,7 +131,7 @@ func TestSigningKeysBusError(t *testing.T) {
 func TestSigningKeysCommandsUnavailableLocally(t *testing.T) {
 	e := adminEnv(t)
 	run := runner(e, RunSigningKeys)
-	for _, args := range [][]string{{"list"}, {"rotate"}, {"rotate", "-revoke-previous"}} {
+	for _, args := range [][]string{{"list"}, {"rotate"}} {
 		code, _, er := run(args...)
 		if code != 1 || !strings.Contains(er, "agentmesh: unavailable: "+bus.SigningKeysNotConfigured) {
 			t.Fatalf("%v: %d %q", args, code, er)
@@ -140,7 +142,7 @@ func TestSigningKeysCommandsUnavailableLocally(t *testing.T) {
 func TestSigningKeysUsage(t *testing.T) {
 	e := adminEnv(t)
 	run := runner(e, RunSigningKeys)
-	for _, args := range [][]string{{}, {"frob"}, {"list", "extra"}, {"list", "-revoke-previous"}, {"rotate", "extra"}, {"rotate", "-from", "x"}} {
+	for _, args := range [][]string{{}, {"frob"}, {"list", "extra"}, {"rotate", "-revoke-previous"}, {"rotate", "extra"}, {"rotate", "-from", "x"}} {
 		if code, _, _ := run(args...); code != 2 {
 			t.Fatalf("%v: exit %d, want 2", args, code)
 		}

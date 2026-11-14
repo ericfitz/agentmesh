@@ -127,6 +127,7 @@ var pairs = []pair{
 	pairOf("SigningKeyList", remote.FromGenSigningKeyList, ok(signingKeyListToGen)),
 	pairOf("RotateSigningKeyRequestObject", ok(rotateSigningKeyInput), ok(remote.RotateSigningKeyRequest)),
 	pairOf("SigningKeyRotation", remote.FromGenSigningKeyRotation, ok(signingKeyRotationToGen)),
+	pairOf("RevokedLeaf", ok(remote.FromGenRevokedLeaf), ok(revokedLeafToGen)),
 }
 
 // exception names a member a converter pair may not carry, with the reason.
@@ -313,16 +314,13 @@ var enumValues = map[string]any{
 	"bus.BridgeState":           bus.BridgeCreating,
 }
 
-// The bus side of a signing key carries its state, provider and algorithm as
-// plain strings, so they are keyed by member path, one set per place a key
-// sits in a filled value.
+// The bus side of a signing key carries its state as a plain string, so it is
+// keyed by member path, one per place a key sits in a filled value.
 func init() {
 	for _, prefix := range []string{
-		"SigningKey", "SigningKeyList.Keys[0]", "SigningKeyList[0]", "SigningKeyRotation.Active", "SigningKeyRotation.Previous",
+		"SigningKey", "SigningKeyList.Keys[0]", "SigningKeyRotation.Current",
 	} {
-		enumValues[prefix+".State"] = "active"
-		enumValues[prefix+".Provider"] = "store"
-		enumValues[prefix+".Algorithm"] = "EdDSA"
+		enumValues[prefix+".State"] = bus.SigningKeyCurrent
 	}
 }
 

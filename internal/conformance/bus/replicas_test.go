@@ -592,8 +592,9 @@ func bearerKID(t *testing.T, raw string) string {
 // TestReplicasSigningKeyRotation: two replicas over one database and
 // rotations of the signing key set (issue #6 acceptance 4). The replicas and
 // the host commands run with signing_key_rotation_cooldown_seconds=1 (the
-// default 3600 s would refuse a rotation right after the key's creation) and
-// each leaf waits past that second before it rotates.
+// default 3600 s would refuse a host rotation right after the key's
+// creation); the API form has no cooldown (ADR 0019 Ruling 6) and always
+// revokes, so each API leaf exchanges again afterwards.
 func TestReplicasSigningKeyRotation(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -632,7 +633,6 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 			return code, so.String(), se.String()
 		}
 		admin := func(args ...string) (int, string, string) { return adminWith(cooldown, args...) }
-		pastCooldown := func() { time.Sleep(1200 * time.Millisecond) }
 
 		// (1) Two host rotations at once: one wins, one meets the cooldown.
 		t.Run("concurrent-rotate-one-active", func(t *testing.T) {
@@ -683,18 +683,18 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 		}
 		_, rootBusA := a.login(t, ctx, root)
 
-		// (2) A rotation through A's API: A mints with the new kid, and B
+		// (2) A rotation through A's API (it revokes the key that signed the
+		// caller's bearer): A mints with the new kid after an exchange, and B
 		// (which has never seen it) accepts the bearer at once.
 		var bearer2 string
 		t.Run("new-kid-verifies-on-both", func(t *testing.T) {
-			pastCooldown()
 			rot, err := rootBusA.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
 			if err != nil {
 				t.Fatalf("RotateSigningKey through A: %v", err)
 			}
 			bearer2, _ = a.login(t, ctx, root)
-			if got := bearerKID(t, bearer2); got != rot.Active.KID {
-				t.Fatalf("A minted with kid %s, want the new active %s", got, rot.Active.KID)
+			if got := bearerKID(t, bearer2); got != rot.Current.Thumbprint {
+				t.Fatalf("A minted with kid %s, want the new current %s", got, rot.Current.Thumbprint)
 			}
 			if status, body := getChannels(t, a.base, bearer2); status != http.StatusOK {
 				t.Fatalf("GET /v1/channels through A = %d %s, want 200", status, body)
@@ -707,13 +707,13 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 			t.Fatal("no bearer from the new key; the revoke leaf cannot run")
 		}
 
-		// (3) A revoking rotation: A refuses the revoked key's bearer at once,
+		// (3) A second rotation: A refuses the revoked key's bearer at once,
 		// B within one reload interval plus the unknown-kid margin.
 		t.Run("revoke-propagates", func(t *testing.T) {
 			// open note: signing-keys 9
 			rootA2 := remote.New(a.clientWith(t, bearer2))
-			if _, err := rootA2.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{RevokePrevious: true}); err != nil {
-				t.Fatalf("revoking rotation through A: %v", err)
+			if _, err := rootA2.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{}); err != nil {
+				t.Fatalf("rotation through A: %v", err)
 			}
 			if status, body := getChannels(t, a.base, bearer2); status != http.StatusUnauthorized {
 				t.Fatalf("A with the revoked key's bearer = %d %s, want 401 at once", status, body)

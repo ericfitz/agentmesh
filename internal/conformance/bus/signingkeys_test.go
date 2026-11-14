@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -171,8 +172,8 @@ func TestSigningKeysConcurrentRevoke(t *testing.T) {
 
 // Two administrator rotations with one Idempotency-Key, started together on
 // two replicas, rotate once: both return the same result, exactly one is not a
-// replay (OnChange runs once), and the set ends with one active and one
-// retiring key.
+// replay (OnChange runs once), and the set ends with one active key (rotate
+// always revokes, so no key retires).
 func TestSigningKeysConcurrentIdempotentRotate(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		h := newHarness(t, e, harnessOptions{})
@@ -181,7 +182,6 @@ func TestSigningKeysConcurrentIdempotentRotate(t *testing.T) {
 		if _, _, err := a.EnsureActive(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		h.clock.Advance(2 * time.Hour) // past the cooldown
 		var changed atomic.Int32
 		a.OnChange, b.OnChange = func() { changed.Add(1) }, func() { changed.Add(1) }
 		res := make([]ab2bus.SigningKeyRotation, 2)
@@ -203,15 +203,15 @@ func TestSigningKeysConcurrentIdempotentRotate(t *testing.T) {
 				t.Fatalf("rotation %d: %v", i, err)
 			}
 		}
-		if res[0] != res[1] {
+		if !reflect.DeepEqual(res[0], res[1]) {
 			t.Errorf("results differ:\n%+v\n%+v", res[0], res[1])
 		}
 		if n := changed.Load(); n != 1 {
 			t.Errorf("OnChange ran %d times, want 1 (one non-replay)", n)
 		}
 		rows := keyRows(h)
-		if len(rows) != 2 || countState(rows, ab2store.SigningKeyActive) != 1 || countState(rows, ab2store.SigningKeyRetiring) != 1 || rows[0].KID != res[0].Active.KID {
-			t.Fatalf("rows %+v, want one active (%s) and one retiring", rows, res[0].Active.KID)
+		if len(rows) != 1 || countState(rows, ab2store.SigningKeyActive) != 1 || rows[0].KID != res[0].Current.Thumbprint {
+			t.Fatalf("rows %+v, want one active (%s)", rows, res[0].Current.Thumbprint)
 		}
 	})
 }
@@ -237,7 +237,5 @@ func TestSigningKeysUnavailable(t *testing.T) {
 		check("ListSigningKeys", err)
 		_, err = b.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
 		check("RotateSigningKey", err)
-		_, err = b.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{RevokePrevious: true, IdempotencyKey: "k"})
-		check("RotateSigningKey revoking", err)
 	})
 }

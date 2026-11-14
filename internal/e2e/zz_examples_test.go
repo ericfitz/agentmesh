@@ -8,8 +8,8 @@ package e2e_test
 //
 // The file name sorts last in the package (tests run in file-name order, the
 // package doc): the adminReset row wipes the bus data of fixture 1 and the
-// rotateSigningKey row needs the fixture's 1 s signing-key cooldown to have
-// passed behind TestArazzoWorkflows' rotation (ruling 10).
+// rotateSigningKey row, the last, revokes the key that signed the replay's
+// bearer.
 //
 // The rows are a slice in replay order, one per (operation, example name)
 // with coverage checked both ways. A request is built from every parameter's
@@ -409,9 +409,6 @@ func exampleRows() []exRow {
 			emptyOK: []string{"/notices", "/channels/0/capabilities"}},
 		{op: "adminUsage", status: 200},
 		{op: "listSigningKeys", status: 200},
-		// The fixture's cooldown is 1 s from the key's creation; revoke_previous
-		// is false in the example, so the bearer stays valid.
-		{op: "rotateSigningKey", status: 200, setup: func(*replay) { time.Sleep(1100 * time.Millisecond) }},
 		{op: "doneScope", status: 200},
 		{op: "createBridge", slack: true, status: 200,
 			emptyOK: []string{"/not_invited"}, // the replay registers dana in the Slack fake, so every invite succeeds
@@ -435,6 +432,9 @@ func exampleRows() []exRow {
 		{op: "getBridge", slack: true, status: 200, live: map[string]liveFn{"/path/channel": lit(bridgedName)}},
 		{op: "removeBridge", slack: true, status: 204, live: map[string]liveFn{"/path/channel": lit(bridgedName)}},
 		{op: "adminReset", status: 204},
+		// Last: the rotation always revokes the key that signed the replay's
+		// bearer, so no row on fixture 1 can follow it (ADR 0019 Ruling 6).
+		{op: "rotateSigningKey", status: 200},
 	}
 }
 

@@ -607,7 +607,7 @@ func TestServeSigningKeysAdminAPI(t *testing.T) {
 	if st, body := get(t, Config{}); st != 503 || !strings.Contains(body, `"code":"unavailable"`) || !strings.Contains(body, bus.SigningKeysNotConfigured) {
 		t.Errorf("without a service: %d %s", st, body)
 	}
-	if st, body := get(t, Config{SigningKeys: &signingkeys.Service{}}); st != 200 || !strings.Contains(body, `"state":"active"`) {
+	if st, body := get(t, Config{SigningKeys: &signingkeys.Service{}}); st != 200 || !strings.Contains(body, `"state":"current"`) {
 		t.Errorf("with a service: %d %s", st, body)
 	}
 }

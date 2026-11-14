@@ -2465,14 +2465,15 @@ paths:
   /v1/admin/signing-keys:
     get:
       operationId: listSigningKeys
-      summary: "List the server's token signing keys"
+      summary: "List the server's signing leaves"
       tags: [admin]
       description: >-
-        The server's token signing key set, the active key first. Public facts only: a
-        private key is never part of the answer. Administrator only. Any other caller gets
-        403 forbidden. Local mode and a server without a key service answer 503 unavailable,
-        not retryable. Writes nothing. No idempotency key: a read has nothing to repeat.
-        Source: ADR 0012, docs/ops/signing-keys.md.
+        The unexpired leaf certificates that sign this server's bearers, the answering
+        process's current leaf first, and the trust number. Public facts only: a private key
+        is never part of the answer. Administrator only. Any other caller gets 403
+        forbidden. Local mode and a server without a key service answer 503 unavailable, not
+        retryable. Writes nothing. No idempotency key: a read has nothing to repeat.
+        Source: ADR 0019 section 4.11, docs/ops/signing-keys.md.
       responses:
         "200":
           description: The signing key set.
@@ -2493,31 +2494,23 @@ paths:
   /v1/admin/signing-keys/rotate:
     post:
       operationId: rotateSigningKey
-      summary: "Rotate the active token signing key"
+      summary: "Rotate the signing leaf"
       tags: [admin]
       description: >-
-        Asks the configured key provider for the next key and makes it the active key. The
-        previous active key becomes retiring and keeps verifying until its remove_after
-        time, or is deleted at once with revoke_previous, which also skips the rotation
-        cooldown and stops the bearers it signed from verifying. Inside the cooldown
-        (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a
-        plain rotation is 409 conflict, as is a provider whose next key is the active key.
-        Administrator only. Any other caller gets 403 forbidden. A provider that cannot
-        answer is 503 unavailable, retryable; local mode and a server without a key service
-        answer 503 unavailable, not retryable. Side effects: writes the new key row, retires
-        or deletes the previous one and refreshes the server's key set. Idempotency-Key: a
-        repeat with the same key and body returns the first answer and changes nothing; the
-        same key with a different body is 409 conflict. Source: ADR 0012,
+        Makes a new leaf certificate the answering process's current leaf and revokes the
+        previous one at once: the bearers the revoked leaf signed stop verifying, so the
+        caller exchanges its client assertion again. Every rotation revokes; there is no
+        cooldown and no option to keep the previous leaf. The answer names the new leaf, the
+        leaves revoked (each with the count of human messages it signed, always 0 until
+        spec 2) and the trust number. A provider whose next key is the current key is 409
+        conflict. Administrator only. Any other caller gets 403 forbidden. A provider that
+        cannot answer is 503 unavailable, retryable; local mode and a server without a key
+        service answer 503 unavailable, not retryable. Side effects: writes the new key row,
+        deletes the previous one and refreshes the server's key set. Idempotency-Key: a
+        repeat with the same key returns the first answer and changes nothing; the same key
+        with a different payload is 409 conflict. Source: ADR 0019 section 4.11 and Ruling 6,
         docs/ops/signing-keys.md.
       parameters:
-        - name: revoke_previous
-          description: "Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; the bearers the deleted key signed stop verifying. Default false."
-          in: query
-          required: false
-          example: false
-          schema:
-            type: boolean
-            default: false
         - $ref: "#/components/parameters/IdempotencyKeyParam"
       responses:
         "200":
@@ -5281,109 +5274,119 @@ components:
           description: "How many registered keys were removed; for a human identity, 1 when a provider subject was cleared, else 0."
     SigningKey:
       example:
-        kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
-        state: retiring
-        provider: store
-        provider_ref: ""
-        algorithm: EdDSA
-        created_at: 1794096000000
-        retired_at: 1794182400000
-        remove_after: 1794268890000
-      description: "One token signing key: its id, state, provider, algorithm and times."
+        thumbprint: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+        serial: 4f2a9c1e07b3d58a
+        issuer_thumbprint: ZXhhbXBsZS1pbnRlcm1lZGlhdGUtbm90LXJlYWwtMzI
+        not_before: 1794096000000
+        not_after: 1794700800000
+        state: current
+      description: "One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity and its state."
       type: object
-      required: [kid, state, provider, provider_ref, algorithm, created_at, retired_at, remove_after]
+      required: [thumbprint, serial, issuer_thumbprint, not_before, not_after, state]
       properties:
-        kid:
+        thumbprint:
           type: string
-          description: The RFC 7638 thumbprint of the public key; the kid that bearers carry and /v1/auth/jwks publishes.
+          description: "The leaf certificate's thumbprint (SHA-256 of its DER encoding, base64url without padding): the kid that bearers carry and /v1/auth/jwks publishes."
+        serial:
+          type: string
+          description: "The leaf certificate's serial number, lowercase hex without leading zeros. Empty while the server still answers from its old key set."
+        issuer_thumbprint:
+          type: string
+          description: "The thumbprint of the intermediate certificate that issued the leaf. Empty while the server still answers from its old key set."
+        not_before:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740992
+          description: "When the leaf becomes valid, in Unix milliseconds."
+        not_after:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740992
+          description: "When the leaf expires, in Unix milliseconds."
         state:
           type: string
-          enum: [active, retiring]
-          description: "active: the key signs new bearers. retiring: it no longer signs and verifies until remove_after."
-        provider:
-          type: string
-          enum: [store, awskms, gcpkms, azurekms, hashivault]
-          description: "Where the private key lives: store (a database row) or an external key service."
-        provider_ref:
-          type: string
-          description: The key URI inside an external provider; empty for the store provider.
-        algorithm:
-          type: string
-          description: "The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key."
-          enum: [EdDSA, ES256]
-        created_at:
-          type: integer
-          format: int64
-          description: "When the key was created, in Unix milliseconds."
-        retired_at:
-          type: integer
-          format: int64
-          description: Unix milliseconds; 0 while the key is active.
-        remove_after:
-          type: integer
-          format: int64
-          description: Unix milliseconds, the earliest removal of a retiring key; 0 while the key is active.
+          enum: [current, previous, other, revoked]
+          description: "current: the answering process's current leaf. previous: its previous leaf. other: another process's leaf. revoked: a leaf that no longer verifies."
     SigningKeyList:
       example:
         keys:
-          - kid: ZXhhbXBsZS1uZXh0LWtleS1pZC1ub3QtcmVhbC0zMmI
-            state: active
-            provider: store
-            provider_ref: ""
-            algorithm: EdDSA
-            created_at: 1794182400000
-            retired_at: 0
-            remove_after: 0
-          - kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
-            state: retiring
-            provider: store
-            provider_ref: ""
-            algorithm: EdDSA
-            created_at: 1794096000000
-            retired_at: 1794182400000
-            remove_after: 1794268890000
-      description: The server's token signing keys.
+          - thumbprint: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+            serial: 4f2a9c1e07b3d58a
+            issuer_thumbprint: ZXhhbXBsZS1pbnRlcm1lZGlhdGUtbm90LXJlYWwtMzI
+            not_before: 1794096000000
+            not_after: 1794700800000
+            state: current
+          - thumbprint: ZXhhbXBsZS1uZXh0LWxlYWYtbm90LXJlYWwtMzJi
+            serial: 1b7e03d9a46c2f51
+            issuer_thumbprint: ZXhhbXBsZS1pbnRlcm1lZGlhdGUtbm90LXJlYWwtMzI
+            not_before: 1794000000000
+            not_after: 1794604800000
+            state: previous
+        trust_number: 1794096000000
+      description: The unexpired signing leaves and the trust number.
       type: object
-      required: [keys]
+      required: [keys, trust_number]
       properties:
         keys:
           type: array
-          description: "The key set, the active key first; public facts only."
+          description: "The unexpired leaves, the answering process's current leaf first; public facts only."
           items:
             $ref: "#/components/schemas/SigningKey"
+        trust_number:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740992
+          description: "The trust number the server holds: the Unix millisecond time of the last change to the trust material, 0 while the server answers from its old key set."
+    RevokedLeaf:
+      example:
+        thumbprint: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+        human_messages: 0
+      description: One leaf a rotation revoked, with the count of human messages it signed.
+      type: object
+      required: [thumbprint, human_messages]
+      properties:
+        thumbprint:
+          type: string
+          description: The revoked leaf's thumbprint.
+        human_messages:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740992
+          description: "How many human messages the revoked leaf signed; always 0 until spec 2."
     SigningKeyRotation:
       example:
-        active:
-          kid: ZXhhbXBsZS1uZXh0LWtleS1pZC1ub3QtcmVhbC0zMmI
-          state: active
-          provider: store
-          provider_ref: ""
-          algorithm: EdDSA
-          created_at: 1794182400000
-          retired_at: 0
-          remove_after: 0
-        previous:
-          kid: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
-          state: retiring
-          provider: store
-          provider_ref: ""
-          algorithm: EdDSA
-          created_at: 1794096000000
-          retired_at: 1794182400000
-          remove_after: 1794268890000
-        revoked: false
-      description: "The result of a rotation: the new active key, the key that was active before and whether that key was deleted."
+        current:
+          thumbprint: ZXhhbXBsZS1uZXh0LWxlYWYtbm90LXJlYWwtMzJi
+          serial: 1b7e03d9a46c2f51
+          issuer_thumbprint: ZXhhbXBsZS1pbnRlcm1lZGlhdGUtbm90LXJlYWwtMzI
+          not_before: 1794182400000
+          not_after: 1794787200000
+          state: current
+        revoked:
+          - thumbprint: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+            human_messages: 0
+        trust_number: 1794182400000
+      description: "The result of a rotation: the new current leaf, the leaves it revoked and the trust number."
       type: object
-      required: [active, revoked]
+      required: [current, revoked, trust_number]
       properties:
-        active:
-          $ref: "#/components/schemas/SigningKey"
-        previous:
-          description: The key that was active before the rotation, as the rotation left it (retiring, with its retirement times), or, when revoked is true, the deleted key as it was. Absent when the set had none.
+        current:
           $ref: "#/components/schemas/SigningKey"
         revoked:
-          type: boolean
-          description: True when previous was deleted instead of retired.
+          type: array
+          description: "The leaves the rotation revoked, one entry each; empty when the set had none."
+          items:
+            $ref: "#/components/schemas/RevokedLeaf"
+        trust_number:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740992
+          description: "The trust number the server holds after the rotation, 0 while the server answers from its old key set."
     CreateAgentIdentityRequest:
       example:
         name: acme-builder

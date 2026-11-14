@@ -351,16 +351,16 @@ func (e ProblemCode) Valid() bool {
 
 // Defines values for RegistrationAlgorithm.
 const (
-	RegistrationAlgorithmES256 RegistrationAlgorithm = "ES256"
-	RegistrationAlgorithmEdDSA RegistrationAlgorithm = "EdDSA"
+	ES256 RegistrationAlgorithm = "ES256"
+	EdDSA RegistrationAlgorithm = "EdDSA"
 )
 
 // Valid indicates whether the value is a known member of the RegistrationAlgorithm enum.
 func (e RegistrationAlgorithm) Valid() bool {
 	switch e {
-	case RegistrationAlgorithmES256:
+	case ES256:
 		return true
-	case RegistrationAlgorithmEdDSA:
+	case EdDSA:
 		return true
 	default:
 		return false
@@ -463,63 +463,24 @@ func (e SetAgentStatusRequestTag) Valid() bool {
 	}
 }
 
-// Defines values for SigningKeyAlgorithm.
-const (
-	SigningKeyAlgorithmES256 SigningKeyAlgorithm = "ES256"
-	SigningKeyAlgorithmEdDSA SigningKeyAlgorithm = "EdDSA"
-)
-
-// Valid indicates whether the value is a known member of the SigningKeyAlgorithm enum.
-func (e SigningKeyAlgorithm) Valid() bool {
-	switch e {
-	case SigningKeyAlgorithmES256:
-		return true
-	case SigningKeyAlgorithmEdDSA:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for SigningKeyProvider.
-const (
-	Awskms     SigningKeyProvider = "awskms"
-	Azurekms   SigningKeyProvider = "azurekms"
-	Gcpkms     SigningKeyProvider = "gcpkms"
-	Hashivault SigningKeyProvider = "hashivault"
-	Store      SigningKeyProvider = "store"
-)
-
-// Valid indicates whether the value is a known member of the SigningKeyProvider enum.
-func (e SigningKeyProvider) Valid() bool {
-	switch e {
-	case Awskms:
-		return true
-	case Azurekms:
-		return true
-	case Gcpkms:
-		return true
-	case Hashivault:
-		return true
-	case Store:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for SigningKeyState.
 const (
-	Active   SigningKeyState = "active"
-	Retiring SigningKeyState = "retiring"
+	Current  SigningKeyState = "current"
+	Other    SigningKeyState = "other"
+	Previous SigningKeyState = "previous"
+	Revoked  SigningKeyState = "revoked"
 )
 
 // Valid indicates whether the value is a known member of the SigningKeyState enum.
 func (e SigningKeyState) Valid() bool {
 	switch e {
-	case Active:
+	case Current:
 		return true
-	case Retiring:
+	case Other:
+		return true
+	case Previous:
+		return true
+	case Revoked:
 		return true
 	default:
 		return false
@@ -1372,6 +1333,15 @@ type RenameChannelRequest struct {
 	Name string `json:"name"`
 }
 
+// RevokedLeaf One leaf a rotation revoked, with the count of human messages it signed.
+type RevokedLeaf struct {
+	// HumanMessages How many human messages the revoked leaf signed; always 0 until spec 2.
+	HumanMessages int64 `json:"human_messages"`
+
+	// Thumbprint The revoked leaf's thumbprint.
+	Thumbprint string `json:"thumbprint"`
+}
+
 // Scope A named group of channels and agent identities retired as one unit; channels and identities are filled on a get only.
 type Scope struct {
 	// Channels The names of the scope's channels; present on a get only (an empty array is a scope with none).
@@ -1519,58 +1489,49 @@ type SetAgentStatusRequest struct {
 // SetAgentStatusRequestTag The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed.
 type SetAgentStatusRequestTag string
 
-// SigningKey One token signing key: its id, state, provider, algorithm and times.
+// SigningKey One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity and its state.
 type SigningKey struct {
-	// Algorithm The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key.
-	Algorithm SigningKeyAlgorithm `json:"algorithm"`
+	// IssuerThumbprint The thumbprint of the intermediate certificate that issued the leaf. Empty while the server still answers from its old key set.
+	IssuerThumbprint string `json:"issuer_thumbprint"`
 
-	// CreatedAt When the key was created, in Unix milliseconds.
-	CreatedAt int64 `json:"created_at"`
+	// NotAfter When the leaf expires, in Unix milliseconds.
+	NotAfter int64 `json:"not_after"`
 
-	// Kid The RFC 7638 thumbprint of the public key; the kid that bearers carry and /v1/auth/jwks publishes.
-	Kid string `json:"kid"`
+	// NotBefore When the leaf becomes valid, in Unix milliseconds.
+	NotBefore int64 `json:"not_before"`
 
-	// Provider Where the private key lives: store (a database row) or an external key service.
-	Provider SigningKeyProvider `json:"provider"`
+	// Serial The leaf certificate's serial number, lowercase hex without leading zeros. Empty while the server still answers from its old key set.
+	Serial string `json:"serial"`
 
-	// ProviderRef The key URI inside an external provider; empty for the store provider.
-	ProviderRef string `json:"provider_ref"`
-
-	// RemoveAfter Unix milliseconds, the earliest removal of a retiring key; 0 while the key is active.
-	RemoveAfter int64 `json:"remove_after"`
-
-	// RetiredAt Unix milliseconds; 0 while the key is active.
-	RetiredAt int64 `json:"retired_at"`
-
-	// State active: the key signs new bearers. retiring: it no longer signs and verifies until remove_after.
+	// State current: the answering process's current leaf. previous: its previous leaf. other: another process's leaf. revoked: a leaf that no longer verifies.
 	State SigningKeyState `json:"state"`
+
+	// Thumbprint The leaf certificate's thumbprint (SHA-256 of its DER encoding, base64url without padding): the kid that bearers carry and /v1/auth/jwks publishes.
+	Thumbprint string `json:"thumbprint"`
 }
 
-// SigningKeyAlgorithm The signing algorithm of the key: EdDSA for an Ed25519 key, ES256 for a P-256 key.
-type SigningKeyAlgorithm string
-
-// SigningKeyProvider Where the private key lives: store (a database row) or an external key service.
-type SigningKeyProvider string
-
-// SigningKeyState active: the key signs new bearers. retiring: it no longer signs and verifies until remove_after.
+// SigningKeyState current: the answering process's current leaf. previous: its previous leaf. other: another process's leaf. revoked: a leaf that no longer verifies.
 type SigningKeyState string
 
-// SigningKeyList The server's token signing keys.
+// SigningKeyList The unexpired signing leaves and the trust number.
 type SigningKeyList struct {
-	// Keys The key set, the active key first; public facts only.
+	// Keys The unexpired leaves, the answering process's current leaf first; public facts only.
 	Keys []SigningKey `json:"keys"`
+
+	// TrustNumber The trust number the server holds: the Unix millisecond time of the last change to the trust material, 0 while the server answers from its old key set.
+	TrustNumber int64 `json:"trust_number"`
 }
 
-// SigningKeyRotation The result of a rotation: the new active key, the key that was active before and whether that key was deleted.
+// SigningKeyRotation The result of a rotation: the new current leaf, the leaves it revoked and the trust number.
 type SigningKeyRotation struct {
-	// Active One token signing key: its id, state, provider, algorithm and times.
-	Active SigningKey `json:"active"`
+	// Current One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity and its state.
+	Current SigningKey `json:"current"`
 
-	// Previous The key that was active before the rotation, as the rotation left it (retiring, with its retirement times), or, when revoked is true, the deleted key as it was. Absent when the set had none.
-	Previous *SigningKey `json:"previous,omitempty"`
+	// Revoked The leaves the rotation revoked, one entry each; empty when the set had none.
+	Revoked []RevokedLeaf `json:"revoked"`
 
-	// Revoked True when previous was deleted instead of retired.
-	Revoked bool `json:"revoked"`
+	// TrustNumber The trust number the server holds after the rotation, 0 while the server answers from its old key set.
+	TrustNumber int64 `json:"trust_number"`
 }
 
 // Status The administrator's view: live sessions, every channel with its creator, server notices and the embedding backlog and rejections.
@@ -1953,9 +1914,6 @@ type DoneScopeParams struct {
 
 // RotateSigningKeyParams defines parameters for RotateSigningKey.
 type RotateSigningKeyParams struct {
-	// RevokePrevious Delete the previous active key at once instead of retiring it, and skip the rotation cooldown; the bearers the deleted key signed stop verifying. Default false.
-	RevokePrevious *bool `form:"revoke_previous,omitempty" json:"revoke_previous,omitempty"`
-
 	// IdempotencyKey An opaque key the client chooses to make a mutating call safe to retry (Decision 66). The server keeps the first call's answer per identity and key for receipt_retention_minutes (default 60); a repeat with the same key and body returns that answer without running the call again, and the same key with a different body is 409 conflict. Absent or empty means no receipt. At most 1024 bytes.
 	IdempotencyKey *IdempotencyKeyParam `json:"Idempotency-Key,omitempty"`
 }
@@ -2443,16 +2401,16 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 	DoneScope(ctx context.Context, scope ScopeParam, params *DoneScopeParams, body DoneScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListSigningKeys List the server's token signing keys
+	// ListSigningKeys List the server's signing leaves
 	//
-	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
+	// The unexpired leaf certificates that sign this server's bearers, the answering process's current leaf first, and the trust number. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0019 section 4.11, docs/ops/signing-keys.md.
 	//
 	// Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 	ListSigningKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// RotateSigningKey Rotate the active token signing key
+	// RotateSigningKey Rotate the signing leaf
 	//
-	// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
+	// Makes a new leaf certificate the answering process's current leaf and revokes the previous one at once: the bearers the revoked leaf signed stop verifying, so the caller exchanges its client assertion again. Every rotation revokes; there is no cooldown and no option to keep the previous leaf. The answer names the new leaf, the leaves revoked (each with the count of human messages it signed, always 0 until spec 2) and the trust number. A provider whose next key is the current key is 409 conflict. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key returns the first answer and changes nothing; the same key with a different payload is 409 conflict. Source: ADR 0019 section 4.11 and Ruling 6, docs/ops/signing-keys.md.
 	//
 	// Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 	RotateSigningKey(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3263,9 +3221,9 @@ func (c *Client) DoneScope(ctx context.Context, scope ScopeParam, params *DoneSc
 	return c.Client.Do(req)
 }
 
-// ListSigningKeys List the server's token signing keys
+// ListSigningKeys List the server's signing leaves
 //
-// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
+// The unexpired leaf certificates that sign this server's bearers, the answering process's current leaf first, and the trust number. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0019 section 4.11, docs/ops/signing-keys.md.
 //
 // Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 func (c *Client) ListSigningKeys(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3280,9 +3238,9 @@ func (c *Client) ListSigningKeys(ctx context.Context, reqEditors ...RequestEdito
 	return c.Client.Do(req)
 }
 
-// RotateSigningKey Rotate the active token signing key
+// RotateSigningKey Rotate the signing leaf
 //
-// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
+// Makes a new leaf certificate the answering process's current leaf and revokes the previous one at once: the bearers the revoked leaf signed stop verifying, so the caller exchanges its client assertion again. Every rotation revokes; there is no cooldown and no option to keep the previous leaf. The answer names the new leaf, the leaves revoked (each with the count of human messages it signed, always 0 until spec 2) and the trust number. A provider whose next key is the current key is 409 conflict. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key returns the first answer and changes nothing; the same key with a different payload is 409 conflict. Source: ADR 0019 section 4.11 and Ruling 6, docs/ops/signing-keys.md.
 //
 // Corresponds with POST /v1/admin/signing-keys/rotate (the `RotateSigningKey` operationId).
 func (c *Client) RotateSigningKey(ctx context.Context, params *RotateSigningKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -4943,33 +4901,6 @@ func NewRotateSigningKeyRequest(server string, params *RotateSigningKeyParams) (
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.RevokePrevious != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "revoke_previous", *params.RevokePrevious, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
@@ -7267,18 +7198,18 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/admin/scopes/{scope}/done (the `DoneScope` operationId).
 	DoneScopeWithResponse(ctx context.Context, scope ScopeParam, params *DoneScopeParams, body DoneScopeJSONRequestBody, reqEditors ...RequestEditorFn) (*DoneScopeResponse, error)
 
-	// ListSigningKeysWithResponse List the server's token signing keys
+	// ListSigningKeysWithResponse List the server's signing leaves
 	//
-	// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
+	// The unexpired leaf certificates that sign this server's bearers, the answering process's current leaf first, and the trust number. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0019 section 4.11, docs/ops/signing-keys.md.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/admin/signing-keys (the `ListSigningKeys` operationId).
 	ListSigningKeysWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSigningKeysResponse, error)
 
-	// RotateSigningKeyWithResponse Rotate the active token signing key
+	// RotateSigningKeyWithResponse Rotate the signing leaf
 	//
-	// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
+	// Makes a new leaf certificate the answering process's current leaf and revokes the previous one at once: the bearers the revoked leaf signed stop verifying, so the caller exchanges its client assertion again. Every rotation revokes; there is no cooldown and no option to keep the previous leaf. The answer names the new leaf, the leaves revoked (each with the count of human messages it signed, always 0 until spec 2) and the trust number. A provider whose next key is the current key is 409 conflict. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key returns the first answer and changes nothing; the same key with a different payload is 409 conflict. Source: ADR 0019 section 4.11 and Ruling 6, docs/ops/signing-keys.md.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -13015,9 +12946,9 @@ func (c *ClientWithResponses) DoneScopeWithResponse(ctx context.Context, scope S
 	return ParseDoneScopeResponse(rsp)
 }
 
-// ListSigningKeysWithResponse List the server's token signing keys
+// ListSigningKeysWithResponse List the server's signing leaves
 //
-// The server's token signing key set, the active key first. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0012, docs/ops/signing-keys.md.
+// The unexpired leaf certificates that sign this server's bearers, the answering process's current leaf first, and the trust number. Public facts only: a private key is never part of the answer. Administrator only. Any other caller gets 403 forbidden. Local mode and a server without a key service answer 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0019 section 4.11, docs/ops/signing-keys.md.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13030,9 +12961,9 @@ func (c *ClientWithResponses) ListSigningKeysWithResponse(ctx context.Context, r
 	return ParseListSigningKeysResponse(rsp)
 }
 
-// RotateSigningKeyWithResponse Rotate the active token signing key
+// RotateSigningKeyWithResponse Rotate the signing leaf
 //
-// Asks the configured key provider for the next key and makes it the active key. The previous active key becomes retiring and keeps verifying until its remove_after time, or is deleted at once with revoke_previous, which also skips the rotation cooldown and stops the bearers it signed from verifying. Inside the cooldown (signing_key_rotation_cooldown_seconds, counted from the active key's creation) a plain rotation is 409 conflict, as is a provider whose next key is the active key. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, retires or deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key and body returns the first answer and changes nothing; the same key with a different body is 409 conflict. Source: ADR 0012, docs/ops/signing-keys.md.
+// Makes a new leaf certificate the answering process's current leaf and revokes the previous one at once: the bearers the revoked leaf signed stop verifying, so the caller exchanges its client assertion again. Every rotation revokes; there is no cooldown and no option to keep the previous leaf. The answer names the new leaf, the leaves revoked (each with the count of human messages it signed, always 0 until spec 2) and the trust number. A provider whose next key is the current key is 409 conflict. Administrator only. Any other caller gets 403 forbidden. A provider that cannot answer is 503 unavailable, retryable; local mode and a server without a key service answer 503 unavailable, not retryable. Side effects: writes the new key row, deletes the previous one and refreshes the server's key set. Idempotency-Key: a repeat with the same key returns the first answer and changes nothing; the same key with a different payload is 409 conflict. Source: ADR 0019 section 4.11 and Ruling 6, docs/ops/signing-keys.md.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -18092,10 +18023,10 @@ type ServerInterface interface {
 	// DoneScope Retire a scope, with or without its bridge
 	// (POST /v1/admin/scopes/{scope}/done)
 	DoneScope(w http.ResponseWriter, r *http.Request, scope ScopeParam, params DoneScopeParams)
-	// ListSigningKeys List the server's token signing keys
+	// ListSigningKeys List the server's signing leaves
 	// (GET /v1/admin/signing-keys)
 	ListSigningKeys(w http.ResponseWriter, r *http.Request)
-	// RotateSigningKey Rotate the active token signing key
+	// RotateSigningKey Rotate the signing leaf
 	// (POST /v1/admin/signing-keys/rotate)
 	RotateSigningKey(w http.ResponseWriter, r *http.Request, params RotateSigningKeyParams)
 	// AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog
@@ -18663,19 +18594,6 @@ func (siw *ServerInterfaceWrapper) RotateSigningKey(w http.ResponseWriter, r *ht
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params RotateSigningKeyParams
-
-	// ------------- Optional query parameter "revoke_previous" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "revoke_previous", r.URL.Query(), &params.RevokePrevious, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "revoke_previous"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "revoke_previous", Err: err})
-		}
-		return
-	}
 
 	headers := r.Header
 
@@ -27705,10 +27623,10 @@ type StrictServerInterface interface {
 	// DoneScope Retire a scope, with or without its bridge
 	// (POST /v1/admin/scopes/{scope}/done)
 	DoneScope(ctx context.Context, request DoneScopeRequestObject) (DoneScopeResponseObject, error)
-	// ListSigningKeys List the server's token signing keys
+	// ListSigningKeys List the server's signing leaves
 	// (GET /v1/admin/signing-keys)
 	ListSigningKeys(ctx context.Context, request ListSigningKeysRequestObject) (ListSigningKeysResponseObject, error)
-	// RotateSigningKey Rotate the active token signing key
+	// RotateSigningKey Rotate the signing leaf
 	// (POST /v1/admin/signing-keys/rotate)
 	RotateSigningKey(ctx context.Context, request RotateSigningKeyRequestObject) (RotateSigningKeyResponseObject, error)
 	// AdminStatus The administrator's view of the server: sessions, channels, notices and the embedding backlog

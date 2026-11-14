@@ -151,11 +151,11 @@ func TestRequestConvertersNilBody(t *testing.T) {
 	if p := remote.AdminResetRequest(bus.ResetInput{}).Params; p.Scope != nil || p.IdempotencyKey != nil {
 		t.Fatalf("AdminResetRequest zero input must omit scope and key: %+v", p)
 	}
-	if got := rotateSigningKeyInput(gen.RotateSigningKeyRequestObject{}); got.RevokePrevious || got.IdempotencyKey != "" {
+	if got := rotateSigningKeyInput(gen.RotateSigningKeyRequestObject{}); got.IdempotencyKey != "" {
 		t.Fatalf("rotateSigningKeyInput zero params = %+v", got)
 	}
-	if p := remote.RotateSigningKeyRequest(bus.RotateSigningKeyInput{}).Params; p.RevokePrevious != nil {
-		t.Fatalf("RotateSigningKeyRequest zero input must omit revoke_previous: %+v", p)
+	if p := remote.RotateSigningKeyRequest(bus.RotateSigningKeyInput{}).Params; p.IdempotencyKey != nil {
+		t.Fatalf("RotateSigningKeyRequest zero input must omit the key: %+v", p)
 	}
 	if got := createAgentIdentityInput(gen.CreateAgentIdentityRequestObject{Body: &gen.CreateAgentIdentityJSONRequestBody{Name: "n"}}); got.Name != "n" || got.Scope != "" {
 		t.Fatalf("createAgentIdentityInput absent scope = %+v", got)
@@ -178,22 +178,21 @@ func TestRequestConvertersNilBody(t *testing.T) {
 	if raw := mustMarshal(t, bridgeListToGen(nil)); raw != `{"bridges":[]}` {
 		t.Fatalf("bridgeListToGen zero = %s", raw)
 	}
-	if raw := mustMarshal(t, signingKeyListToGen(nil)); raw != `{"keys":[]}` {
+	if raw := mustMarshal(t, signingKeyListToGen(bus.SigningKeyList{})); raw != `{"keys":[],"trust_number":0}` {
 		t.Fatalf("signingKeyListToGen zero = %s", raw)
 	}
 	st := statusToGen(bus.Status{})
 	if st.Sessions == nil || st.Channels == nil || st.Notices == nil || st.EmbeddingRejectedLast != nil || st.EmbeddingError != nil || st.EmbeddingErrorAt != nil {
 		t.Fatalf("statusToGen zero = %+v", st)
 	}
-	if rot := signingKeyRotationToGen(bus.SigningKeyRotation{}); rot.Previous != nil || rot.Revoked {
-		t.Fatalf("signingKeyRotationToGen zero must omit previous: %+v", rot)
+	if rot := signingKeyRotationToGen(bus.SigningKeyRotation{}); rot.Revoked == nil || len(rot.Revoked) != 0 {
+		t.Fatalf("signingKeyRotationToGen zero must keep revoked as []: %+v", rot)
 	}
-	// Revoked is the bus flag, not a member of the key: a swap with Previous cannot hide.
-	if rot := signingKeyRotationToGen(bus.SigningKeyRotation{Revoked: true}); !rot.Revoked || rot.Previous != nil {
-		t.Fatalf("signingKeyRotationToGen revoked-only = %+v", rot)
+	if rot := signingKeyRotationToGen(bus.SigningKeyRotation{Revoked: []bus.RevokedLeaf{{Thumbprint: "T"}}}); len(rot.Revoked) != 1 || rot.Revoked[0].Thumbprint != "T" {
+		t.Fatalf("signingKeyRotationToGen one revoked = %+v", rot)
 	}
-	if rot, err := remote.FromGenSigningKeyRotation(gen.SigningKeyRotation{Active: gen.SigningKey{State: "active", Provider: "store", Algorithm: "EdDSA"}}); err != nil || rot.Previous.KID != "" || rot.Revoked {
-		t.Fatalf("FromGenSigningKeyRotation absent previous = %+v, %v", rot, err)
+	if rot, err := remote.FromGenSigningKeyRotation(gen.SigningKeyRotation{Current: gen.SigningKey{State: "current"}}); err != nil || rot.Revoked == nil || len(rot.Revoked) != 0 {
+		t.Fatalf("FromGenSigningKeyRotation absent revoked must be []: %+v, %v", rot, err)
 	}
 	if got := remote.FromGenStatus(gen.Status{}); got.Sessions == nil || got.Channels == nil || got.Notices == nil {
 		t.Fatalf("FromGenStatus zero must keep the lists non-nil: %+v", got)

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
@@ -28,8 +27,8 @@ func (p *countingProvider) Next(ctx context.Context) (keyprovider.Key, error) {
 }
 
 // keysEnv is an env with an issuer, an administrator "root", a non-administrator
-// "pat" and a signing key service whose active key is two hours old (older than
-// the one hour default cooldown), so the first rotation is allowed.
+// "pat" and a signing key service with one active key (the old key set answers
+// in the leaf shape until Task 23).
 func keysEnv(t *testing.T) (*env, *countingProvider) {
 	t.Helper()
 	e := newEnv(t, envOptions{issuer: true, auth: InProcess{}})
@@ -41,31 +40,33 @@ func keysEnv(t *testing.T) (*env, *countingProvider) {
 	if _, _, err := svc.EnsureActive(context.Background()); err != nil {
 		t.Fatalf("EnsureActive: %v", err)
 	}
-	e.clock.Advance(2 * time.Hour)
 	p.next.Store(0)
 	return e, p
 }
 
 type wireKey struct {
-	KID         string `json:"kid"`
-	State       string `json:"state"`
-	Provider    string `json:"provider"`
-	ProviderRef string `json:"provider_ref"`
-	Algorithm   string `json:"algorithm"`
-	CreatedAt   int64  `json:"created_at"`
-	RetiredAt   int64  `json:"retired_at"`
-	RemoveAfter int64  `json:"remove_after"`
+	Thumbprint       string `json:"thumbprint"`
+	Serial           string `json:"serial"`
+	IssuerThumbprint string `json:"issuer_thumbprint"`
+	NotBefore        int64  `json:"not_before"`
+	NotAfter         int64  `json:"not_after"`
+	State            string `json:"state"`
+}
+
+type wireRevoked struct {
+	Thumbprint    string `json:"thumbprint"`
+	HumanMessages int64  `json:"human_messages"`
 }
 
 type wireRotation struct {
-	Active   wireKey  `json:"active"`
-	Previous *wireKey `json:"previous"`
-	Revoked  bool     `json:"revoked"`
+	Current     wireKey       `json:"current"`
+	Revoked     []wireRevoked `json:"revoked"`
+	TrustNumber int64         `json:"trust_number"`
 }
 
-func (e *env) rotate(identity, query, idemKey string) (int, string) {
+func (e *env) rotate(identity, idemKey string) (int, string) {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, "http://inproc/v1/admin/signing-keys/rotate"+query, nil)
+	req, err := http.NewRequest(http.MethodPost, "http://inproc/v1/admin/signing-keys/rotate", nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -98,8 +99,11 @@ func TestListSigningKeysAdmin(t *testing.T) {
 		t.Fatalf("list: %d %s", st, body)
 	}
 	k := ks[0]
-	if k.State != "active" || k.Provider != "store" || k.Algorithm != "EdDSA" || k.KID == "" || k.RetiredAt != 0 || k.RemoveAfter != 0 || k.CreatedAt != fixedNowMs {
-		t.Fatalf("active key = %+v", k)
+	if k.State != "current" || k.Thumbprint == "" || k.NotBefore != fixedNowMs || k.NotAfter != 0 || k.Serial != "" || k.IssuerThumbprint != "" {
+		t.Fatalf("current key = %+v", k)
+	}
+	if !strings.Contains(body, `"trust_number":0`) {
+		t.Fatalf("the list has no trust_number: %s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "private") || strings.Contains(body, "BEGIN") {
 		t.Fatalf("the body names a private key: %s", body)
@@ -112,7 +116,7 @@ func TestSigningKeysForbiddenForAgent(t *testing.T) {
 	if st != 403 || !strings.Contains(body, `"code":"forbidden"`) {
 		t.Fatalf("list as agent: %d %s", st, body)
 	}
-	st, body = e.rotate("pat", "", "")
+	st, body = e.rotate("pat", "")
 	if st != 403 || !strings.Contains(body, `"code":"forbidden"`) {
 		t.Fatalf("rotate as agent: %d %s", st, body)
 	}
@@ -124,111 +128,68 @@ func TestSigningKeysForbiddenForAgent(t *testing.T) {
 	}
 }
 
+// Rotate always revokes (Ruling 6): the previous key is deleted, reported as
+// the one revoked leaf, and no cooldown refuses a second rotation.
 func TestRotateSigningKeyAPI(t *testing.T) {
 	e, _ := keysEnv(t)
 	_, _, before := e.listKeys("root")
-	st, body := e.rotate("root", "", "")
-	if st != 200 {
-		t.Fatalf("rotate: %d %s", st, body)
-	}
-	var r wireRotation
-	if err := json.Unmarshal([]byte(body), &r); err != nil {
-		t.Fatal(err)
-	}
-	if r.Revoked || r.Active.State != "active" || r.Active.KID == before[0].KID || r.Previous == nil || r.Previous.KID != before[0].KID || r.Previous.State != "retiring" {
-		t.Fatalf("rotation = %s", body)
-	}
-	if r.Previous.RetiredAt != e.core.NowMs() || r.Previous.RemoveAfter != signingkeys.RemoveAfter(e.core.NowMs()) {
-		t.Fatalf("previous retirement times = %+v", r.Previous)
-	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 || ks[0].State != "active" || ks[0].KID != r.Active.KID || ks[1].State != "retiring" {
-		t.Fatalf("set after rotate = %+v", ks)
-	}
-
-	// A second rotation inside the cooldown is a conflict that says so.
-	st, body = e.rotate("root", "", "")
-	if st != 409 || !strings.Contains(body, `"code":"conflict"`) || !strings.Contains(body, "cooldown") {
-		t.Fatalf("second rotate: %d %s", st, body)
-	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 {
-		t.Fatalf("a refused rotation changed the set: %+v", ks)
-	}
-
-	// revoke_previous skips the cooldown and deletes the key it replaces.
-	st, body = e.rotate("root", "?revoke_previous=true", "")
-	if st != 200 {
-		t.Fatalf("revoking rotate: %d %s", st, body)
-	}
-	var rv wireRotation
-	if err := json.Unmarshal([]byte(body), &rv); err != nil {
-		t.Fatal(err)
-	}
-	if !rv.Revoked || rv.Previous == nil || rv.Previous.KID != r.Active.KID {
-		t.Fatalf("revoking rotation = %s", body)
-	}
-	_, _, ks := e.listKeys("root")
-	if len(ks) != 2 || ks[0].KID != rv.Active.KID || ks[1].KID != r.Previous.KID {
-		t.Fatalf("set after revoke = %+v", ks)
-	}
-
-	// The query parameter is a boolean.
-	if st, body = e.rotate("root", "?revoke_previous=maybe", ""); st != 400 {
-		t.Fatalf("revoke_previous=maybe: %d %s", st, body)
+	for i := 0; i < 2; i++ {
+		st, body := e.rotate("root", "")
+		if st != 200 {
+			t.Fatalf("rotate %d: %d %s", i, st, body)
+		}
+		var r wireRotation
+		if err := json.Unmarshal([]byte(body), &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.Current.State != "current" || r.Current.Thumbprint == before[0].Thumbprint || len(r.Revoked) != 1 ||
+			r.Revoked[0].Thumbprint != before[0].Thumbprint || r.Revoked[0].HumanMessages != 0 {
+			t.Fatalf("rotation %d = %s", i, body)
+		}
+		if !strings.Contains(body, `"trust_number":0`) {
+			t.Fatalf("the rotation has no trust_number: %s", body)
+		}
+		_, _, ks := e.listKeys("root")
+		if len(ks) != 1 || ks[0].State != "current" || ks[0].Thumbprint != r.Current.Thumbprint {
+			t.Fatalf("set after rotate %d = %+v", i, ks)
+		}
+		before = ks
 	}
 }
 
-// A set with no key yet answers the first rotation without a previous member.
+// A set with no key yet answers the first rotation with an empty revoked list.
 func TestRotateSigningKeyFirstKey(t *testing.T) {
 	e := newEnv(t, envOptions{issuer: true, auth: InProcess{}})
 	e.identity("root", true)
 	e.opts.SigningKeys = signingkeys.Service{Core: e.core, Provider: keyprovider.StoreProvider{}, Settings: signingkeys.DefaultSettings()}
-	st, body := e.rotate("root", "", "")
-	if st != 200 || strings.Contains(body, `"previous"`) || !strings.Contains(body, `"revoked":false`) {
+	st, body := e.rotate("root", "")
+	if st != 200 || !strings.Contains(body, `"revoked":[]`) {
 		t.Fatalf("first rotate: %d %s", st, body)
 	}
 }
 
 func TestRotateSigningKeyIdempotent(t *testing.T) {
 	e, p := keysEnv(t)
-	st, first := e.rotate("root", "", "k1")
+	st, first := e.rotate("root", "k1")
 	if st != 200 {
 		t.Fatalf("first: %d %s", st, first)
 	}
 	if n := p.next.Load(); n != 1 {
 		t.Fatalf("Next calls after the first = %d", n)
 	}
-	st, second := e.rotate("root", "", "k1")
+	st, second := e.rotate("root", "k1")
 	if st != 200 || second != first {
 		t.Fatalf("replay: %d %s\nwant %s", st, second, first)
 	}
 	if n := p.next.Load(); n != 1 {
 		t.Fatalf("a replay called Provider.Next (%d calls)", n)
 	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 {
+	var r wireRotation
+	if err := json.Unmarshal([]byte(first), &r); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ks := e.listKeys("root"); len(ks) != 1 || ks[0].Thumbprint != r.Current.Thumbprint {
 		t.Fatalf("a replay rotated again: %+v", ks)
-	}
-	// The same key with another payload is a conflict, again without Next.
-	st, body := e.rotate("root", "?revoke_previous=true", "k1")
-	if st != 409 || !strings.Contains(body, "different payload") {
-		t.Fatalf("changed payload: %d %s", st, body)
-	}
-	if n := p.next.Load(); n != 1 {
-		t.Fatalf("a payload conflict called Provider.Next (%d calls)", n)
-	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 {
-		t.Fatalf("a payload conflict changed the set: %+v", ks)
-	}
-	// A refused rotation stores no receipt: the retry with the same key runs.
-	e2, _ := keysEnv(t)
-	if st, body = e2.rotate("root", "", ""); st != 200 {
-		t.Fatalf("setup: %d %s", st, body)
-	}
-	if st, _ = e2.rotate("root", "", "k2"); st != 409 {
-		t.Fatalf("inside the cooldown: %d", st)
-	}
-	e2.clock.Advance(2 * time.Hour)
-	if st, body = e2.rotate("root", "", "k2"); st != 200 {
-		t.Fatalf("retry after a refusal: %d %s", st, body)
 	}
 }
 

@@ -220,7 +220,7 @@ func (s *stub) Register(_ context.Context, _ gen.RegisterRequestObject) (gen.Reg
 	s.mu.Lock()
 	s.called++
 	s.mu.Unlock()
-	return gen.Register201JSONResponse{Identity: "pat", Kid: "k", Algorithm: gen.RegistrationAlgorithmEdDSA, Created: true}, nil
+	return gen.Register201JSONResponse{Identity: "pat", Kid: "k", Algorithm: gen.EdDSA, Created: true}, nil
 }
 
 func (s *stub) AdminReset(_ context.Context, _ gen.AdminResetRequestObject) (gen.AdminResetResponseObject, error) {

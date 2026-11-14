@@ -424,26 +424,20 @@ func TestAuthEndToEnd(t *testing.T) {
 			}
 		})
 
-		// (11) Signing key rotation over TCP. The server runs with a 3 s
-		// cooldown (the 3600 s default would refuse the first rotation of a
-		// key created seconds ago); the second rotate follows at once.
+		// (11) Signing key rotation over TCP. Rotate always revokes (Ruling 6):
+		// the key that signed the caller's bearer is deleted, so the caller
+		// exchanges again, and a second rotation follows at once (no cooldown
+		// applies to the API form).
 		t.Run("signing-key-rotation", func(t *testing.T) {
 			before := root.bearer // signed by the key created at the start
 			set, err := root.bus.ListSigningKeys(ctx)
-			if err != nil || len(set) != 1 {
+			if err != nil || len(set.Keys) != 1 || set.Keys[0].State != ab2bus.SigningKeyCurrent || set.Keys[0].Thumbprint != serverKID {
 				t.Fatalf("ListSigningKeys = %+v, %v; want the one pre-created key", set, err)
 			}
-			if wait := time.Until(time.UnixMilli(set[0].CreatedAt).Add(3500 * time.Millisecond)); wait > 0 {
-				time.Sleep(wait)
-			}
 			rot, err := root.bus.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
-			if err != nil || rot.Active.KID == serverKID || rot.Previous.KID != serverKID {
-				t.Fatalf("RotateSigningKey = %+v, %v; want a new active key and %s as previous", rot, err, serverKID)
+			if err != nil || rot.Current.Thumbprint == serverKID || len(rot.Revoked) != 1 || rot.Revoked[0].Thumbprint != serverKID {
+				t.Fatalf("RotateSigningKey = %+v, %v; want a new current key and %s revoked", rot, err, serverKID)
 			}
-
-			// Right after the first rotation, inside the cooldown.
-			_, err = root.bus.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
-			codeOf(t, err, ab2bus.CodeConflict)
 
 			resp, err := tcpClient(t).Get(base + "/v1/auth/jwks")
 			if err != nil {
@@ -456,40 +450,45 @@ func TestAuthEndToEnd(t *testing.T) {
 			}
 			err = json.NewDecoder(resp.Body).Decode(&jwks)
 			_ = resp.Body.Close()
-			if err != nil || len(jwks.Keys) != 2 {
-				t.Fatalf("JWKS = %+v, %v; want two keys", jwks, err)
+			if err != nil || len(jwks.Keys) != 1 || jwks.Keys[0].KID != rot.Current.Thumbprint {
+				t.Fatalf("JWKS = %+v, %v; want the one new key", jwks, err)
 			}
-			if status, body := getChannels(t, base, before); status != http.StatusOK {
-				t.Fatalf("a bearer minted before the rotation = %d %s, want 200", status, body)
+			if status, body := getChannels(t, base, before); status != http.StatusUnauthorized {
+				t.Fatalf("a bearer signed by the revoked key = %d %s, want 401", status, body)
 			}
 			fresh, err := mintBearer(ctx, anon, issuer, "root", root.key)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := bearerKID(t, fresh); got != rot.Active.KID {
-				t.Fatalf("a new login is signed with kid %s, want the new active %s", got, rot.Active.KID)
+			if got := bearerKID(t, fresh); got != rot.Current.Thumbprint {
+				t.Fatalf("a new login is signed with kid %s, want the new current %s", got, rot.Current.Thumbprint)
+			}
+			if status, body := getChannels(t, base, fresh); status != http.StatusOK {
+				t.Fatalf("a bearer from the exchange after the rotation = %d %s, want 200", status, body)
 			}
 
-			// The revoked key is the one active before: the new one (rot.Active).
+			// The second rotation, at once: the key just made is the revoked one.
 			var revokedPEM string
 			if err := st.Read(ctx, func(ctx context.Context, tx ab2store.Tx) error {
 				rows, err := tx.ListSigningKeys(ctx)
 				for _, r := range rows {
-					if r.KID == rot.Active.KID {
+					if r.KID == rot.Current.Thumbprint {
 						revokedPEM = r.PrivateKeyPEM
 					}
 				}
 				return err
 			}); err != nil || revokedPEM == "" {
-				t.Fatalf("reading the key %s: %v", rot.Active.KID, err)
+				t.Fatalf("reading the key %s: %v", rot.Current.Thumbprint, err)
 			}
 			revokedKey, _, err := keys.ParsePrivatePEM([]byte(revokedPEM))
 			if err != nil {
 				t.Fatal(err)
 			}
-			rev, err := root.bus.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{RevokePrevious: true})
-			if err != nil || !rev.Revoked || rev.Previous.KID != rot.Active.KID {
-				t.Fatalf("revoking RotateSigningKey = %+v, %v; want %s revoked", rev, err, rot.Active.KID)
+			// root.bus carries the bearer the first rotation revoked; the second
+			// goes through a Bus over the bearer from the exchange.
+			rev, err := remote.New(newClient(fresh)).RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
+			if err != nil || len(rev.Revoked) != 1 || rev.Revoked[0].Thumbprint != rot.Current.Thumbprint {
+				t.Fatalf("second RotateSigningKey = %+v, %v; want %s revoked", rev, err, rot.Current.Thumbprint)
 			}
 			local, err := token.NewIssuer(context.Background(), issuerURL, token.StaticKeys(revokedKey), time.Hour, time.Now)
 			if err != nil {
@@ -502,8 +501,15 @@ func TestAuthEndToEnd(t *testing.T) {
 			if status, body := getChannels(t, base, forged); status != http.StatusUnauthorized {
 				t.Fatalf("a bearer signed by the revoked key = %d %s, want 401", status, body)
 			}
-			if status, body := getChannels(t, base, before); status != http.StatusOK {
-				t.Fatalf("the retiring key's bearer after the revoke = %d %s, want 200", status, body)
+			if status, body := getChannels(t, base, fresh); status != http.StatusUnauthorized {
+				t.Fatalf("the first rotation's bearer after the second rotation = %d %s, want 401", status, body)
+			}
+			again, err := mintBearer(ctx, anon, issuer, "root", root.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status, body := getChannels(t, base, again); status != http.StatusOK {
+				t.Fatalf("a bearer from the exchange after the second rotation = %d %s, want 200", status, body)
 			}
 		})
 

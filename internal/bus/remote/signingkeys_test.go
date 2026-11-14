@@ -9,13 +9,13 @@ import (
 )
 
 const (
-	activeKeyJSON   = `{"kid":"K1","state":"active","provider":"store","provider_ref":"","algorithm":"EdDSA","created_at":5,"retired_at":0,"remove_after":0}`
-	retiringKeyJSON = `{"kid":"K0","state":"retiring","provider":"awskms","provider_ref":"awskms:///alias/x","algorithm":"ES256","created_at":1,"retired_at":5,"remove_after":99}`
+	currentKeyJSON  = `{"thumbprint":"T1","serial":"S1","issuer_thumbprint":"I1","not_before":5,"not_after":99,"state":"current"}`
+	previousKeyJSON = `{"thumbprint":"T0","serial":"S0","issuer_thumbprint":"I1","not_before":1,"not_after":50,"state":"previous"}`
 )
 
 func TestRemoteListSigningKeys(t *testing.T) {
-	rec := &recorder{status: 200, ctype: "application/json", body: `{"keys":[` + activeKeyJSON + `,` + retiringKeyJSON + `]}`}
-	ks, err := New(newRecClient(t, rec)).ListSigningKeys(context.Background())
+	rec := &recorder{status: 200, ctype: "application/json", body: `{"keys":[` + currentKeyJSON + `,` + previousKeyJSON + `],"trust_number":77}`}
+	l, err := New(newRecClient(t, rec)).ListSigningKeys(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,57 +23,48 @@ func TestRemoteListSigningKeys(t *testing.T) {
 		t.Fatalf("request %s %s", rec.method, rec.path)
 	}
 	want := []bus.SigningKey{
-		{KID: "K1", State: "active", Provider: "store", Algorithm: "EdDSA", CreatedAt: 5},
-		{KID: "K0", State: "retiring", Provider: "awskms", ProviderRef: "awskms:///alias/x", Algorithm: "ES256", CreatedAt: 1, RetiredAt: 5, RemoveAfter: 99},
+		{Thumbprint: "T1", Serial: "S1", IssuerThumbprint: "I1", State: bus.SigningKeyCurrent, NotBefore: 5, NotAfter: 99},
+		{Thumbprint: "T0", Serial: "S0", IssuerThumbprint: "I1", State: bus.SigningKeyPrevious, NotBefore: 1, NotAfter: 50},
 	}
-	if len(ks) != 2 || ks[0] != want[0] || ks[1] != want[1] {
-		t.Fatalf("keys = %+v\nwant %+v", ks, want)
+	if len(l.Keys) != 2 || l.Keys[0] != want[0] || l.Keys[1] != want[1] || l.TrustNumber != 77 {
+		t.Fatalf("list = %+v\nwant %+v", l, want)
 	}
 	// An empty set is an empty slice, not an error.
-	rec = &recorder{status: 200, ctype: "application/json", body: `{"keys":[]}`}
-	if ks, err = New(newRecClient(t, rec)).ListSigningKeys(context.Background()); err != nil || len(ks) != 0 {
-		t.Fatalf("empty = %+v, %v", ks, err)
+	rec = &recorder{status: 200, ctype: "application/json", body: `{"keys":[],"trust_number":0}`}
+	if l, err = New(newRecClient(t, rec)).ListSigningKeys(context.Background()); err != nil || l.Keys == nil || len(l.Keys) != 0 {
+		t.Fatalf("empty = %+v, %v", l, err)
 	}
 }
 
 func TestRemoteRotateSigningKey(t *testing.T) {
 	ctx := context.Background()
-	rec := &recorder{status: 200, ctype: "application/json", body: `{"active":` + activeKeyJSON + `,"previous":` + retiringKeyJSON + `,"revoked":false}`}
+	rec := &recorder{status: 200, ctype: "application/json", body: `{"current":` + currentKeyJSON + `,"revoked":[{"thumbprint":"T0","human_messages":0}],"trust_number":78}`}
 	b := New(newRecClient(t, rec))
-	r, err := b.RotateSigningKey(ctx, bus.RotateSigningKeyInput{})
+	r, err := b.RotateSigningKey(ctx, bus.RotateSigningKeyInput{IdempotencyKey: "kk"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.method != "POST" || rec.path != "/v1/admin/signing-keys/rotate" || strings.Contains(rec.query, "revoke_previous=true") || rec.header.Get("Idempotency-Key") != "" {
+	if rec.method != "POST" || rec.path != "/v1/admin/signing-keys/rotate" || rec.query != "" || rec.header.Get("Idempotency-Key") != "kk" {
 		t.Fatalf("request %s %s?%s %v", rec.method, rec.path, rec.query, rec.header)
 	}
-	if r.Active.KID != "K1" || r.Previous.KID != "K0" || r.Previous.State != "retiring" || r.Previous.RemoveAfter != 99 || r.Revoked {
+	if r.Current.Thumbprint != "T1" || len(r.Revoked) != 1 || r.Revoked[0] != (bus.RevokedLeaf{Thumbprint: "T0"}) || r.TrustNumber != 78 {
 		t.Fatalf("rotation = %+v", r)
 	}
 
-	rec.body = `{"active":` + activeKeyJSON + `,"previous":` + retiringKeyJSON + `,"revoked":true}`
-	r, err = b.RotateSigningKey(ctx, bus.RotateSigningKeyInput{RevokePrevious: true, IdempotencyKey: "kk"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(rec.query, "revoke_previous=true") || rec.header.Get("Idempotency-Key") != "kk" || !r.Revoked {
-		t.Fatalf("revoking request: %s %v; rotation %+v", rec.query, rec.header, r)
-	}
-
-	// The first key has no previous member: the zero SigningKey.
-	rec.body = `{"active":` + activeKeyJSON + `,"revoked":false}`
+	// Nothing revoked is an empty slice, not nil.
+	rec.body = `{"current":` + currentKeyJSON + `,"revoked":[],"trust_number":0}`
 	r, err = b.RotateSigningKey(ctx, bus.RotateSigningKeyInput{})
-	if err != nil || r.Previous != (bus.SigningKey{}) || r.Active.KID != "K1" {
+	if err != nil || r.Revoked == nil || len(r.Revoked) != 0 || r.Current.Thumbprint != "T1" {
 		t.Fatalf("first rotation = %+v, %v", r, err)
 	}
 }
 
 func TestRemoteSigningKeysProblem(t *testing.T) {
 	rec := &recorder{status: 409, ctype: "application/problem+json",
-		body: `{"type":"about:blank","title":"Conflict","status":409,"code":"conflict","detail":"cooldown","retryable":false}`}
+		body: `{"type":"about:blank","title":"Conflict","status":409,"code":"conflict","detail":"another payload","retryable":false}`}
 	b := New(newRecClient(t, rec))
 	_, err := b.RotateSigningKey(context.Background(), bus.RotateSigningKeyInput{})
-	if bus.CodeOf(err) != bus.CodeConflict || !strings.Contains(err.Error(), "cooldown") {
+	if bus.CodeOf(err) != bus.CodeConflict || !strings.Contains(err.Error(), "another payload") {
 		t.Fatalf("rotate err = %v", err)
 	}
 	if _, err = b.ListSigningKeys(context.Background()); bus.CodeOf(err) != bus.CodeConflict {
@@ -81,25 +72,15 @@ func TestRemoteSigningKeysProblem(t *testing.T) {
 	}
 }
 
-// A closed-enum member outside its set, as a server speaking another protocol
-// would send it, is an internal error naming the member, on both operations.
+// A state outside the closed set, as a server speaking another protocol would
+// send it, is an internal error naming the member, on both operations.
 func TestRemoteSigningKeysRefuseUnknownEnum(t *testing.T) {
 	ctx := context.Background()
-	for _, tc := range []struct{ member, bad string }{
-		{"state", strings.Replace(activeKeyJSON, `"state":"active"`, `"state":"paused"`, 1)},
-		{"provider", strings.Replace(activeKeyJSON, `"provider":"store"`, `"provider":"vault"`, 1)},
-		{"algorithm", strings.Replace(activeKeyJSON, `"algorithm":"EdDSA"`, `"algorithm":"RS256"`, 1)},
-	} {
-		t.Run(tc.member, func(t *testing.T) {
-			rec := &recorder{status: 200, ctype: "application/json", body: `{"keys":[` + tc.bad + `]}`}
-			_, err := New(newRecClient(t, rec)).ListSigningKeys(ctx)
-			wantInternal(t, err, tc.member)
-			rec = &recorder{status: 200, ctype: "application/json", body: `{"active":` + tc.bad + `,"revoked":false}`}
-			_, err = New(newRecClient(t, rec)).RotateSigningKey(ctx, bus.RotateSigningKeyInput{})
-			wantInternal(t, err, tc.member)
-			rec = &recorder{status: 200, ctype: "application/json", body: `{"active":` + activeKeyJSON + `,"previous":` + tc.bad + `,"revoked":false}`}
-			_, err = New(newRecClient(t, rec)).RotateSigningKey(ctx, bus.RotateSigningKeyInput{})
-			wantInternal(t, err, tc.member)
-		})
-	}
+	bad := strings.Replace(currentKeyJSON, `"state":"current"`, `"state":"paused"`, 1)
+	rec := &recorder{status: 200, ctype: "application/json", body: `{"keys":[` + bad + `],"trust_number":0}`}
+	_, err := New(newRecClient(t, rec)).ListSigningKeys(ctx)
+	wantInternal(t, err, "state")
+	rec = &recorder{status: 200, ctype: "application/json", body: `{"current":` + bad + `,"revoked":[],"trust_number":0}`}
+	_, err = New(newRecClient(t, rec)).RotateSigningKey(ctx, bus.RotateSigningKeyInput{})
+	wantInternal(t, err, "state")
 }
