@@ -591,11 +591,10 @@ func bearerKID(t *testing.T, raw string) string {
 }
 
 // TestReplicasSigningKeyRotation: two replicas over one database and
-// rotations of the signing key set (issue #6 acceptance 4). The replicas and
-// the host commands run with signing_key_rotation_cooldown_seconds=1 (the
-// default 3600 s would refuse a host rotation right after the key's
-// creation); the API form has no cooldown (ADR 0019 Ruling 6) and always
-// revokes, so each API leaf exchanges again afterwards.
+// rotations of the signing key set (issue #6 acceptance 4). The replicas run
+// with signing_key_rotation_cooldown_seconds=1 (the old key set's setting);
+// the host rotate and the API form have no cooldown (ADR 0019 Ruling 6) and
+// always revoke, so each API leaf exchanges again afterwards.
 func TestReplicasSigningKeyRotation(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		ctx, cancel := context.WithCancel(context.Background())

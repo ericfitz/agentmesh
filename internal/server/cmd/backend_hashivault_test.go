@@ -56,8 +56,8 @@ func TestHashivaultUnsetEnvironmentExits2(t *testing.T) {
 	if code, _, stderr := runOnce(nil, "-listen", "127.0.0.1:0", "-sqlite", db, "-set", uri); code != 2 || !strings.Contains(stderr, "hashivault: VAULT_ADDR") {
 		t.Fatalf("start: exit %d, stderr %q; want 2", code, stderr)
 	}
-	e := newAdminEnv(t)
-	if code, _, errOut := e.run("-set", uri, "signing-key", "rotate"); code != 2 || !strings.Contains(errOut, "hashivault: VAULT_ADDR") {
+	e := newCAEnv(t)
+	if code, _, errOut := e.run(append(e.settings("intermediate_key_uri="+strings.TrimPrefix(uri, "signing_key_uri=")), "signing-key", "rotate")...); code != 2 || !strings.Contains(errOut, "hashivault: VAULT_ADDR") {
 		t.Fatalf("rotate: exit %d, stderr %q; want 2", code, errOut)
 	}
 	t.Setenv("VAULT_ADDR", "http://127.0.0.1:1")
