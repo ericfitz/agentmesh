@@ -320,7 +320,7 @@ Actor: administrator. An administrator bridges a channel of an open scope to a p
 
 ## J10 Signing key rotation (rank 11, low; depends on J1)
 
-Actor: administrator. An administrator lists the token signing key set, rotates it (optionally revoking the previous key), and lists again to see the new active key and the retiring one.
+Actor: administrator. An administrator lists the token signing key set, rotates it (the rotation always revokes the previous key), exchanges a fresh client assertion for a new bearer, and lists again to see the new current key.
 
 1. listSigningKeys; rotateSigningKey (it always revokes the previous key, so the administrator exchanges a new client assertion for a bearer; the store provider needs no external service); listSigningKeys.
 

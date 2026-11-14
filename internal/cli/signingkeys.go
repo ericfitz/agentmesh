@@ -39,8 +39,8 @@ func opSigningKey(k bus.SigningKey) opSigningKeyOut {
 
 // RunSigningKeys implements `agentmesh signing-keys list|rotate`
 // (administrator only), the client form of the server's signing leaves; rotate
-// always revokes the previous leaf. Where the server has no signing keys (a local profile) every action is
-// unavailable (not retryable).
+// always revokes the previous leaf. Where the server has no signing keys (a
+// local profile) every action is unavailable (not retryable).
 func RunSigningKeys(ctx context.Context, args []string, environ []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return opDispatch(ctx, "signing-keys", map[string]opRunFunc{
 		"list":   runSigningKeysList,
@@ -71,7 +71,7 @@ func runSigningKeysList(ctx context.Context, args []string, environ []string, _ 
 
 func runSigningKeysRotate(ctx context.Context, args []string, environ []string, _ io.Reader, stdout, stderr io.Writer) int {
 	c := newOpCmd("signing-keys rotate", stderr)
-	idem := c.fs.String("key", "", "idempotency key: a retry with the same key and flags returns the first result")
+	idem := c.fs.String("key", "", "idempotency key: a retry with the same key returns the first result")
 	if _, code, ok := c.parse(args, 0, 0); !ok {
 		return code
 	}
