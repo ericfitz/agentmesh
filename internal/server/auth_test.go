@@ -4,10 +4,17 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1092,4 +1099,64 @@ func TestStoreOutageDetailIsFixed(t *testing.T) {
 	if !strings.Contains(logs.String(), "sql: database is closed") {
 		t.Fatalf("log lacks the cause: %q", logs.String())
 	}
+}
+
+// leafKeySource is a KeySource of one certificate key whose leaf ends at notAfter.
+type leafKeySource struct{ set token.KeySet }
+
+func (s leafKeySource) LoadKeys(context.Context) (token.KeySet, error) { return s.set, nil }
+
+// TestTokenExpiresInFollowsTheCap: the token endpoint answers the minted
+// expiry minus now, and a leaf that ends before the bearer lifetime caps it
+// (the lifetime is an hour; the leaf ends in ten minutes).
+func TestTokenExpiresInFollowsTheCap(t *testing.T) {
+	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
+	now := e.clock.Now()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "leaf"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(10 * time.Minute),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	k := token.Key{
+		KID: base64.RawURLEncoding.EncodeToString(sum[:]), Algorithm: keys.EdDSA, Public: pub,
+		Chain: [][]byte{der}, NotBefore: tmpl.NotBefore, NotAfter: tmpl.NotAfter,
+	}
+	src := leafKeySource{token.KeySet{Active: k, Signer: ed25519Signer{priv}, Keys: []token.Key{k}}}
+	iss, err := token.NewIssuer(context.Background(), "http://inproc", src, time.Hour, e.clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.issuer, e.opts.Issuer = iss, iss
+	e.auth = Bearer{Verifier: token.Verifier{Own: iss}, Now: e.clock.Now}
+
+	key := genKey(t, keys.EdDSA)
+	e.mustRegister("pat", key)
+	resp := e.exchange(e.assertionFor("pat", key, "http://inproc/v1/auth/token", 0), "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("token: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var at gen.AccessToken
+	if err := json.Unmarshal([]byte(readBody(t, resp)), &at); err != nil {
+		t.Fatal(err)
+	}
+	if at.ExpiresIn != 600 {
+		t.Fatalf("expires_in = %d, want 600 (the leaf's remaining time)", at.ExpiresIn)
+	}
+}
+
+// ed25519Signer adapts an Ed25519 key to token.ContextSigner.
+type ed25519Signer struct{ k ed25519.PrivateKey }
+
+func (s ed25519Signer) Public() crypto.PublicKey { return s.k.Public() }
+
+func (s ed25519Signer) SignContext(_ context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return s.k.Sign(rand.Reader, digest, opts)
 }

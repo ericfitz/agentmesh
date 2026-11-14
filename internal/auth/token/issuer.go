@@ -9,6 +9,8 @@ package token
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -303,14 +305,22 @@ func (i *Issuer) Mint(ctx context.Context, in MintInput) (string, time.Time, err
 	if set.Signer == nil {
 		return "", time.Time{}, fmt.Errorf("%w: no usable key", ErrSignerUnavailable)
 	}
+	now := i.now()
+	// A process never signs outside its leaf's validity period.
+	if a := set.Active; (!a.NotBefore.IsZero() && now.Before(a.NotBefore)) || (!a.NotAfter.IsZero() && now.After(a.NotAfter)) {
+		return "", time.Time{}, fmt.Errorf("%w: the signing certificate is not valid at this time", ErrSignerUnavailable)
+	}
 	ja := jose.EdDSA
 	if set.Active.Algorithm == keys.ES256 {
 		ja = jose.ES256
 	}
 	sctx, cancel := context.WithTimeout(ctx, SignTimeout)
 	defer cancel()
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: ja, Key: cryptosigner.Opaque(ctxSigner{sctx, set.Signer})},
-		(&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", set.Active.KID))
+	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", set.Active.KID)
+	if len(set.Active.Chain) > 0 {
+		opts = opts.WithHeader("x5t#S256", set.Active.KID)
+	}
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: ja, Key: cryptosigner.Opaque(ctxSigner{sctx, set.Signer})}, opts)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("%w: %w", ErrSignerUnavailable, err)
 	}
@@ -318,8 +328,10 @@ func (i *Issuer) Mint(ctx context.Context, in MintInput) (string, time.Time, err
 	if _, err := rand.Read(rnd[:]); err != nil {
 		return "", time.Time{}, fmt.Errorf("token: jti: %w", err)
 	}
-	now := i.now()
 	exp := now.Add(life)
+	if na := set.Active.NotAfter; !na.IsZero() && na.Before(exp) {
+		exp = na
+	}
 	c := jwt.Claims{
 		Issuer:   i.url,
 		Subject:  in.Identity,
@@ -354,6 +366,12 @@ func (i *Issuer) Verify(ctx context.Context, raw string, now time.Time) (string,
 	key, ok := i.lookup(ctx, tok.Headers[0].KeyID)
 	if !ok {
 		return "", ErrUnknownKey
+	}
+	if !key.validAt(now) {
+		return "", invalid("the signing certificate is not valid at this time")
+	}
+	if tok.Headers[0].Algorithm != string(key.Algorithm) {
+		return "", invalid("alg %q is not the algorithm of the signing key", tok.Headers[0].Algorithm)
 	}
 	if !isAccessTokenType(tok.Headers[0]) {
 		return "", invalid("typ must be at+jwt")
@@ -392,6 +410,21 @@ func (i *Issuer) JWKS(ctx context.Context) jose.JSONWebKeySet {
 		if err != nil {
 			// validate admitted the key, so this cannot happen.
 			continue
+		}
+		if len(k.Chain) > 0 {
+			certs := make([]*x509.Certificate, 0, len(k.Chain))
+			for _, der := range k.Chain {
+				c, err := x509.ParseCertificate(der)
+				if err != nil {
+					break
+				}
+				certs = append(certs, c)
+			}
+			if len(certs) != len(k.Chain) {
+				continue // validate admitted the leaf; a bad intermediate is never published
+			}
+			sum := sha256.Sum256(k.Chain[0])
+			j.Certificates, j.CertificateThumbprintSHA256 = certs, sum[:]
 		}
 		out.Keys = append(out.Keys, j)
 	}

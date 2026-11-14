@@ -299,7 +299,7 @@ func TestIssuerRejectsBadKeySet(t *testing.T) {
 	badKID := k1
 	badKID.KID = "not-the-thumbprint"
 	cases := map[string]KeySet{
-		"empty":                  {},
+		"empty with a signer":    {Signer: cryptoSigner{s1}},
 		"active not in keys":     {Active: k1, Signer: cryptoSigner{s1}, Keys: []Key{k2}},
 		"kid not the thumbprint": {Active: badKID, Signer: cryptoSigner{s1}, Keys: []Key{badKID}},
 		"algorithm disagrees":    {Active: wrongAlg, Signer: cryptoSigner{s1}, Keys: []Key{wrongAlg}},
