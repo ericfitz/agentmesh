@@ -55,6 +55,7 @@ type Options struct {
 // holds. The key lives in a Manager and nowhere else (never stored, never
 // logged).
 type leafKey struct {
+	gen        uint64 // the load generation at the swap
 	thumbprint string
 	verified   pki.Verified
 	signer     leafSigner
@@ -75,7 +76,7 @@ func (s leafSigner) SignContext(ctx context.Context, digest []byte, opts crypto.
 // Manager issues this process's leaf certificate and publishes the verified
 // leaves of the stored trust material as the issuer's key set (ADR 0019
 // section 4.6). Concurrency (Plan ruling 33): mu guards mem, mat, cur, prev,
-// loaded, thumbs and onChange and is never held while the intermediate key
+// loaded, gen, revoked and onChange and is never held while the intermediate key
 // signs; issueMu is held for the whole of each operation that issues a leaf.
 type Manager struct {
 	trust    Trust
@@ -87,7 +88,8 @@ type Manager struct {
 	mem      Memory
 	mat      Material
 	loaded   bool
-	thumbs   map[string]bool // thumbprints of the verified leaves of the last load
+	gen      uint64          // number of loads so far
+	revoked  map[string]bool // verified leaves of the last load by thumbprint: revoked or not
 	cur      *leafKey
 	prev     *leafKey
 	onChange func()
@@ -131,17 +133,18 @@ func (m *Manager) SetOnChange(f func()) {
 func (m *Manager) Trust() Trust { return m.trust }
 
 // usable reports whether l can sign now: its chain is inside its period with
-// the token leeway and the last load did not find it revoked. Caller holds mu.
+// the token leeway and it is not revoked. A leaf issued since the last load is
+// usable (the load has not seen its row yet); after a load that no longer
+// verifies it, it is not (the key set has no Active either). Caller holds mu.
 func (m *Manager) usable(l *leafKey, now time.Time) bool {
 	if l == nil || !l.verified.ValidAt(now, token.Leeway) {
 		return false
 	}
-	for _, x := range m.mat.Leaves {
-		if pki.Thumbprint(x.Verified.Leaf.Raw) == l.thumbprint {
-			return !x.Revoked
-		}
+	if l.gen == m.gen {
+		return true
 	}
-	return true // issued since the last load
+	revoked, verified := m.revoked[l.thumbprint]
+	return verified && !revoked
 }
 
 // Current is the thumbprint and "not after" of the leaf this process signs
@@ -157,11 +160,14 @@ func (m *Manager) Current() (thumbprint string, notAfter time.Time) {
 
 // LoadKeys implements token.KeySource: it reloads, then returns the set.
 func (m *Manager) LoadKeys(ctx context.Context) (token.KeySet, error) {
-	if _, err := m.reload(ctx); err != nil {
-		return token.KeySet{}, err
-	}
+	// The reload and the set are one hold of mu: a leaf swapped in by issue
+	// between them would be missing from the loaded material, and the set
+	// would carry no Active and no Signer although a leaf can sign.
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, err := m.reloadLocked(ctx); err != nil {
+		return token.KeySet{}, err
+	}
 	return m.keySet(m.trust.Now()), nil
 }
 
@@ -201,19 +207,28 @@ func (m *Manager) keySet(now time.Time) token.KeySet {
 func (m *Manager) reload(ctx context.Context) (changed bool, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.reloadLocked(ctx)
+}
+
+// reloadLocked is reload for a caller that holds mu; Task 19's Reload builds
+// on it.
+func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 	mat, err := m.trust.Load(ctx, &m.mem)
 	if err != nil {
 		return false, err
 	}
-	thumbs := make(map[string]bool, len(mat.Leaves))
+	revoked := make(map[string]bool, len(mat.Leaves))
 	for _, l := range mat.Leaves {
-		thumbs[pki.Thumbprint(l.Verified.Leaf.Raw)] = true
+		revoked[pki.Thumbprint(l.Verified.Leaf.Raw)] = l.Revoked
 	}
-	changed = !m.loaded || mat.Number != m.mat.Number || len(thumbs) != len(m.thumbs)
-	for tp := range thumbs {
-		changed = changed || !m.thumbs[tp]
+	changed = !m.loaded || mat.Number != m.mat.Number || len(revoked) != len(m.revoked)
+	for tp := range revoked {
+		if _, ok := m.revoked[tp]; !ok {
+			changed = true
+		}
 	}
-	m.mat, m.thumbs, m.loaded = mat, thumbs, true
+	m.mat, m.revoked, m.loaded = mat, revoked, true
+	m.gen++
 	return changed, nil
 }
 
@@ -326,7 +341,7 @@ func (m *Manager) issue(ctx context.Context) error {
 	}
 
 	m.mu.Lock()
-	m.prev, m.cur = m.cur, &leafKey{thumbprint: thumb, verified: v, signer: leafSigner{priv: priv}}
+	m.prev, m.cur = m.cur, &leafKey{gen: m.gen, thumbprint: thumb, verified: v, signer: leafSigner{priv: priv}}
 	notify := m.onChange
 	m.mu.Unlock()
 	if notify != nil {

@@ -450,6 +450,11 @@ func TestNoPrivateKeyInTheStore(t *testing.T) {
 	}
 }
 
+// fixedSource serves one key set, so token.NewIssuer validates it.
+type fixedSource struct{ set token.KeySet }
+
+func (f fixedSource) LoadKeys(context.Context) (token.KeySet, error) { return f.set, nil }
+
 func TestManagerConcurrentUse(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -477,8 +482,10 @@ func TestManagerConcurrentUse(t *testing.T) {
 					return
 				}
 				m.Current()
-				if set.Signer != nil && (set.Active.KID == "" || !hasKey(set, set.Active.KID)) {
-					fail(errors.New("a set with a signer has no active key in its keys"))
+				// The leaf is always valid here, so every set has a signer, an
+				// active key among its keys and passes the issuer's validation.
+				if set.Signer == nil || set.Active.KID == "" || !hasKey(set, set.Active.KID) {
+					fail(errors.New("a set has no signer or its active key is not among its keys"))
 					return
 				}
 				for _, k := range set.Keys {
@@ -487,11 +494,15 @@ func TestManagerConcurrentUse(t *testing.T) {
 						return
 					}
 				}
+				if _, err := token.NewIssuer(ctx, "http://localhost:8420", fixedSource{set}, time.Hour, e.clk.now); err != nil {
+					fail(err)
+					return
+				}
 			}
 		}()
 	}
-	for range 5 {
-		e.clk.advance(time.Second)
+	for range 40 {
+		e.clk.advance(time.Millisecond)
 		if err := m.Issue(ctx); err != nil {
 			t.Fatalf("Issue: %v", err)
 		}
@@ -506,11 +517,8 @@ func TestManagerConcurrentUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(set.Keys) != 6 {
-		t.Fatalf("%d keys, want 6", len(set.Keys))
-	}
-	if _, err := token.NewIssuer(ctx, "http://localhost:8420", m, time.Hour, e.clk.now); err != nil {
-		t.Fatalf("the final set is not valid: %v", err)
+	if len(set.Keys) != 41 {
+		t.Fatalf("%d keys, want 41", len(set.Keys))
 	}
 }
 
@@ -519,6 +527,7 @@ func TestManagerConcurrentUse(t *testing.T) {
 type waitProvider struct {
 	keyprovider.Provider
 	armed   atomic.Bool
+	reached atomic.Int32 // signatures that began while armed
 	waiting chan struct{}
 	release chan struct{}
 }
@@ -535,6 +544,7 @@ type waitSigner struct {
 
 func (s waitSigner) SignContext(ctx context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	if s.p.armed.Load() {
+		s.p.reached.Add(1)
 		select {
 		case s.p.waiting <- struct{}{}:
 		default:
@@ -586,5 +596,110 @@ func TestLoadKeysNotBlockedBySigning(t *testing.T) {
 	close(wp.release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Two issues in one process never overlap: the second waits on issueMu until
+// the first is done, so it does not reach the signature while the first waits.
+func TestConcurrentIssuesDoNotOverlap(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.f.Install(t, e.c)
+	wp := &waitProvider{Provider: e.tr.Provider, waiting: make(chan struct{}, 1), release: make(chan struct{})}
+	tr := e.tr
+	tr.Provider = wp
+	m, err := signingkeys.New(ctx, signingkeys.Options{Trust: tr, LeafValidity: week})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wp.armed.Store(true)
+	done := make(chan error, 2)
+	go func() { done <- m.Issue(ctx) }()
+	select {
+	case <-wp.waiting:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first issue never reached the signature")
+	}
+	go func() { done <- m.Issue(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+	if n := wp.reached.Load(); n != 1 {
+		t.Fatalf("%d signatures began while the first issue waited, want 1", n)
+	}
+	close(wp.release)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := wp.reached.Load(); n != 2 {
+		t.Fatalf("%d signatures, want 2", n)
+	}
+	if n := len(e.leafRows(t)); n != 3 {
+		t.Fatalf("%d leaf rows, want 3", n)
+	}
+}
+
+// Current follows the last load: a leaf that the last load no longer verifies
+// is not current, as LoadKeys's Active says.
+func TestCurrentFollowsTheLastLoad(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.f.Install(t, e.c)
+	m := e.newManager(t)
+	if tp, _ := m.Current(); tp == "" {
+		t.Fatal("no current leaf after the start")
+	}
+	var ids []int64
+	for _, r := range e.leafRows(t) {
+		ids = append(ids, r.ID)
+	}
+	e.tx(t, func(ctx context.Context, tx store.Tx) error {
+		_, err := tx.DeleteTrustCertificates(ctx, ids)
+		return err
+	})
+	set, err := m.LoadKeys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Signer != nil || set.Active.KID != "" {
+		t.Fatalf("set = %+v, want no signer", set)
+	}
+	if tp, _ := m.Current(); tp != "" {
+		t.Fatalf("Current = %q after the load dropped the leaf", tp)
+	}
+}
+
+// A signer is present in the set up to Leeway after the leaf's "not after";
+// the issuer refuses to mint with it.
+func TestLoadKeysWithinLeewayAfterNotAfter(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	e.f.Install(t, e.c)
+	m := e.newManager(t)
+	e.clk.advance(week + token.Leeway/2)
+	set, err := m.LoadKeys(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Signer == nil || len(set.Keys) != 1 {
+		t.Fatalf("set = %+v, want the leaf kept within the leeway", set)
+	}
+	iss, err := token.NewIssuer(ctx, "http://localhost:8420", m, time.Hour, e.clk.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := iss.Mint(ctx, token.MintInput{Identity: "alice", Kind: token.KindAgent}); err == nil {
+		t.Fatal("Mint signed with a leaf past its not-after")
+	}
+}
+
+func TestNewStoreFailureAtTheInitialReload(t *testing.T) {
+	e := newEnv(t)
+	e.f.Install(t, e.c)
+	tr := e.f.Trust(e.coreOver(t, failingStore{Store: e.st, read: true}))
+	_, err := signingkeys.New(context.Background(), signingkeys.Options{Trust: tr, LeafValidity: week})
+	wantUnavailable(t, err)
+	if n := len(e.leafRows(t)); n != 0 {
+		t.Fatalf("%d leaf rows after a failed start", n)
 	}
 }

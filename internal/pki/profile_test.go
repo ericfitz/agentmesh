@@ -327,3 +327,32 @@ func TestIssueLeafRefusesInvalidIntermediate(t *testing.T) {
 		}
 	}
 }
+
+func TestIssueLeafExactBoundaries(t *testing.T) {
+	f := newFixture(t)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := IssueLeaf(f.inter, f.interK, pub, f.inter.NotBefore, time.Hour); err != nil {
+		t.Errorf("now == NotBefore refused: %v", err)
+	}
+	c, err := IssueLeaf(f.inter, f.interK, pub, f.inter.NotAfter, time.Hour)
+	if err != nil {
+		t.Fatalf("now == NotAfter refused: %v", err)
+	}
+	if !c.NotAfter.Equal(f.inter.NotAfter) {
+		t.Errorf("not after %s at the boundary, want the intermediate's %s", c.NotAfter, f.inter.NotAfter)
+	}
+	// The clamp lands exactly on the intermediate's "not after", from below and
+	// from exactly equal.
+	for name, v := range map[string]time.Duration{"exact": time.Hour, "over": time.Hour + time.Second} {
+		c, err := IssueLeaf(f.inter, f.interK, pub, f.inter.NotAfter.Add(-time.Hour), v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !c.NotAfter.Equal(f.inter.NotAfter) {
+			t.Errorf("%s: not after %s, want %s", name, c.NotAfter, f.inter.NotAfter)
+		}
+	}
+}
