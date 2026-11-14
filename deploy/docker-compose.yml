@@ -1,4 +1,20 @@
 # Two agentmesh replicas over one Postgres. Copy example.env to .env first (docker compose reads deploy/.env).
+#
+# The server needs a CA before it starts (ADR 0019): a root, kept offline in a real deployment, and the
+# installation's intermediate certificate in the database. deploy/ca/ (git-ignored, never committed) holds
+# root.pem and intermediate.key, which both replicas mount; the root's own directory (root.key)
+# stays outside deploy/ in a real deployment. Once, from the repository root, with the image built
+# (make docker-image) and the stack's database running (docker compose -f deploy/docker-compose.yml up -d postgres):
+#
+#   mkdir -p deploy/ca && umask 077
+#   RUN="docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint /agentmesh agentmesh-a"
+#   agentmesh ca init -dir ./root-ca              # the root tool; copy root-ca/root.pem to deploy/ca/root.pem
+#   $RUN server admin ca csr -out /ca/intermediate.csr   # makes /ca/intermediate.key on first use
+#   agentmesh ca sign -dir ./root-ca deploy/ca/intermediate.csr > deploy/ca/intermediate.pem
+#   $RUN server admin ca install /ca/intermediate.pem    # stores the certificate in Postgres
+#
+# (`agentmesh` is the binary on the host: `make build`.) The containers run as AGENTMESH_UID:AGENTMESH_GID (example.env), so
+# the key file the host user owns is readable by them. See docs/ops for the full procedure.
 services:
   postgres:
     image: cgr.dev/chainguard/postgres:latest@sha256:0926ac7262a2c1963179eb939cd5d610e1be3ecca90b4b5cad8db8df16fab87e # Postgres 18; its LANG is en_US.UTF-8, so the initdb locale is UTF-8, which the server's Open requires
@@ -22,6 +38,12 @@ services:
       AGENTMESH_SERVER_LISTEN: 0.0.0.0:8420
       AGENTMESH_SERVER_POSTGRES: postgres://agentmesh:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@postgres:5432/agentmesh?sslmode=disable
       AGENTMESH_SERVER_ISSUER: ${AGENTMESH_ISSUER:-http://localhost:8420}
+      AGENTMESH_SERVER_ROOT_CERTIFICATE_FILE: /ca/root.pem
+      AGENTMESH_SERVER_INTERMEDIATE_KEY_FILE: /ca/intermediate.key
+      AGENTMESH_SERVER_INSTALLATION_NAME: ${AGENTMESH_INSTALLATION_NAME:-agentmesh-compose}
+    user: "${AGENTMESH_UID:-65532}:${AGENTMESH_GID:-65532}"
+    volumes:
+      - ./ca:/ca
     command: ["-registration", "enrollment"]
     ports:
       - "127.0.0.1:8420:8420"

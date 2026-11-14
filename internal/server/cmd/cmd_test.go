@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/go-jose/go-jose/v4"
 
@@ -107,7 +108,48 @@ func (r *running) base() string { return "http://" + r.addr }
 
 func startRun(t *testing.T, environ []string, args ...string) *running {
 	t.Helper()
-	return launch(t, environ, args...).waitReady()
+	return launch(t, environ, withTrust(t, environ, args)...).waitReady()
+}
+
+// withTrust appends the trust settings of a fixture installed in the SQLite
+// file the arguments, the -config file or the environment name (the same fixture
+// for every start over one file). Arguments that name no SQLite file, or that
+// already set the root, are returned as they are.
+func withTrust(t *testing.T, environ, args []string) []string {
+	t.Helper()
+	db, cfg := "", ""
+	for i, a := range args {
+		if strings.Contains(a, "root_certificate_file=") {
+			return args
+		}
+		if i+1 < len(args) {
+			switch a {
+			case "-sqlite":
+				db = args[i+1]
+			case "-config":
+				cfg = args[i+1]
+			}
+		}
+	}
+	if db == "" && cfg != "" {
+		var file struct {
+			SQLite string `json:"sqlite"`
+		}
+		if b, err := os.ReadFile(cfg); err == nil && json.Unmarshal(b, &file) == nil {
+			db = file.SQLite
+		}
+	}
+	if db == "" {
+		for _, e := range environ {
+			if v, ok := strings.CutPrefix(e, "AGENTMESH_SERVER_SQLITE="); ok {
+				db = v
+			}
+		}
+	}
+	if db == "" {
+		return args
+	}
+	return append(append([]string(nil), args...), trusttest.SQLiteSets(t, db)...)
 }
 
 // runServer starts Run with a nil environment.
@@ -480,6 +522,7 @@ func TestSigningKeyStoreLifecycle(t *testing.T) {
 	// kid, and exactly one of them created the row.
 	path2 := filepath.Join(t.TempDir(), "ab2.db")
 	args2 := append([]string{"-listen", "127.0.0.1:0", "-sqlite", path2}, issuer...)
+	args2 = withTrust(t, nil, args2)
 	a := launch(t, nil, args2...)
 	b := launch(t, nil, args2...)
 	a.waitReady()

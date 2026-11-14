@@ -6,9 +6,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="${DOCKER_SMOKE_NAME:-agentmesh-smoke}"
 IMAGE="agentmesh:smoke"
-cleanup() { docker rm -f -v "$NAME" "$NAME-nocfg" "$NAME-nolisten" >/dev/null 2>&1 || true; }
+# DATA is the serving container's /data, bind-mounted from the host: the CA's files and the database live there, so
+# the one-off commands of step 4b and the server see the same store (the files belong to the host user: --user below).
+DATA=""
+cleanup() {
+  docker rm -f -v "$NAME" "$NAME-nocfg" "$NAME-nolisten" >/dev/null 2>&1 || true
+  if [ -n "$DATA" ]; then rm -rf "$DATA"; fi
+}
 trap cleanup EXIT
 cleanup
+DATA="$(mktemp -d "${TMPDIR:-/tmp}/agentmesh-smoke.XXXXXX")"
 
 fail() { echo "docker-smoke: FAIL: $*" >&2; exit 1; }
 
@@ -74,9 +81,25 @@ echo "step 4: non-root user"
 got="$(docker inspect --format '{{.Config.User}}' "$IMAGE")"
 [ "$got" = nonroot ] || fail "image user is \"$got\", want nonroot"
 
+echo "step 4b: the server's CA, made with the image's binary"
+# The four commands of the CA bootstrap: the root tool, the request, the signature, the installation
+# (ADR 0019 section 7). Each runs once in a throwaway container on the bind mount; the redirect is on the host.
+CA_SETS=(-set root_certificate_file=/data/ca/root.pem -set intermediate_key_file=/data/intermediate.key
+  -set installation_name=smoke-installation)
+agentmesh_run() { docker run --rm --user "$(id -u):$(id -g)" -v "$DATA:/data" --entrypoint /agentmesh "$IMAGE" "$@"; }
+agentmesh_run ca init -dir /data/ca >/dev/null || fail "ca init failed"
+agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca csr -out /data/intermediate.csr >/dev/null ||
+  fail "ca csr failed"
+agentmesh_run ca sign -dir /data/ca /data/intermediate.csr >"$DATA/intermediate.pem" 2>/dev/null || fail "ca sign failed"
+agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca install /data/intermediate.pem >/dev/null ||
+  fail "ca install failed"
+
 echo "step 5: serving container"
-docker run -d --name "$NAME" -p 127.0.0.1::8420 \
+docker run -d --name "$NAME" -p 127.0.0.1::8420 --user "$(id -u):$(id -g)" -v "$DATA:/data" \
   -e AGENTMESH_SERVER_LISTEN=0.0.0.0:8420 -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db \
+  -e AGENTMESH_SERVER_ROOT_CERTIFICATE_FILE=/data/ca/root.pem \
+  -e AGENTMESH_SERVER_INTERMEDIATE_KEY_FILE=/data/intermediate.key \
+  -e AGENTMESH_SERVER_INSTALLATION_NAME=smoke-installation \
   "$IMAGE" -registration open >/dev/null
 port="$(docker port "$NAME" 8420/tcp | head -n 1 | sed 's/.*://')"
 [ -n "$port" ] || fail "no published port for $NAME"

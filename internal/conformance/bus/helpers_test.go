@@ -18,6 +18,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/store/postgres"
 	"github.com/ericfitz/agentmesh/internal/store/sqlite"
 	"github.com/ericfitz/agentmesh/internal/store/sqlstore"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 // testSchemaRE matches the per-test Postgres schemas this package creates.
@@ -152,4 +153,14 @@ func openStoreDSN(t *testing.T, e dbtest.Engine) (s ab2store.Store, reopen func(
 		t.Fatalf("Open: %v", err)
 	}
 	return s, reopen, dsn
+}
+
+// serverTrust makes a trust fixture on the real clock (the servers of this
+// package run on it) and installs its intermediate into st; the result's Sets
+// go on the command line of every server over that database.
+func serverTrust(t *testing.T, st ab2store.Store) *trusttest.Fixture {
+	t.Helper()
+	f := trusttest.New(t, time.Time{})
+	f.InstallStore(t, st)
+	return f
 }

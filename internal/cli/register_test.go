@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/core"
@@ -202,7 +203,8 @@ func startServer(t *testing.T, db string, extra ...string) string {
 	sctx, cancel := context.WithCancel(ctx)
 	out, errb := &testkit.LockedBuffer{}, &testkit.LockedBuffer{}
 	done := make(chan int, 1)
-	args := append([]string{"-listen", "127.0.0.1:0", "-sqlite", db}, extra...)
+	args := append([]string{"-listen", "127.0.0.1:0", "-sqlite", db}, trusttest.SQLiteSets(t, db)...)
+	args = append(args, extra...)
 	go func() { done <- cmd.Run(sctx, args, nil, out, errb) }()
 	t.Cleanup(func() {
 		cancel()

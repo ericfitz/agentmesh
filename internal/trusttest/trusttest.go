@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
 	"github.com/ericfitz/agentmesh/internal/store"
+	"github.com/ericfitz/agentmesh/internal/store/sqlite"
 )
 
 const (
@@ -247,4 +249,47 @@ func (f *Fixture) Sets() []string {
 		"-set", "intermediate_key_file=" + f.KeyFile,
 		"-set", "installation_name=" + f.Installation,
 	}
+}
+
+// InstallStore installs the fixture's intermediate into st (a Store a test
+// opened itself, on either engine) through a core over it. It is fatal on an
+// error.
+func (f *Fixture) InstallStore(t testing.TB, st store.Store) {
+	t.Helper()
+	c, err := core.New(st, core.Defaults(), core.Options{})
+	if err != nil {
+		t.Fatalf("trusttest: core: %v", err)
+	}
+	f.Install(t, c)
+}
+
+var (
+	sqliteMu   sync.Mutex
+	sqliteSets = map[string][]string{}
+)
+
+// SQLiteSets makes a fixture on the real clock, installs its intermediate into
+// the SQLite database at path (opened and closed again before it returns) and
+// returns the three settings as arguments, for a test that starts a server over
+// that file. A second call for the same path returns the first call's
+// settings, so a restart over one file keeps one root. Paths are per test
+// (under t.TempDir), so the cache never outlives the fixture it names.
+func SQLiteSets(t testing.TB, path string) []string {
+	t.Helper()
+	sqliteMu.Lock()
+	defer sqliteMu.Unlock()
+	if sets, ok := sqliteSets[path]; ok {
+		return sets
+	}
+	f := New(t, time.Time{})
+	st, err := sqlite.Open(context.Background(), path, sqlite.Options{})
+	if err != nil {
+		t.Fatalf("trusttest: open %s: %v", path, err)
+	}
+	f.InstallStore(t, st)
+	if err := st.Close(); err != nil {
+		t.Fatalf("trusttest: close: %v", err)
+	}
+	sqliteSets[path] = f.Sets()
+	return sqliteSets[path]
 }

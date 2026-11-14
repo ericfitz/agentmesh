@@ -107,8 +107,9 @@ func TestAuthEndToEnd(t *testing.T) {
 		}
 		var stdout, stderr testkit.LockedBuffer
 		done := make(chan int, 1)
+		trust := serverTrust(t, st)
 		go func() {
-			done <- cmd.Run(ctx, []string{"-listen", "0.0.0.0:0", storeFlag, dsn, "-set", "signing_key_rotation_cooldown_seconds=3"}, nil, &stdout, &stderr)
+			done <- cmd.Run(ctx, append([]string{"-listen", "0.0.0.0:0", storeFlag, dsn, "-set", "signing_key_rotation_cooldown_seconds=3"}, trust.Sets()...), nil, &stdout, &stderr)
 		}()
 		stopped := false
 		stop := func() {

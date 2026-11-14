@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/ericfitz/agentmesh/internal/profile"
 	"github.com/ericfitz/agentmesh/internal/server/cmd"
@@ -26,7 +27,7 @@ func TestLoginExchangesAndCaches(t *testing.T) {
 	// the server has closed the database (Windows refuses to delete an open file).
 	db := filepath.Join(t.TempDir(), "srv.sqlite")
 	go func() {
-		done <- cmd.Run(sctx, []string{"-listen", "127.0.0.1:0", "-sqlite", db}, nil, srvOut, srvErr)
+		done <- cmd.Run(sctx, append([]string{"-listen", "127.0.0.1:0", "-sqlite", db}, trusttest.SQLiteSets(t, db)...), nil, srvOut, srvErr)
 	}()
 	t.Cleanup(func() {
 		cancel()

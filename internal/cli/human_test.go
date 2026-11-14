@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
@@ -84,7 +85,7 @@ func startHumanServer(t *testing.T, e *testEnv, profileName string) *humanServer
 		t.Fatalf("users add: %d %s%s", code, so.String(), se.String())
 	}
 	go func() {
-		done <- cmd.Run(ctx, []string{"-listen", "127.0.0.1:0", "-sqlite", db, "-set", set}, nil, srvOut, srvErr)
+		done <- cmd.Run(ctx, append([]string{"-listen", "127.0.0.1:0", "-sqlite", db, "-set", set}, trusttest.SQLiteSets(t, db)...), nil, srvOut, srvErr)
 	}()
 	t.Cleanup(func() {
 		cancel()

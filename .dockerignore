@@ -8,3 +8,4 @@ HANDOFF.md
 **/*.test
 .env
 **/.env
+deploy/ca

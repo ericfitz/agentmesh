@@ -201,9 +201,10 @@ func TestReplicasWake(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		st, _, dsn := openStoreDSN(t, e)
+		trust := serverTrust(t, st).Sets()
 
-		a := startReplica(t, ctx, "A", e, dsn)
-		b := startReplica(t, ctx, "B", e, dsn)
+		a := startReplica(t, ctx, "A", e, dsn, trust...)
+		b := startReplica(t, ctx, "B", e, dsn, trust...)
 		stopped := false
 		stop := func() {
 			if stopped {
@@ -599,10 +600,11 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		_, reopen, dsn := openStoreDSN(t, e)
+		rst, reopen, dsn := openStoreDSN(t, e)
 		const cooldown = "signing_key_rotation_cooldown_seconds=1"
-		a := startReplica(t, ctx, "A", e, dsn, "-set", cooldown)
-		b := startReplica(t, ctx, "B", e, dsn, "-set", cooldown)
+		trust := append([]string{"-set", cooldown}, serverTrust(t, rst).Sets()...)
+		a := startReplica(t, ctx, "A", e, dsn, trust...)
+		b := startReplica(t, ctx, "B", e, dsn, trust...)
 		stopped := false
 		stop := func() {
 			if stopped {
@@ -756,7 +758,7 @@ func TestReplicasInspection(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		_, _, dsn := openStoreDSN(t, e)
+		ist, _, dsn := openStoreDSN(t, e)
 
 		var requests, failing atomic.Int64
 		insp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -783,7 +785,7 @@ func TestReplicasInspection(t *testing.T) {
 		}))
 		defer insp.Close()
 
-		set := []string{"-set", "inspection_endpoint=" + insp.URL}
+		set := append([]string{"-set", "inspection_endpoint=" + insp.URL}, serverTrust(t, ist).Sets()...)
 		a := startReplica(t, ctx, "A", e, dsn, set...)
 		b := startReplica(t, ctx, "B", e, dsn, set...)
 		defer func() {
