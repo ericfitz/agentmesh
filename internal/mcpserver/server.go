@@ -325,6 +325,34 @@ type healthOut struct {
 	Storage         *usageOut             `json:"storage,omitempty"`
 	Notices         *[]noticeOut          `json:"notices,omitempty"`
 	Maintenance     *healthMaintenanceOut `json:"maintenance,omitempty"`
+	Signing         *healthSigningOut     `json:"signing,omitempty"`
+}
+
+type healthCertificateOut struct {
+	Thumbprint string `json:"thumbprint"`
+	NotBefore  int64  `json:"not_before"`
+	NotAfter   int64  `json:"not_after"`
+	DaysLeft   int    `json:"days_left"`
+}
+
+type healthSigningOut struct {
+	Installation  string                `json:"installation"`
+	Intermediate  *healthCertificateOut `json:"intermediate,omitempty"`
+	Leaf          *healthCertificateOut `json:"leaf,omitempty"`
+	NextRenewalAt int64                 `json:"next_renewal_at"`
+	TrustNumber   int64                 `json:"trust_number"`
+	RootCRLNumber int64                 `json:"root_crl_number"`
+	LeafCRLNumber int64                 `json:"leaf_crl_number"`
+	LastFailureAt int64                 `json:"last_failure_at"`
+	LastFailure   string                `json:"last_failure,omitempty"`
+	Stopped       string                `json:"stopped,omitempty"`
+}
+
+func healthCertificateToOut(c *bus.HealthCertificate) *healthCertificateOut {
+	if c == nil {
+		return nil
+	}
+	return &healthCertificateOut{Thumbprint: c.Thumbprint, NotBefore: c.NotBefore, NotAfter: c.NotAfter, DaysLeft: c.DaysLeft}
 }
 
 type healthStoreOut struct {
@@ -411,6 +439,12 @@ func healthToOut(h bus.Health) healthOut {
 		}
 		o.Maintenance = &healthMaintenanceOut{IntervalSeconds: m.IntervalSeconds, Owner: m.Owner, Lock: string(m.Lock),
 			LastTickAt: m.LastTickAt, LockError: m.LockError, Jobs: jobs}
+	}
+	if sg := h.Signing; sg != nil {
+		o.Signing = &healthSigningOut{Installation: sg.Installation,
+			Intermediate: healthCertificateToOut(sg.Intermediate), Leaf: healthCertificateToOut(sg.Leaf),
+			NextRenewalAt: sg.NextRenewalAt, TrustNumber: sg.TrustNumber, RootCRLNumber: sg.RootCRLNumber,
+			LeafCRLNumber: sg.LeafCRLNumber, LastFailureAt: sg.LastFailureAt, LastFailure: sg.LastFailure, Stopped: sg.Stopped}
 	}
 	return o
 }

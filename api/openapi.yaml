@@ -5364,7 +5364,7 @@ components:
           type: string
           example: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
           maxLength: 64
-          description: "The key id: the key's RFC 7638 SHA-256 thumbprint. Optional at register (a kid that is not the thumbprint is 400 validation). At most 64 bytes."
+          description: "The key id. For a key submitted at register it is the key's RFC 7638 SHA-256 thumbprint, optional (a kid that is not the thumbprint is 400 validation). For a key the server publishes it is the leaf certificate's thumbprint, equal to x5t#S256. At most 64 bytes."
         x5c:
           type: array
           maxItems: 2

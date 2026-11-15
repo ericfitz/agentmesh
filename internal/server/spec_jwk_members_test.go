@@ -14,7 +14,9 @@ import (
 // (issue #30, CATS HappyPath built a register request from the schema's own
 // properties, which held only kty, and the handler refused it). A key built
 // from the declared properties registers; a kty or crv outside the enums is
-// refused by the schema, not by go-jose.
+// refused by the schema, not by go-jose. Two declared members, x5c and
+// x5t#S256, are ones the server sends: register refuses them, so the key built
+// here takes only the members register accepts (TestRegisterRefusesCertificateMembers).
 func TestJWKDeclaresAcceptedMembers(t *testing.T) {
 	jwk := Spec().Components.Schemas["JWK"].Value
 	for _, name := range []string{"kty", "crv", "x", "y", "kid", "x5c", "x5t#S256"} {
