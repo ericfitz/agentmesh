@@ -34,13 +34,6 @@ func TestStoreImplementsEveryAggregate(t *testing.T) {
 			}{
 				{"MaxSeq", func() error { _, err := tx.MaxSeq(ctx); return err }},
 				{"ListEnrollmentTokens", func() error { _, err := tx.ListEnrollmentTokens(ctx); return err }},
-				{"ListSigningKeys", func() error {
-					ks, err := tx.ListSigningKeys(ctx)
-					if err == nil && len(ks) != 0 {
-						return errors.New("an empty store lists signing keys") // a stub would not know
-					}
-					return err
-				}},
 				{"TrustCertificates", func() error {
 					cs, err := tx.TrustCertificates(ctx, ab2store.TrustLeaf)
 					if err == nil && (cs == nil || len(cs) != 0) {

@@ -45,9 +45,6 @@ func resetFixtures(t *testing.T, s ab2store.Store) (chID, maxSeq int64) {
 		if err := tx.PutEnrollmentToken(ctx, enrollTok("6666666666666666", "h6", 1)); err != nil {
 			return err
 		}
-		if err := tx.PutSigningKey(ctx, signingKey("sk")); err != nil {
-			return err
-		}
 		if err := tx.Subscribe(ctx, "pat", chID, 0, fixedNow); err != nil {
 			return err
 		}
@@ -121,9 +118,6 @@ func TestResetDataWipesDataKeepsRegistry(t *testing.T) {
 			}
 			if l, err := tx.ListEnrollmentTokens(ctx); err != nil || len(l) != 1 {
 				t.Errorf("tokens = %v, %v; want 1", l, err)
-			}
-			if ks, err := tx.ListSigningKeys(ctx); err != nil || len(ks) != 1 {
-				t.Errorf("ListSigningKeys = %v, %v; want 1", ks, err)
 			}
 			if got, err := tx.MaxSeq(ctx); err != nil || got != maxSeq {
 				t.Errorf("MaxSeq = %d, %v; want %d", got, err, maxSeq)
@@ -240,9 +234,6 @@ func TestResetRegistryKeepsOne(t *testing.T) {
 				if l, err := tx.ListEnrollmentTokens(ctx); err != nil || len(l) != 0 {
 					t.Errorf("tokens = %v, %v; want none", l, err)
 				}
-				if ks, err := tx.ListSigningKeys(ctx); err != nil || len(ks) != 1 {
-					t.Errorf("ListSigningKeys = %v, %v; want 1", ks, err)
-				}
 				if got, err := tx.MaxSeq(ctx); err != nil || got != maxSeq {
 					t.Errorf("MaxSeq = %d, %v; want %d", got, err, maxSeq)
 				}
@@ -261,7 +252,6 @@ func TestResetRegistryKeepsOne(t *testing.T) {
 		}
 		requireCounts(t, db, 0, "identity_keys", "enrollment_tokens")
 		requireCounts(t, db, 1, "identities") // only the reserved slack-bridge
-		requireCounts(t, db, 1, "signing_keys")
 
 		err := s.Tx(context.Background(), func(ctx context.Context, tx ab2store.Tx) error {
 			return tx.ResetRegistry(ctx, "a\x00b")

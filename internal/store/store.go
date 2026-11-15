@@ -60,7 +60,6 @@ type Tx interface {
 	EnrollmentTokens
 	Scopes
 	Bridges
-	SigningKeys
 	TrustMaterial
 	AssertionReplays
 	References

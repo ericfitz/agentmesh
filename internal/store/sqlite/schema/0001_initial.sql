@@ -191,22 +191,6 @@ CREATE TABLE enrollment_tokens (
   created_at INTEGER NOT NULL,
   size_bytes INTEGER GENERATED ALWAYS AS (32 + length(CAST(id AS BLOB)) + length(CAST(token_hash AS BLOB)) + length(CAST(identity AS BLOB))) VIRTUAL
 );
-CREATE TABLE signing_keys (
-  kid TEXT PRIMARY KEY,
-  state TEXT NOT NULL CHECK (state IN ('active', 'retiring')),
-  provider TEXT NOT NULL CHECK (provider IN ('store', 'awskms', 'gcpkms', 'azurekms', 'hashivault')),
-  provider_ref TEXT NOT NULL DEFAULT '',
-  algorithm TEXT NOT NULL CHECK (algorithm IN ('EdDSA', 'ES256')),
-  public_key BLOB NOT NULL,
-  private_key_pem TEXT,
-  created_at INTEGER NOT NULL,
-  retired_at INTEGER NOT NULL DEFAULT 0,
-  remove_after INTEGER NOT NULL DEFAULT 0,
-  CHECK ((provider = 'store') = (private_key_pem IS NOT NULL)),
-  CHECK ((provider = 'store') = (provider_ref = '')),
-  CHECK ((state = 'active') = (retired_at = 0))
-);
-CREATE UNIQUE INDEX signing_keys_one_active ON signing_keys (state) WHERE state = 'active';
 CREATE TABLE trust_material (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   kind TEXT NOT NULL CHECK (kind IN ('intermediate', 'leaf', 'root_crl', 'leaf_crl', 'trust_number')),
