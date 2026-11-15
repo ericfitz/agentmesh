@@ -736,10 +736,10 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 		// the one that signed the caller's bearer too): A mints with the new leaf
 		// after an exchange, and B (which has never seen it) accepts the bearer at
 		// once through the unknown-key reload.
-		var bearer2 string
+		var bearer2, bearerOld string
 		var rot ab2bus.SigningKeyRotation
 		t.Run("new-leaf-verifies-on-both", func(t *testing.T) {
-			bearerOld, _ := loginEventually(a, root)
+			bearerOld, _ = loginEventually(a, root)
 			var err error
 			rot, err = rootBusA.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
 			if err != nil {
@@ -775,6 +775,10 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 				}
 				if len(set.Keys) > 0 && set.Keys[0].State == ab2bus.SigningKeyCurrent &&
 					set.Keys[0].Thumbprint != b.leaf && set.Keys[0].Thumbprint != rot.Current.Thumbprint {
+					// B has reloaded: it refuses the bearer of A's old leaf.
+					if status, body := getChannels(t, b.base, bearerOld); status != http.StatusUnauthorized {
+						t.Fatalf("B with A's old leaf's bearer = %d %s, want 401", status, body)
+					}
 					return
 				}
 				if time.Now().After(deadline) {
@@ -813,9 +817,8 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 		// unavailable (never an error that is not retryable), and at least one
 		// wins.
 		t.Run("concurrent-forced-renewals", func(t *testing.T) {
-			bA, busA := loginEventually(a, root)
+			_, busA := loginEventually(a, root)
 			_, busB := loginEventually(b, root)
-			_ = bA
 			var errs [2]error
 			var wg sync.WaitGroup
 			for i, bus := range []*remote.Bus{busA, busB} {

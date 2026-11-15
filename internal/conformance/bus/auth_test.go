@@ -6,9 +6,9 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 	"io"
 	"net/http"
 	"regexp"
@@ -25,7 +25,6 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/assertion"
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
-	"github.com/ericfitz/agentmesh/internal/auth/token"
 	ab2bus "github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/core"
@@ -398,7 +397,7 @@ func TestAuthEndToEnd(t *testing.T) {
 			// bearer expired an hour ago.
 			priv, leaf := trust.Leaf(t, c, time.Now(), 24*time.Hour)
 			now := time.Now()
-			expired := signLeafBearer(t, priv, leaf, issuerURL, "root", now.Add(-2*time.Hour), time.Hour)
+			expired := trusttest.LeafBearer(t, priv, leaf, issuerURL, "root", now.Add(-2*time.Hour), time.Hour)
 			if _, err := mintBearer(ctx, newClient(expired), issuerURL, "root", root.key); err != nil {
 				t.Fatalf("token endpoint with an expired bearer: %v", err)
 			}
@@ -414,11 +413,14 @@ func TestAuthEndToEnd(t *testing.T) {
 		t.Run("signing-key-rotation", func(t *testing.T) {
 			before := root.bearer // signed by the leaf the server issued at its start
 			set, err := root.bus.ListSigningKeys(ctx)
-			if err != nil || len(set.Keys) != 2 || set.Keys[0].State != ab2bus.SigningKeyCurrent || set.Keys[0].Thumbprint != serverKID {
-				t.Fatalf("ListSigningKeys = %+v, %v; want the server's leaf current, then the other replica's leaf", set, err)
+			if err != nil || len(set.Keys) < 1 || set.Keys[0].State != ab2bus.SigningKeyCurrent || set.Keys[0].Thumbprint != serverKID {
+				t.Fatalf("ListSigningKeys = %+v, %v; want the server's leaf current first", set, err)
 			}
+			// The rotation revokes every listed leaf that is not revoked yet (the
+			// count is derived: other subtests may have added leaves).
+			wantRevoked := liveKeys(set.Keys)
 			rot, err := root.bus.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
-			if err != nil || rot.Current.Thumbprint == serverKID || len(rot.Revoked) != 2 || !revokedHas(rot.Revoked, serverKID) {
+			if err != nil || rot.Current.Thumbprint == serverKID || len(rot.Revoked) != len(wantRevoked) || !revokedHas(rot.Revoked, serverKID) {
 				t.Fatalf("RotateSigningKey = %+v, %v; want a new current leaf and %s revoked", rot, err, serverKID)
 			}
 			if got := jwksKIDsOf(t, base); len(got) != 1 || got[0] != rot.Current.Thumbprint {
@@ -442,19 +444,21 @@ func TestAuthEndToEnd(t *testing.T) {
 			// form): a leaf another replica issued meanwhile verifies until it
 			// is revoked by the rotation, and then does not.
 			kpriv, kleaf := trust.Leaf(t, c, time.Now(), 24*time.Hour)
-			other := signLeafBearer(t, kpriv, kleaf, issuerURL, "root", time.Now(), time.Hour)
+			other := trusttest.LeafBearer(t, kpriv, kleaf, issuerURL, "root", time.Now(), time.Hour)
 			// A listing reloads the server's view (it sees the new row and the
 			// issuer's cache goes stale), so the bearer is not an unknown key.
-			if set, err := remote.New(newClient(fresh)).ListSigningKeys(ctx); err != nil || len(set.Keys) < 2 {
-				t.Fatalf("ListSigningKeys = %+v, %v; want the other replica's leaf listed", set, err)
+			set2, err := remote.New(newClient(fresh)).ListSigningKeys(ctx)
+			if err != nil || len(liveKeys(set2.Keys)) < 2 {
+				t.Fatalf("ListSigningKeys = %+v, %v; want the other replica's leaf listed", set2, err)
 			}
+			wantRevoked2 := liveKeys(set2.Keys)
 			if status, body := getChannels(t, base, other); status != http.StatusOK {
 				t.Fatalf("a bearer from another replica's leaf = %d %s, want 200", status, body)
 			}
 			// root.bus carries the bearer the first rotation revoked; the second
 			// goes through a Bus over the bearer from the exchange.
 			rev, err := remote.New(newClient(fresh)).RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
-			if err != nil || len(rev.Revoked) != 2 || !revokedHas(rev.Revoked, rot.Current.Thumbprint) || !revokedHas(rev.Revoked, pki.Thumbprint(kleaf.Raw)) {
+			if err != nil || len(rev.Revoked) != len(wantRevoked2) || !revokedHas(rev.Revoked, rot.Current.Thumbprint) || !revokedHas(rev.Revoked, pki.Thumbprint(kleaf.Raw)) {
 				t.Fatalf("second RotateSigningKey = %+v, %v; want %s and the other replica's leaf revoked", rev, err, rot.Current.Thumbprint)
 			}
 			if status, body := getChannels(t, base, other); status != http.StatusUnauthorized {
@@ -546,28 +550,13 @@ func jwksKIDsOf(t *testing.T, base string) []string {
 	return out
 }
 
-// signLeafBearer signs an access token for identity with a leaf's Ed25519 key
-// the way the server does (type at+jwt, the leaf's thumbprint as kid), issued at
-// iat for life.
-func signLeafBearer(t *testing.T, priv ed25519.PrivateKey, leaf *x509.Certificate, issuerURL, identity string, iat time.Time, life time.Duration) string {
-	t.Helper()
-	tp := pki.Thumbprint(leaf.Raw)
-	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", tp).WithHeader("x5t#S256", tp)
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: priv}, opts)
-	if err != nil {
-		t.Fatal(err)
+// liveKeys is the listed keys that are not revoked.
+func liveKeys(list []ab2bus.SigningKey) []ab2bus.SigningKey {
+	var out []ab2bus.SigningKey
+	for _, k := range list {
+		if k.State != ab2bus.SigningKeyRevoked {
+			out = append(out, k)
+		}
 	}
-	claims := jwt.Claims{
-		Issuer: issuerURL, Subject: identity, Audience: jwt.Audience{issuerURL}, ID: fmt.Sprintf("jti-%d", iat.UnixNano()),
-		IssuedAt: jwt.NewNumericDate(iat), Expiry: jwt.NewNumericDate(iat.Add(life)),
-	}
-	extra := struct {
-		ClientID string `json:"client_id"`
-		Kind     string `json:"agentmesh_kind"`
-	}{identity, token.KindAgent}
-	raw, err := jwt.Signed(signer).Claims(claims).Claims(extra).Serialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
+	return out
 }

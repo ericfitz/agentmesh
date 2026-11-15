@@ -2,20 +2,14 @@ package server
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/x509"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/go-jose/go-jose/v4"
-	"github.com/go-jose/go-jose/v4/jwt"
-
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/auth/token"
 	"github.com/ericfitz/agentmesh/internal/core/identities"
-	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
@@ -70,34 +64,8 @@ func TestTokenEndpoint503WhenLeafExpired(t *testing.T) {
 	wantOAuthError(t, exchangeGrant(), 503, "temporarily_unavailable", "the signing key is unavailable", "")
 
 	// The other leaf is still in its period: its bearer is served.
-	raw := leafBearer(t, otherPriv, otherLeaf, "pat", f.clock.Now(), time.Hour)
+	raw := trusttest.LeafBearer(t, otherPriv, otherLeaf, "http://inproc", "pat", f.clock.Now(), time.Hour)
 	if r := f.do("GET", "/v1/channels", "", "Bearer "+raw, ""); r.StatusCode != 200 {
 		t.Fatalf("GET /v1/channels with the other leaf's bearer = %d %s, want 200", r.StatusCode, readBody(t, r))
 	}
-}
-
-// leafBearer signs an access token for identity with a leaf's key (type at+jwt,
-// the leaf's thumbprint as kid), issued at iat for life, for the issuer of the
-// test environment.
-func leafBearer(t *testing.T, priv ed25519.PrivateKey, leaf *x509.Certificate, identity string, iat time.Time, life time.Duration) string {
-	t.Helper()
-	tp := pki.Thumbprint(leaf.Raw)
-	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", tp).WithHeader("x5t#S256", tp)
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: priv}, opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	claims := jwt.Claims{
-		Issuer: "http://inproc", Subject: identity, Audience: jwt.Audience{"http://inproc"}, ID: "jti-other-leaf",
-		IssuedAt: jwt.NewNumericDate(iat), Expiry: jwt.NewNumericDate(iat.Add(life)),
-	}
-	extra := struct {
-		ClientID string `json:"client_id"`
-		Kind     string `json:"agentmesh_kind"`
-	}{identity, token.KindAgent}
-	raw, err := jwt.Signed(signer).Claims(claims).Claims(extra).Serialize()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
 }

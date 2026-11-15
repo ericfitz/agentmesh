@@ -12,6 +12,10 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
+	"github.com/ericfitz/agentmesh/internal/auth/token"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -292,4 +296,30 @@ func SQLiteSets(t testing.TB, path string) []string {
 	}
 	sqliteSets[path] = f.Sets()
 	return sqliteSets[path]
+}
+
+// LeafBearer signs an access token for identity with the key of a leaf from
+// Leaf (type at+jwt, the leaf's thumbprint as kid and x5t#S256), for issuerURL,
+// issued at iat for life. It is fatal on an error.
+func LeafBearer(t testing.TB, priv ed25519.PrivateKey, leaf *x509.Certificate, issuerURL, identity string, iat time.Time, life time.Duration) string {
+	t.Helper()
+	tp := pki.Thumbprint(leaf.Raw)
+	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", tp).WithHeader("x5t#S256", tp)
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: priv}, opts)
+	if err != nil {
+		t.Fatalf("trusttest: %v", err)
+	}
+	claims := jwt.Claims{
+		Issuer: issuerURL, Subject: identity, Audience: jwt.Audience{issuerURL}, ID: fmt.Sprintf("jti-%d", iat.UnixNano()),
+		IssuedAt: jwt.NewNumericDate(iat), Expiry: jwt.NewNumericDate(iat.Add(life)),
+	}
+	extra := struct {
+		ClientID string `json:"client_id"`
+		Kind     string `json:"agentmesh_kind"`
+	}{identity, token.KindAgent}
+	raw, err := jwt.Signed(signer).Claims(claims).Claims(extra).Serialize()
+	if err != nil {
+		t.Fatalf("trusttest: %v", err)
+	}
+	return raw
 }
