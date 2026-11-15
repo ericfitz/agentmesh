@@ -33,9 +33,6 @@ func TestNextIsStableUntilRepoint(t *testing.T) {
 	if err != nil || a.KID != b.KID || a.Ref != b.Ref || a.Ref == "" {
 		t.Fatalf("second Next = %+v, %v; first %+v", b, err, a)
 	}
-	if a.PrivatePEM != nil {
-		t.Fatal("an external key carries no private PEM")
-	}
 	c := f.Repoint()
 	if c.KID == a.KID || c.Ref == a.Ref {
 		t.Fatalf("Repoint returned the same key: %+v", c)

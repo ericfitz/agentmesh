@@ -17,9 +17,7 @@ import (
 )
 
 // MaxTokenLifetimeSeconds is the ceiling of token_lifetime_seconds and of an
-// issuer's human_token_lifetime_seconds. A retiring signing key stays
-// published this long after it stopped signing (signingkeys.MaxBearerLifetime
-// equals it; the config tests pin that).
+// issuer's human_token_lifetime_seconds.
 const MaxTokenLifetimeSeconds = 86400
 
 // Issuer is one external token issuer (Decision 57, spec 5.1): a corporate
@@ -60,12 +58,6 @@ type Config struct {
 	TokenLifetimeSeconds int      `json:"token_lifetime_seconds"`
 	JWKSRefreshSeconds   int      `json:"jwks_refresh_seconds"`
 	Issuers              []Issuer `json:"issuers"`
-
-	// The signing key set (issues #6 and #8). An empty SigningKeyURI keeps the
-	// key in the database; otherwise it names an external key.
-	SigningKeyURI                     string `json:"signing_key_uri"`
-	SigningKeyRotationHours           int    `json:"signing_key_rotation_hours"`
-	SigningKeyRotationCooldownSeconds int    `json:"signing_key_rotation_cooldown_seconds"`
 
 	// The trust settings (ADR 0019 section 4.12): accepted here, required at
 	// start by RequireTrust (Plan ruling 10), not by Validate.
@@ -137,9 +129,6 @@ func Default() Config {
 	return Config{
 		TokenLifetimeSeconds: 3600,
 		JWKSRefreshSeconds:   300,
-
-		SigningKeyRotationHours:           720,
-		SigningKeyRotationCooldownSeconds: 3600,
 
 		LeafValidityHours: 168,
 
@@ -269,15 +258,6 @@ func (c Config) Validate() error {
 	}
 	if err := c.checkHalfLeaf("token_lifetime_seconds", c.TokenLifetimeSeconds); err != nil {
 		return err
-	}
-	if _, err := keyprovider.SchemeOf(c.SigningKeyURI); err != nil {
-		return fmt.Errorf("signing_key_uri: %w", err)
-	}
-	if h := c.SigningKeyRotationHours; h != 0 && (h < 48 || h > 8760) {
-		return fmt.Errorf("signing_key_rotation_hours must be 0 (no scheduled rotation) or between 48 and 8760, got %d", h)
-	}
-	if c.SigningKeyRotationCooldownSeconds < 1 || c.SigningKeyRotationCooldownSeconds > 86400 {
-		return fmt.Errorf("signing_key_rotation_cooldown_seconds must be between 1 and 86400, got %d", c.SigningKeyRotationCooldownSeconds)
 	}
 	if err := c.validateTrust(); err != nil {
 		return err

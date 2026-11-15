@@ -282,7 +282,7 @@ func TestNextResolvesAndPins(t *testing.T) {
 	if want := "awskms://" + f.host() + "/" + arnFmt + uuid1; a.Ref != want {
 		t.Fatalf("Ref = %q, want %q", a.Ref, want)
 	}
-	if kid, _ := keys.KID(k1.Public()); a.KID != kid || a.Algorithm != keys.ES256 || a.PrivatePEM != nil {
+	if kid, _ := keys.KID(k1.Public()); a.KID != kid || a.Algorithm != keys.ES256 {
 		t.Fatalf("key %+v", a)
 	}
 	if again, err := p.Next(ctx); err != nil || again.Ref != a.Ref {

@@ -60,9 +60,6 @@ Columns: setting, environment variable, type, default, bounds (inclusive; from `
 | `issuer` | `AGENTMESH_SERVER_ISSUER` | string | `(unset)` | Absolute `http` or `https` URL with no path, query, fragment or trailing slash. Unset means `http://<bound address>`, which is wrong behind a proxy or in a container: set it on every non-local server. Required for a unix socket. Replicas must share it. |
 | `token_lifetime_seconds` | `AGENTMESH_SERVER_TOKEN_LIFETIME_SECONDS` | int | `3600` | 1 to 86400. Lifetime of a bearer token the server issues. |
 | `jwks_refresh_seconds` | `AGENTMESH_SERVER_JWKS_REFRESH_SECONDS` | int | `300` | 10 to 86400. How long an external issuer's key set is cached. |
-| `signing_key_uri` | `AGENTMESH_SERVER_SIGNING_KEY_URI` | string | `(unset)` | Where the token signing key lives. Unset keeps the key in the database. Otherwise a key URI whose scheme is one of `awskms`, `gcpkms`, `azurekms` or `hashivault` and which names a key after `://`; any other value is refused at start. A scheme whose backend is not in the binary stops the start with `the <scheme> backend is not in this build`. |
-| `signing_key_rotation_hours` | `AGENTMESH_SERVER_SIGNING_KEY_ROTATION_HOURS` | int | `720` | 0 or 48 to 8760. The age at which the `signing key rotation` maintenance job replaces an active key kept in the database, and the age after which it reports an error for an external key that the key URI still names (the server cannot rotate an external key itself; it adopts the key the URI names once the URI is changed). 0 turns scheduled rotation off. |
-| `signing_key_rotation_cooldown_seconds` | `AGENTMESH_SERVER_SIGNING_KEY_ROTATION_COOLDOWN_SECONDS` | int | `3600` | 1 to 86400. The least age of the active signing key before a rotation is allowed. |
 | `root_certificate_file` | `AGENTMESH_SERVER_ROOT_CERTIFICATE_FILE` | string | `(unset)` | Path of the root certificate (PEM). Accepted now and required at start once the certificate hierarchy lands (ADR 0019). |
 | `intermediate_key_file` | `AGENTMESH_SERVER_INTERMEDIATE_KEY_FILE` | string | `(unset)` | Path of the intermediate signing key file. At most one of this and `intermediate_key_uri`; one of them is required at start once the hierarchy lands. |
 | `intermediate_key_uri` | `AGENTMESH_SERVER_INTERMEDIATE_KEY_URI` | string | `(unset)` | Key URI of an external intermediate signing key; the scheme is one of `awskms`, `gcpkms`, `azurekms` or `hashivault`. Error messages name the key, never the URI. Exclusive with `intermediate_key_file`. |
@@ -157,4 +154,4 @@ The first successful exchange binds the person's identity to the token's subject
 
 ## What replicas must share
 
-Replicas over one Postgres database must use the same `issuer`. Replicas also share the signing key set, because it is rows in the database (see `deploy.md`); with `signing_key_uri` set, every replica must set the same value. There is no key file.
+Replicas over one Postgres database must use the same `issuer`. Replicas also share the trust material, because it is rows in the database (see `deploy.md`); every replica must set the same `root_certificate_file`, `installation_name` and intermediate key.

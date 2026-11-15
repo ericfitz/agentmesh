@@ -16,7 +16,7 @@ import (
 func TestHashivaultBackendIsRegistered(t *testing.T) {
 	t.Setenv("VAULT_ADDR", "http://127.0.0.1:1")
 	t.Setenv("VAULT_TOKEN", "t0ken-unused")
-	p, err := openKeyProvider(config.Config{SigningKeyURI: "hashivault://agentmesh"})
+	p, err := openIntermediateProvider(config.Config{IntermediateKeyURI: "hashivault://agentmesh"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestHashivaultBackendIsRegistered(t *testing.T) {
 	}
 	// A malformed key for the backend is refused, not accepted lazily; the
 	// error does not quote the URI.
-	_, err = openKeyProvider(config.Config{SigningKeyURI: "hashivault://user:t0ken@a/b"})
+	_, err = openIntermediateProvider(config.Config{IntermediateKeyURI: "hashivault://user:t0ken@a/b"})
 	if err == nil || strings.Contains(err.Error(), "t0ken") {
 		t.Fatalf("a malformed hashivault URI: err %v", err)
 	}
@@ -36,7 +36,7 @@ func TestHashivaultBackendIsRegistered(t *testing.T) {
 		if _, ok := keyBackends[scheme]; ok {
 			continue // another tag is on too
 		}
-		_, err := openKeyProvider(config.Config{SigningKeyURI: scheme + "://x"})
+		_, err := openIntermediateProvider(config.Config{IntermediateKeyURI: scheme + "://x"})
 		want := "the " + scheme + " backend is not in this build (build with -tags " + scheme + ")"
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err %v, want %q", scheme, err, want)

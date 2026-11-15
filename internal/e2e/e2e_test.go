@@ -300,7 +300,7 @@ func startFixture(root string) (*fixture, error) {
 	if err != nil {
 		return f, err
 	}
-	srvArgs := append([]string{"server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "signing_key_rotation_cooldown_seconds=1", "-set", "maintenance_interval_seconds=3600", "-set", "issuer=" + f.proxy.URL}, trust...)
+	srvArgs := append([]string{"server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "maintenance_interval_seconds=3600", "-set", "issuer=" + f.proxy.URL}, trust...)
 	f.srv = exec.Command(binPath, srvArgs...)
 	f.srv.Env = environFor(filepath.Join(root, "home-server"))
 	f.srv.Stdout, f.srv.Stderr = f.srvOut, f.srvErr

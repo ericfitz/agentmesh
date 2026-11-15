@@ -52,7 +52,19 @@ func (p FileProvider) Signer(ctx context.Context, k Key) (Signer, error) {
 	if cur.KID != k.KID {
 		return nil, fmt.Errorf("keyprovider: %s holds key %q, not %q", p.Path, cur.KID, k.KID)
 	}
-	return storeSigner{sg}, nil
+	return fileSigner{sg}, nil
+}
+
+// fileSigner signs with the key of the file, checking the context first.
+type fileSigner struct{ s crypto.Signer }
+
+func (s fileSigner) Public() crypto.PublicKey { return s.s.Public() }
+
+func (s fileSigner) SignContext(ctx context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return s.s.Sign(rand.Reader, digest, opts)
 }
 
 func (p FileProvider) load() (crypto.Signer, Key, error) {

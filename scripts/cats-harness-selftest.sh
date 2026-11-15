@@ -367,8 +367,7 @@ case_server_argv() {
   cmd=$(ps -o command= -p "$(cat "$D/server.pid")")
   for pair in 'send_messages_per_second=10000' 'send_kib_per_second=65536' \
     'token_lifetime_seconds=86400' 'session_lease_seconds=86400' \
-    'watch_max_seconds=1' 'maintenance_interval_seconds=3600' \
-    'signing_key_rotation_cooldown_seconds=1'; do
+    'watch_max_seconds=1' 'maintenance_interval_seconds=3600'; do
     case "$cmd" in *"-set $pair"*) ;; *) fail "server argv lacks '-set $pair'" ;; esac
   done
   case "$cmd" in *'-listen 127.0.0.1:'*) ;; *) fail "server argv lacks '-listen 127.0.0.1:'" ;; esac

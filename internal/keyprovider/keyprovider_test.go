@@ -1,7 +1,6 @@
 package keyprovider
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -15,70 +14,6 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 )
-
-func TestStoreProviderRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	p := StoreProvider{}
-	if p.Name() != NameStore || NameStore != "store" {
-		t.Fatalf("name %q", p.Name())
-	}
-	k, err := p.Next(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k.Algorithm != keys.EdDSA || k.Ref != "" || len(k.PrivatePEM) == 0 {
-		t.Fatalf("key %+v", k)
-	}
-	if kid, _ := keys.KID(k.Public); kid != k.KID {
-		t.Fatalf("kid %q is not the thumbprint %q", k.KID, kid)
-	}
-	sg, err := p.Signer(ctx, k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	msg := []byte("a digest")
-	sig, err := sg.SignContext(ctx, msg, crypto.Hash(0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ed25519.Verify(sg.Public().(ed25519.PublicKey), msg, sig) {
-		t.Fatal("signature does not verify with Public")
-	}
-	if kid, _ := keys.KID(sg.Public()); kid != k.KID {
-		t.Fatal("signer holds another key")
-	}
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if _, err := sg.SignContext(canceled, msg, crypto.Hash(0)); err == nil {
-		t.Fatal("a canceled context signed")
-	}
-	k2, _ := p.Next(ctx)
-	if k2.KID == k.KID {
-		t.Fatal("Next returned the same key twice")
-	}
-}
-
-func TestStoreProviderRefusesMismatch(t *testing.T) {
-	ctx := context.Background()
-	p := StoreProvider{}
-	k, _ := p.Next(ctx)
-	other, _ := p.Next(ctx)
-	es, _ := keys.Generate(keys.ES256)
-	esPEM, _ := keys.EncodePrivatePEM(es)
-	esKID, _ := keys.KID(es.Public())
-	cases := map[string]Key{
-		"kid differs":       {KID: other.KID, Algorithm: keys.EdDSA, PrivatePEM: k.PrivatePEM},
-		"algorithm differs": {KID: esKID, Algorithm: keys.EdDSA, PrivatePEM: esPEM},
-		"garbage PEM":       {KID: k.KID, Algorithm: keys.EdDSA, PrivatePEM: []byte("garbage")},
-		"no PEM":            {KID: k.KID, Algorithm: keys.EdDSA},
-		"unknown algorithm": {KID: k.KID, Algorithm: "RS256", PrivatePEM: k.PrivatePEM},
-	}
-	for name, key := range cases {
-		if sg, err := p.Signer(ctx, key); err == nil || sg != nil {
-			t.Errorf("%s: Signer = %v, %v, want an error", name, sg, err)
-		}
-	}
-}
 
 func TestSchemeOf(t *testing.T) {
 	if got := Schemes(); strings.Join(got, ",") != "awskms,gcpkms,azurekms,hashivault" {
@@ -134,7 +69,7 @@ func TestExternalKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	kid, _ := keys.KID(p256.Public())
-	if k.KID != kid || k.Algorithm != keys.ES256 || k.Ref != "awskms://k1" || k.PrivatePEM != nil {
+	if k.KID != kid || k.Algorithm != keys.ES256 || k.Ref != "awskms://k1" {
 		t.Fatalf("key %+v", k)
 	}
 	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)

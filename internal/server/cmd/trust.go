@@ -17,6 +17,11 @@ import (
 	"github.com/ericfitz/agentmesh/internal/server/config"
 )
 
+// keyBackends are the external key providers this build contains, by key URI
+// scheme. A backend's tagged file registers itself from an init; the default
+// build has none.
+var keyBackends = map[string]func(uri string) (keyprovider.Provider, error){}
+
 // openRoot reads root_certificate_file: one PEM certificate that passes
 // pki.CheckRoot (Plan ruling 32). An outside CA's root, an RSA one included,
 // passes; a certificate that is not a CA does not.

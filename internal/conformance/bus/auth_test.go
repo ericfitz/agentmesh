@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/ericfitz/agentmesh/internal/trusttest"
 	"io"
 	"net/http"
 	"regexp"
@@ -17,8 +16,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/ericfitz/agentmesh/internal/testkit"
 
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
@@ -33,6 +30,8 @@ import (
 	"github.com/ericfitz/agentmesh/internal/gen"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/server/cmd"
+	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 // listeningRE captures the engine, mode, issuer URL, port and kid from the

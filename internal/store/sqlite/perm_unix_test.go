@@ -38,8 +38,7 @@ func bufLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 }
 
-// TestOpenCreatesPrivateFile: the database holds the server signing key in
-// clear, so a fresh file is 0600 under umask 022, and the -wal and -shm files
+// TestOpenCreatesPrivateFile: the database is the server's, so a fresh file is 0600 under umask 022, and the -wal and -shm files
 // SQLite creates next to it follow its mode.
 func TestOpenCreatesPrivateFile(t *testing.T) {
 	withUmask(t, 0o022)
@@ -66,8 +65,8 @@ func TestOpenCreatesPrivateFile(t *testing.T) {
 
 // TestOpenWarnsOnReadableFile: without RequirePrivate (local mode) an existing
 // group- or world-readable file is opened with a warning naming the path and
-// mode; the mode is left as it is. A local database has no signing key, so the
-// warning does not mention one.
+// mode; the mode is left as it is. A local database is not a server's, so the
+// warning does not call it one.
 func TestOpenWarnsOnReadableFile(t *testing.T) {
 	withUmask(t, 0o022)
 	for _, perm := range []os.FileMode{0o644, 0o640, 0o604} {
@@ -82,8 +81,8 @@ func TestOpenWarnsOnReadableFile(t *testing.T) {
 		if !strings.Contains(out, "level=WARN") || !strings.Contains(out, path) || !strings.Contains(out, fmt.Sprintf("%#o", perm)) {
 			t.Errorf("perm %#o: warning lacks level, path or mode: %q", perm, out)
 		}
-		if strings.Contains(out, "signing key") {
-			t.Errorf("perm %#o: local-mode warning mentions a signing key: %q", perm, out)
+		if strings.Contains(out, "server's database") {
+			t.Errorf("perm %#o: local-mode warning calls the file the server's database: %q", perm, out)
 		}
 		if got := mode(t, path); got != perm {
 			t.Errorf("perm %#o: mode changed to %#o", perm, got)
@@ -106,7 +105,7 @@ func TestOpenRequirePrivate(t *testing.T) {
 		if err == nil {
 			t.Fatalf("perm %#o: Open succeeded, want a refusal", perm)
 		}
-		for _, want := range []string{path, fmt.Sprintf("%#o", perm), "chmod 600", "signing key"} {
+		for _, want := range []string{path, fmt.Sprintf("%#o", perm), "chmod 600", "the server's database"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("perm %#o: error %q lacks %q", perm, err, want)
 			}

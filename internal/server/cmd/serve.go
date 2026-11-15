@@ -164,6 +164,8 @@ func Serve(ctx context.Context, c Config) error {
 		}()
 	}
 	if c.SigningKeys != nil {
+		t := c.SigningKeys.Trust()
+		m.Trust = &t
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

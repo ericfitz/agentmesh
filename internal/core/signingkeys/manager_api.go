@@ -72,6 +72,10 @@ func issueFailure(log interface{ Error(string, ...any) }, err error) error {
 	return &bus.Error{Code: bus.CodeUnavailable, Message: "cannot issue a leaf certificate: " + failureLine(err), Retryable: retryable, Cause: err}
 }
 
+// errReceiptMiss ends the receipt peek of RotateSigningKey when no receipt
+// exists, so WithReceipt never stores one from a read transaction.
+var errReceiptMiss = errors.New("no receipt")
+
 // RotateSigningKey is the forced renewal (section 4.8, the seven steps in
 // order): (1) a read transaction checks the administrator and the receipt of
 // the idempotency key, and a replay returns the first answer and changes

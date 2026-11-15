@@ -111,7 +111,7 @@ The maintenance block is this process's view, kept in memory; nothing about a ru
 "maintenance":{"interval_seconds":1,"jobs":[{"changed":0,"name":"lapsed sessions","skipped":false}, ...14 jobs, 16 on a server...],"last_tick_at":1792911399430,"lock":"held","owner":"724fe2f04ea92cd30e839391"}
 ```
 
-The two extra jobs on a server, which run just before the last job (`assertion replay expiry`), are `signing key rotation` and `signing key removal`. Rotation reports 1 when it rotated the active signing key and 0 otherwise; its error is the provider mismatch text (the configured provider is not the active key's), or, for an external key the provider still names after it is older than `signing_key_rotation_hours`, `signing key <kid> is older than signing_key_rotation_hours (<n>): point the key URI at a new key, then run agentmesh server admin signing-key rotate`. Removal reports how many retiring keys it deleted.
+The one extra job on a server, which runs just before the last job (`assertion replay expiry`), is `expired leaf removal`. It reports how many leaf certificate rows it deleted: those whose "not after" is more than an hour past, at most 500 a run. An intermediate row is never deleted, and a revoked leaf's serial number stays on the CRL.
 
 With several replicas over Postgres exactly one holds the maintenance lock. Ask each replica: the one that answers `held` runs the jobs, the others answer `held_elsewhere` with no jobs. Two replicas both answering `held`, or none while every replica reports recent ticks, is worth investigating. `owner` is the answering process's own lock owner, not the holder's.
 

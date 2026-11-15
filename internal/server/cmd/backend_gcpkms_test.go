@@ -16,7 +16,7 @@ import (
 // Credentials: New validates the URI only.
 func TestGcpkmsBackendIsRegistered(t *testing.T) {
 	const good = "gcpkms://projects/p/locations/global/keyRings/r/cryptoKeys/k"
-	p, err := openKeyProvider(config.Config{SigningKeyURI: good})
+	p, err := openIntermediateProvider(config.Config{IntermediateKeyURI: good})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestGcpkmsBackendIsRegistered(t *testing.T) {
 	}
 	// A malformed key for the backend is refused, not accepted lazily; the
 	// error does not quote the URI.
-	_, err = openKeyProvider(config.Config{SigningKeyURI: "gcpkms://us3r:t0ken@projects/p/locations/l/keyRings/r/cryptoKeys/k"})
+	_, err = openIntermediateProvider(config.Config{IntermediateKeyURI: "gcpkms://us3r:t0ken@projects/p/locations/l/keyRings/r/cryptoKeys/k"})
 	if err == nil || strings.Contains(err.Error(), "t0ken") || strings.Contains(err.Error(), "us3r") {
 		t.Fatalf("a malformed gcpkms URI: err %v", err)
 	}
@@ -34,7 +34,7 @@ func TestGcpkmsBackendIsRegistered(t *testing.T) {
 			continue
 		}
 		setBackend(t, scheme, nil)
-		_, err := openKeyProvider(config.Config{SigningKeyURI: scheme + "://x"})
+		_, err := openIntermediateProvider(config.Config{IntermediateKeyURI: scheme + "://x"})
 		want := "the " + scheme + " backend is not in this build (build with -tags " + scheme + ")"
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err %v, want %q", scheme, err, want)

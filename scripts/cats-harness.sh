@@ -63,8 +63,7 @@ AGENT=cats-agent
 VICTIM=cats-victim
 SERVER_SETS=(-set send_messages_per_second=10000 -set send_kib_per_second=65536
   -set token_lifetime_seconds=86400 -set session_lease_seconds=86400
-  -set watch_max_seconds=1 -set maintenance_interval_seconds=3600
-  -set signing_key_rotation_cooldown_seconds=1)
+  -set watch_max_seconds=1 -set maintenance_interval_seconds=3600)
 # The server's CA (ADR 0019 section 7): the root tool's directory, the
 # intermediate key and the installation's name, all under the campaign directory.
 INSTALLATION=cats-installation

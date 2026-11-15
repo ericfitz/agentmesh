@@ -36,9 +36,9 @@ type Options struct {
 	BusyTimeout time.Duration // 0: 5 s (Decision 69)
 	Store       sqlstore.Options
 	// RequirePrivate refuses an existing database file that is group- or
-	// world-accessible (the server sets it: the file holds its signing key in
-	// clear, so read access equals admin). False only warns, for the local
-	// mode's database, which holds the bus's messages and no signing key.
+	// world-accessible (the server sets it: the file holds its trust material
+	// and its identities, so read access equals admin). False only warns, for
+	// the local mode's database, which holds the bus's messages alone.
 	RequirePrivate bool
 	// Logger receives the warning about a group- or world-accessible database
 	// file when RequirePrivate is false; nil discards it.
@@ -83,7 +83,7 @@ func uriPath(slashed string) string {
 
 // Open opens (creating when empty) the database file at path under the
 // Decision 34 rules. A missing file is created 0600 first: the server's
-// database holds its signing key in clear (Milestone 5 choice 6), and SQLite
+// database holds its identities and trust material (Milestone 5 choice 6), and SQLite
 // gives the -wal and -shm files the database file's mode.
 func Open(ctx context.Context, path string, opts Options) (store.Store, error) {
 	dsn, err := DSN(path, opts.BusyTimeout)
@@ -144,7 +144,7 @@ func ensurePrivateFile(path string, require bool, log *slog.Logger) error {
 	}
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 		if require {
-			return fmt.Errorf("sqlite: %s has mode %#o, which other accounts can read or write, and holds the server signing key; chmod 600 it", path, perm)
+			return fmt.Errorf("sqlite: %s has mode %#o, which other accounts can read or write, and is the server's database; chmod 600 it", path, perm)
 		}
 		if log == nil {
 			log = slog.New(slog.DiscardHandler)
