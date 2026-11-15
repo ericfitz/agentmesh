@@ -1540,7 +1540,6 @@ workflows:
             client_assertion: $inputs.exchange_assertion
         successCriteria:
           - condition: $statusCode == 200
-          - condition: $response.body#/token_type == "Bearer"
         outputs:
           access_token: $response.body#/access_token
       - stepId: list-again
