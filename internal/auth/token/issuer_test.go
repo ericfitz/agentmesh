@@ -21,6 +21,8 @@ const issURL = "https://bus.example"
 
 var t0 = time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)
 
+// bothAlgs is the algorithms of a bearer or an external token; a token key of this
+// server is always EdDSA (its certificate key).
 var bothAlgs = []keys.Algorithm{keys.EdDSA, keys.ES256}
 
 func genKey(t *testing.T, alg keys.Algorithm) crypto.Signer {
@@ -30,18 +32,6 @@ func genKey(t *testing.T, alg keys.Algorithm) crypto.Signer {
 		t.Fatal(err)
 	}
 	return k
-}
-
-func newIssuer(t *testing.T, alg keys.Algorithm, url string, k crypto.Signer) *Issuer {
-	t.Helper()
-	if k == nil {
-		k = genKey(t, alg)
-	}
-	i, err := NewIssuer(context.Background(), url, StaticKeys(k), time.Hour, func() time.Time { return t0 })
-	if err != nil {
-		t.Fatal(err)
-	}
-	return i
 }
 
 // signRaw signs arbitrary claims with the given key and kid header.
@@ -64,8 +54,8 @@ func signRaw(t *testing.T, k crypto.Signer, kid string, c jwt.Claims) string {
 }
 
 func TestMintThenVerify(t *testing.T) {
-	for _, alg := range bothAlgs {
-		i := newIssuer(t, alg, issURL, nil)
+	for _, alg := range []keys.Algorithm{keys.EdDSA} {
+		i := newIssuer(t)
 		raw, exp, err := i.Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
 		if err != nil {
 			t.Fatal(err)
@@ -97,8 +87,9 @@ func TestMintThenVerify(t *testing.T) {
 }
 
 func TestIssuerVerifyRefusesWrongClaims(t *testing.T) {
-	k := genKey(t, keys.EdDSA)
-	i := newIssuer(t, keys.EdDSA, issURL, k)
+	c := longCertKey(t)
+	k := c.signer
+	i := newIssuerWith(t, c)
 	good := jwt.Claims{
 		Issuer: issURL, Subject: "alice", Audience: jwt.Audience{issURL}, ID: "j",
 		IssuedAt: jwt.NewNumericDate(t0), Expiry: jwt.NewNumericDate(t0.Add(time.Hour)),
@@ -107,7 +98,7 @@ func TestIssuerVerifyRefusesWrongClaims(t *testing.T) {
 		t.Fatalf("control: %v", err)
 	}
 	// Another key, same URL: unknown kid.
-	other := newIssuer(t, keys.EdDSA, issURL, nil)
+	other := newIssuer(t)
 	raw, _, _ := other.Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
 	if _, err := i.Verify(context.Background(), raw, t0); !errors.Is(err, ErrUnknownKey) {
 		t.Errorf("other issuer: %v", err)
@@ -181,8 +172,8 @@ func TestIssuerVerifyRefusesWrongClaims(t *testing.T) {
 }
 
 func TestJWKSShape(t *testing.T) {
-	for _, alg := range bothAlgs {
-		i := newIssuer(t, alg, issURL, nil)
+	for _, alg := range []keys.Algorithm{keys.EdDSA} {
+		i := newIssuer(t)
 		set := i.JWKS(context.Background())
 		if len(set.Keys) != 1 {
 			t.Fatalf("%s: %d keys", alg, len(set.Keys))
@@ -211,28 +202,30 @@ func TestJWKSShape(t *testing.T) {
 }
 
 func TestNewIssuerRejectsURL(t *testing.T) {
-	k := genKey(t, keys.EdDSA)
+	src := &fakeSource{}
+	s0, k0 := ksKey(t)
+	src.put(setOf(s0, k0), nil)
 	now := func() time.Time { return t0 }
 	for _, u := range []string{
 		"", "https://bus.example/", "https://bus.example/path", "ftp://bus.example", "bus.example",
 		"https://bus.example?x=1", "https://bus.example#f", "https://", "https://user@bus.example", "https://bus.example?",
 	} {
-		if _, err := NewIssuer(context.Background(), u, StaticKeys(k), time.Hour, now); err == nil {
+		if _, err := NewIssuer(context.Background(), u, src, time.Hour, now); err == nil {
 			t.Errorf("accepted %q", u)
 		}
 	}
 	for _, u := range []string{"http://127.0.0.1:8080", "https://bus.example", "http://inproc"} {
-		if _, err := NewIssuer(context.Background(), u, StaticKeys(k), time.Hour, now); err != nil {
+		if _, err := NewIssuer(context.Background(), u, src, time.Hour, now); err != nil {
 			t.Errorf("refused %q: %v", u, err)
 		}
 	}
-	if _, err := NewIssuer(context.Background(), issURL, StaticKeys(k), 0, now); err == nil {
+	if _, err := NewIssuer(context.Background(), issURL, src, 0, now); err == nil {
 		t.Error("zero lifetime accepted")
 	}
-	if _, err := NewIssuer(context.Background(), issURL, StaticKeys(nil), time.Hour, now); err == nil {
-		t.Error("nil key accepted")
+	if _, err := NewIssuer(context.Background(), issURL, nil, time.Hour, now); err == nil {
+		t.Error("nil key source accepted")
 	}
-	if _, err := NewIssuer(context.Background(), issURL, StaticKeys(k), time.Hour, nil); err == nil {
+	if _, err := NewIssuer(context.Background(), issURL, src, time.Hour, nil); err == nil {
 		t.Error("nil clock accepted")
 	}
 }
@@ -260,7 +253,7 @@ func decodeJWT(t *testing.T, raw string) (map[string]any, map[string]any) {
 }
 
 func TestMintAccessTokenProfile(t *testing.T) {
-	i := newIssuer(t, keys.EdDSA, issURL, nil)
+	i := newIssuer(t)
 	raw, _, err := i.Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
 	if err != nil {
 		t.Fatal(err)
@@ -306,8 +299,9 @@ func TestMintAccessTokenProfile(t *testing.T) {
 }
 
 func TestVerifyRequiresAccessTokenType(t *testing.T) {
-	k := genKey(t, keys.EdDSA)
-	i := newIssuer(t, keys.EdDSA, issURL, k)
+	c := longCertKey(t)
+	k := c.signer
+	i := newIssuerWith(t, c)
 	claims := jwt.Claims{
 		Issuer: issURL, Subject: "alice", Audience: jwt.Audience{issURL}, ID: "j",
 		IssuedAt: jwt.NewNumericDate(t0), Expiry: jwt.NewNumericDate(t0.Add(time.Hour)),
@@ -353,7 +347,7 @@ func TestVerifyRequiresAccessTokenType(t *testing.T) {
 }
 
 func TestMetadataURI(t *testing.T) {
-	i := newIssuer(t, keys.EdDSA, issURL, nil)
+	i := newIssuer(t)
 	if got := i.MetadataURI(); got != issURL+"/.well-known/oauth-authorization-server" {
 		t.Errorf("MetadataURI = %q", got)
 	}

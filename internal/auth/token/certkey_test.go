@@ -67,6 +67,49 @@ func newCertKey(t *testing.T, notBefore, notAfter time.Time) certKey {
 	}}
 }
 
+// cryptoSigner adapts a crypto.Signer to a ContextSigner.
+type cryptoSigner struct{ crypto.Signer }
+
+func (c cryptoSigner) SignContext(_ context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return c.Sign(rand.Reader, digest, opts)
+}
+
+// longCertKey is a leaf valid long before and after t0, for tests that move the
+// clock but not the certificate's period.
+func longCertKey(t *testing.T) certKey {
+	t.Helper()
+	return newCertKey(t, t0.Add(-24*time.Hour), t0.Add(10*365*24*time.Hour))
+}
+
+// ksKey makes a leaf key with a chain and its Key record (alg must be EdDSA:
+// a certificate key is EdDSA).
+func ksKey(t *testing.T) (crypto.Signer, Key) {
+	t.Helper()
+	c := longCertKey(t)
+	return c.signer, c.key
+}
+
+// setOf is a valid set: active signs, the others are retiring; Keys is
+// active first.
+func setOf(active crypto.Signer, activeKey Key, retiring ...Key) KeySet {
+	return KeySet{Active: activeKey, Signer: cryptoSigner{active}, Keys: append([]Key{activeKey}, retiring...)}
+}
+
+// newIssuer is an issuer over a fresh leaf key (see newIssuerWith).
+func newIssuer(t *testing.T) *Issuer { return newIssuerWith(t, longCertKey(t)) }
+
+// newIssuerWith is an issuer at issURL over c, on the clock fixed at t0.
+func newIssuerWith(t *testing.T, c certKey) *Issuer {
+	t.Helper()
+	src := &fakeSource{}
+	src.put(setOf(c.signer, c.key), nil)
+	i, err := NewIssuer(context.Background(), issURL, src, time.Hour, func() time.Time { return t0 })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return i
+}
+
 func certSet(c certKey) KeySet {
 	return KeySet{Active: c.key, Signer: cryptoSigner{c.signer}, Keys: []Key{c.key}}
 }
@@ -136,7 +179,7 @@ func TestCertificateKeyValidate(t *testing.T) {
 }
 
 func TestSetWithoutSigner(t *testing.T) {
-	_, k := ksKey(t, keys.EdDSA)
+	_, k := ksKey(t)
 	if err := (KeySet{Active: k}).validate(); err == nil {
 		t.Error("a nil-signer set with a non-zero Active and no keys was accepted")
 	}
@@ -161,7 +204,7 @@ func TestSetWithoutSigner(t *testing.T) {
 	}
 
 	// A bearer under a listed key verifies.
-	s, ak := ksKey(t, keys.EdDSA)
+	s, ak := ksKey(t)
 	clk := &clock{t: t0}
 	src := &fakeSource{}
 	src.put(setOf(s, ak), nil)
@@ -198,16 +241,6 @@ func TestMintHeaderCarriesThumbprint(t *testing.T) {
 	}
 	if got, _ := h.ExtraHeaders["x5t#S256"].(string); got != c.key.KID {
 		t.Errorf("x5t#S256 = %q, want %q", got, c.key.KID)
-	}
-	// A key without a chain carries no x5t#S256.
-	plain := newIssuer(t, keys.EdDSA, issURL, nil)
-	raw, _, err = plain.Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, _ = jwt.ParseSigned(raw, serverAlgorithms)
-	if _, ok := tok.Headers[0].ExtraHeaders["x5t#S256"]; ok {
-		t.Error("a key without a chain carries x5t#S256")
 	}
 }
 
@@ -341,11 +374,6 @@ func TestJWKSCarriesChain(t *testing.T) {
 			t.Errorf("json %s lacks %s", raw, want)
 		}
 	}
-	// A key without a chain carries neither member.
-	plain, _ := newIssuer(t, keys.EdDSA, issURL, nil).JWKS(context.Background()).Keys[0].MarshalJSON()
-	if strings.Contains(string(plain), "x5c") || strings.Contains(string(plain), "x5t") {
-		t.Errorf("a key without a chain carries a certificate member: %s", plain)
-	}
 }
 
 func TestMintValidityEdges(t *testing.T) {
@@ -366,5 +394,42 @@ func TestMintValidityEdges(t *testing.T) {
 	}
 	if _, err := mint(nb); err != nil {
 		t.Errorf("now == NotBefore: %v", err)
+	}
+}
+
+// TestKeyNeedsAChain: validate refuses a key without a certificate chain, an
+// empty one, and one whose first certificate does not hold the key, in the
+// active slot and in a listed one, with a signer and without.
+func TestKeyNeedsAChain(t *testing.T) {
+	c := newCertKey(t, t0.Add(-time.Hour), t0.Add(time.Hour))
+	if err := certSet(c).validate(); err != nil {
+		t.Fatalf("control: %v", err)
+	}
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kid, err := keys.KID(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noChain := Key{KID: kid, Algorithm: keys.EdDSA, Public: pub}
+	emptyChain := noChain
+	emptyChain.Chain = [][]byte{}
+	foreign := c.key // the chain is c's, the key another
+	foreign.Public = pub
+	cases := map[string]Key{"nil chain": noChain, "empty chain": emptyChain, "chain of another key": foreign}
+	for name, k := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := (KeySet{Active: k, Signer: cryptoSigner{c.signer}, Keys: []Key{k}}).validate(); err == nil {
+				t.Error("validate accepted the key as active")
+			}
+			if err := (KeySet{Active: c.key, Signer: cryptoSigner{c.signer}, Keys: []Key{c.key, k}}).validate(); err == nil {
+				t.Error("validate accepted the key as a listed key")
+			}
+			if err := (KeySet{Keys: []Key{k}}).validate(); err == nil {
+				t.Error("validate accepted the key in a verify-only set")
+			}
+		})
 	}
 }

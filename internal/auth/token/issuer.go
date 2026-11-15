@@ -315,10 +315,7 @@ func (i *Issuer) Mint(ctx context.Context, in MintInput) (string, time.Time, err
 	}
 	sctx, cancel := context.WithTimeout(ctx, SignTimeout)
 	defer cancel()
-	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", set.Active.KID)
-	if len(set.Active.Chain) > 0 {
-		opts = opts.WithHeader("x5t#S256", set.Active.KID)
-	}
+	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", set.Active.KID).WithHeader("x5t#S256", set.Active.KID)
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: ja, Key: cryptosigner.Opaque(ctxSigner{sctx, set.Signer})}, opts)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("%w: %w", ErrSignerUnavailable, err)

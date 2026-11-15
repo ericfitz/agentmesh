@@ -27,9 +27,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/cryptosigner"
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
-	"github.com/ericfitz/agentmesh/internal/auth/token"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 )
 
@@ -388,19 +389,25 @@ func TestSignVerifiesAsJWS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tk := token.Key{KID: k.KID, Algorithm: k.Algorithm, Public: k.Public}
-	src := oneKey{token.KeySet{Active: tk, Signer: sg, Keys: []token.Key{tk}}}
-	now := time.Now()
-	iss, err := token.NewIssuer(ctx, "https://issuer.example", src, time.Hour, func() time.Time { return now })
+	// A JWS signed through the provider's signer verifies under the key's public half.
+	js, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: cryptosigner.Opaque(ctxSigner{ctx, sg})}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _, err := iss.Mint(ctx, token.MintInput{Identity: "agent-1", Kind: token.KindAgent})
+	signed, err := js.Sign([]byte("payload"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id, err := iss.Verify(ctx, raw, now); err != nil || id != "agent-1" {
-		t.Fatalf("Verify = %q, %v", id, err)
+	compact, err := signed.CompactSerialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := jose.ParseSigned(compact, []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := parsed.Verify(k.Public); err != nil || string(got) != "payload" {
+		t.Fatalf("Verify = %q, %v", got, err)
 	}
 	// Sign sends a digest, never a message; the request asked for ECDSA_SHA_256.
 	if f.count("Sign") != 1 {
@@ -408,9 +415,17 @@ func TestSignVerifiesAsJWS(t *testing.T) {
 	}
 }
 
-type oneKey struct{ set token.KeySet }
+// ctxSigner adapts a keyprovider.Signer to the crypto.Signer go-jose's opaque signer needs.
+type ctxSigner struct {
+	ctx context.Context //nolint:containedctx // one test signature's context
+	s   keyprovider.Signer
+}
 
-func (o oneKey) LoadKeys(context.Context) (token.KeySet, error) { return o.set, nil }
+func (c ctxSigner) Public() crypto.PublicKey { return c.s.Public() }
+
+func (c ctxSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return c.s.SignContext(c.ctx, digest, opts)
+}
 
 func TestSignerRefusesWhatItCannotSign(t *testing.T) {
 	f := newFakeKMS(t)

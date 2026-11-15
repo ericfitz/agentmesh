@@ -39,14 +39,17 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/auth/token"
+	"github.com/ericfitz/agentmesh/internal/core"
+	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/respcheck"
 	"github.com/ericfitz/agentmesh/internal/server"
 	"github.com/ericfitz/agentmesh/internal/sessionstate"
+	"github.com/ericfitz/agentmesh/internal/store/sqlite"
 )
 
 var (
@@ -746,14 +749,7 @@ func TestSection24Sequence(t *testing.T) {
 			disc, _ := entry["discovery"].(map[string]any)
 			issuerURL, _ := disc["issuer"].(string)
 			old, _ := entry["access_token"].(string)
-			key, err := keys.Generate(keys.EdDSA)
-			if err != nil {
-				t.Fatal(err)
-			}
-			iss, err := token.NewIssuer(context.Background(), issuerURL, token.StaticKeys(key), time.Hour, time.Now)
-			if err != nil {
-				t.Fatal(err)
-			}
+			iss := foreignIssuer(t, issuerURL)
 			forged, _, err := iss.Mint(context.Background(), token.MintInput{Identity: "pat", Kind: token.KindAgent})
 			if err != nil {
 				t.Fatal(err)
@@ -1115,4 +1111,25 @@ func TestExitCodeTable(t *testing.T) {
 		p.signal(syscall.SIGTERM)
 		expectExit(t, "watch after SIGTERM", p, 3, 5*time.Second)
 	})
+}
+
+// foreignIssuer is an issuer at url over a leaf of its own root and its own
+// throwaway database, on the real clock: it mints bearers the server under
+// test does not know.
+func foreignIssuer(t *testing.T, url string) *token.Issuer {
+	t.Helper()
+	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "foreign.sqlite"), sqlite.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	c, err := core.New(st, core.Defaults(), core.Options{Notifier: notify.NewMemory()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := token.NewIssuer(context.Background(), url, trusttest.New(t, time.Time{}).Manager(t, c), time.Hour, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return iss
 }

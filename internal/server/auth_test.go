@@ -352,10 +352,8 @@ func TestBearerRefusals(t *testing.T) {
 	e.mustRegister("pat", key)
 
 	// A second issuer with the same URL and another key.
-	other, err := token.NewIssuer(context.Background(), "http://inproc", token.StaticKeys(genKey(t, keys.EdDSA)), time.Hour, e.clock.Now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	otherEnv := newEnv(t, envOptions{issuer: true}) // another root: another key, same URL
+	other := otherEnv.issuer
 	forged, _, err := other.Mint(context.Background(), token.MintInput{Identity: "pat", Kind: token.KindAgent})
 	if err != nil {
 		t.Fatal(err)
@@ -646,7 +644,7 @@ func TestTokenReplayInsideLeeway(t *testing.T) {
 // twice.
 func TestTokenReplayIsShared(t *testing.T) {
 	e1 := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
-	e2 := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen, dbPath: e1.dbPath})
+	e2 := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen, dbPath: e1.dbPath, fixture: e1.fx})
 	pat := genKey(t, keys.EdDSA)
 	e1.mustRegister("pat", pat)
 	a := e1.assertionFor("pat", pat, "http://inproc/v1/auth/token", 0)
@@ -891,25 +889,25 @@ func TestTokenRepeatedAndEmptyParams(t *testing.T) {
 
 // failingKeys is a KeySource whose signer errs (or, with none set, is absent).
 type failingKeys struct {
-	key    crypto.Signer
+	src    token.KeySource
 	noSign bool
 }
 
-type errSigner struct{ crypto.Signer }
+type errSigner struct{ token.ContextSigner }
 
 func (errSigner) SignContext(context.Context, []byte, crypto.SignerOpts) ([]byte, error) {
 	return nil, errors.New("kms down")
 }
 
 func (f failingKeys) LoadKeys(ctx context.Context) (token.KeySet, error) {
-	set, err := token.StaticKeys(f.key).LoadKeys(ctx)
+	set, err := f.src.LoadKeys(ctx)
 	if err != nil {
 		return set, err
 	}
 	if f.noSign {
 		set.Signer = nil
 	} else {
-		set.Signer = errSigner{f.key}
+		set.Signer = errSigner{set.Signer}
 	}
 	return set, nil
 }
@@ -927,7 +925,7 @@ func TestSignerUnavailableIs503(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			break_ := func(e *env) {
 				broken, err := token.NewIssuer(context.Background(), "http://inproc",
-					failingKeys{key: genKey(t, keys.EdDSA), noSign: noSign}, time.Hour, e.clock.Now)
+					failingKeys{src: e.mgr, noSign: noSign}, time.Hour, e.clock.Now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -960,7 +958,7 @@ func TestSignerUnavailableIsLogged(t *testing.T) {
 	break_ := func(e *env, lg *testkit.LockedBuffer) {
 		e.opts.Logger = slog.New(slog.NewTextHandler(lg, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		broken, err := token.NewIssuer(context.Background(), "http://inproc",
-			failingKeys{key: genKey(t, keys.EdDSA)}, time.Hour, e.clock.Now)
+			failingKeys{src: e.mgr}, time.Hour, e.clock.Now)
 		if err != nil {
 			t.Fatal(err)
 		}

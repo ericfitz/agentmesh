@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
-	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 // keysEnv is an env with an issuer, an administrator "root", a non-administrator
@@ -20,7 +19,7 @@ func keysEnv(t *testing.T) *env {
 	e := newEnv(t, envOptions{issuer: true, auth: InProcess{}})
 	e.identity("root", true)
 	e.identity("pat", false)
-	e.opts.SigningKeys = trusttest.New(t, time.UnixMilli(fixedNowMs)).Manager(t, e.core)
+	e.opts.SigningKeys = e.mgr
 	return e
 }
 

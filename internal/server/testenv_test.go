@@ -8,14 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/auth/token"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/identities"
 	"github.com/ericfitz/agentmesh/internal/core/notify"
+	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/gen"
 	"github.com/ericfitz/agentmesh/internal/store"
 	"github.com/ericfitz/agentmesh/internal/store/sqlite"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 // fixedNowMs is the fake clock's start; any fixed instant works.
@@ -61,7 +62,9 @@ type env struct {
 	embedder core.Embedder
 	auth     Authenticator
 	issuer   *token.Issuer
-	opts     Options // Registration, Issuer and External for New
+	fx       *trusttest.Fixture   // the certificate fixture behind issuer (nil without one)
+	mgr      *signingkeys.Manager // the leaf manager that is issuer's key source
+	opts     Options              // Registration, Issuer and External for New
 	dbPath   string
 
 	once sync.Once
@@ -73,8 +76,8 @@ type envOptions struct {
 	embedder bool
 	auth     Authenticator // nil: InProcess{}, or Bearer when issuer is set
 
-	// issuer builds token.NewIssuer(context.Background(), "http://inproc", token.StaticKeys(<a test Ed25519 key>),
-	// time.Hour, clock.Now) and, unless auth is set, Bearer over it.
+	// issuer builds token.NewIssuer(context.Background(), "http://inproc", <a leaf manager over a trusttest
+	// fixture made at the clock's start>, time.Hour, clock.Now) and, unless auth is set, Bearer over it.
 	issuer       bool
 	registration identities.Mode
 	external     []*token.External // Options.External (the discovery list)
@@ -82,6 +85,9 @@ type envOptions struct {
 	// dbPath opens this SQLite file instead of a fresh one, so two envs
 	// model two replicas over one database.
 	dbPath string
+	// fixture is the certificate fixture of the issuer, for an env over another env's dbPath (its
+	// replica, which must share the trust material); nil: a new one.
+	fixture *trusttest.Fixture
 }
 
 func newEnv(t *testing.T, o envOptions) *env {
@@ -99,23 +105,6 @@ func newEnv(t *testing.T, o envOptions) *env {
 	if e.auth == nil {
 		e.auth = InProcess{}
 	}
-	if o.issuer {
-		key, err := keys.Generate(keys.EdDSA)
-		if err != nil {
-			t.Fatalf("keys.Generate: %v", err)
-		}
-		e.issuer, err = token.NewIssuer(context.Background(), "http://inproc", token.StaticKeys(key), time.Hour, e.clock.Now)
-		if err != nil {
-			t.Fatalf("token.NewIssuer: %v", err)
-		}
-		e.opts = Options{Registration: o.registration, Issuer: e.issuer, External: o.external}
-		if o.auth == nil {
-			b := Bearer{Verifier: token.Verifier{Own: e.issuer}, Now: e.clock.Now}
-			e.auth = b
-		}
-	} else {
-		e.opts = Options{Registration: o.registration, External: o.external}
-	}
 	cfg := core.Defaults()
 	if o.cfg != nil {
 		o.cfg(&cfg)
@@ -131,6 +120,25 @@ func newEnv(t *testing.T, o envOptions) *env {
 		t.Fatalf("core.New: %v", err)
 	}
 	e.core = c
+	if o.issuer {
+		e.fx = o.fixture
+		if e.fx == nil {
+			e.fx = trusttest.New(t, e.clock.Now())
+		}
+		e.mgr = e.fx.Manager(t, e.core)
+		e.issuer, err = token.NewIssuer(context.Background(), "http://inproc", e.mgr, time.Hour, e.clock.Now)
+		if err != nil {
+			t.Fatalf("token.NewIssuer: %v", err)
+		}
+		e.mgr.SetOnChange(e.issuer.Invalidate)
+		e.opts = Options{Registration: o.registration, Issuer: e.issuer, External: o.external}
+		if o.auth == nil {
+			b := Bearer{Verifier: token.Verifier{Own: e.issuer}, Now: e.clock.Now}
+			e.auth = b
+		}
+	} else {
+		e.opts = Options{Registration: o.registration, External: o.external}
+	}
 	return e
 }
 

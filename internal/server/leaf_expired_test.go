@@ -23,7 +23,7 @@ func TestTokenEndpoint503WhenLeafExpired(t *testing.T) {
 	f := newFedEnv(t, 0, nil)
 	ctx := context.Background()
 	start := f.clock.Now()
-	fx := trusttest.New(t, start)
+	fx := f.fx
 	m := fx.Manager(t, f.core) // issues the leaf at the fake clock's time, valid 168 hours
 	iss, err := token.NewIssuer(ctx, "http://inproc", m, time.Hour, f.clock.Now)
 	if err != nil {
