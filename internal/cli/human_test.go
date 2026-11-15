@@ -149,8 +149,9 @@ func TestLoginHuman(t *testing.T) {
 		t.Fatalf("stdout %q", out.String())
 	}
 	assertNoTokenOnStderr(t, e, "lab", errb.String())
-	if want := "agentmesh login: sign in at " + hs.lastURL() + "\n"; errb.String() != want {
-		t.Fatalf("stderr %q, want %q", errb.String(), want)
+	// First contact pins the root and says so, then the sign-in URL.
+	if want := "agentmesh login: sign in at " + hs.lastURL() + "\n"; !strings.HasPrefix(errb.String(), "agentmesh: pinned root ") || !strings.HasSuffix(errb.String(), want) || strings.Count(errb.String(), "\n") != 2 {
+		t.Fatalf("stderr %q, want a pinned-root notice then %q", errb.String(), want)
 	}
 	// login -human always uses the browser, even with a valid session.
 	out, errb = &testkit.LockedBuffer{}, &testkit.LockedBuffer{}

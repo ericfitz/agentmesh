@@ -499,3 +499,7 @@ func SetTUIRailWidth(path string, width int) error {
 	c.TUI.RailWidth = width
 	return c.Save()
 }
+
+// LoopbackHost reports whether host is one of the three names for which http
+// is accepted without insecure_http.
+func LoopbackHost(host string) bool { return loopbackHost(host) }

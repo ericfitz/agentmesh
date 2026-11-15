@@ -205,6 +205,17 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 		}
 		fromPending = true
 	}
+	plain, err := unauthenticated(o.HTTP, p.Server)
+	if err != nil {
+		return out, err
+	}
+	dataDir, err := profile.DataDir(o.Environ)
+	if err != nil {
+		return out, resolveErr(err)
+	}
+	if _, err := ensureTrust(ctx, o, Resolved{Profile: p, ConfigDir: sel.ConfigDir, DataDir: dataDir}, plain); err != nil {
+		return out, err
+	}
 	res, err := Register(ctx, o.HTTP, p.Server, identity, signer.Public(), req.EnrollmentToken)
 	if err != nil {
 		if fromPending && bus.CodeOf(err) == bus.CodeConflict {

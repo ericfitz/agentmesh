@@ -72,8 +72,13 @@ func openServer(ctx context.Context, o Options, r Resolved) (*Conn, error) {
 	if err != nil {
 		return nil, resolveErr(fmt.Errorf("profile %q: server %q: %w", p.Name, p.Server, err))
 	}
+	st, err := ensureTrust(ctx, o, r, plain)
+	if err != nil {
+		base.CloseIdleConnections()
+		return nil, err
+	}
 	return &Conn{
-		Bus:      remote.New(authed),
+		Bus:      wrapTrust(remote.New(authed), st, o, r),
 		Resolved: r,
 		Client:   authed,
 		Source:   src,
@@ -120,6 +125,11 @@ func openHuman(ctx context.Context, o Options, r Resolved) (*Conn, error) {
 	if err != nil {
 		return nil, resolveErr(fmt.Errorf("profile %q: server %q: %w", p.Name, p.Server, err))
 	}
+	st, err := ensureTrust(ctx, o, r, plain)
+	if err != nil {
+		base.CloseIdleConnections()
+		return nil, err
+	}
 	if !o.HumanDeferSignIn {
 		if _, err := src.Token(ctx); err != nil {
 			base.CloseIdleConnections()
@@ -132,7 +142,7 @@ func openHuman(ctx context.Context, o Options, r Resolved) (*Conn, error) {
 		}
 	}
 	return &Conn{
-		Bus:      remote.New(authed),
+		Bus:      wrapTrust(remote.New(authed), st, o, r),
 		Resolved: r,
 		Client:   authed,
 		Human:    src,

@@ -80,7 +80,7 @@ func TestCheckFailSteps(t *testing.T) {
 			_, _ = w.Write([]byte(`{"type":"about:blank","title":"store unreachable","status":503}`))
 			return true
 		}, nil)
-		code, out, errs := run([]string{"check", "-server", px, "-identity", "pat", "-credential", keyFile}, other)
+		code, out, errs := run([]string{"check", "-profile", "px1", "-server", px, "-identity", "pat", "-credential", keyFile}, other)
 		got := lines(out)
 		if code != 1 || len(got) != 2 || !strings.HasPrefix(got[0], "ok   reach: ") || !strings.HasPrefix(got[1], "FAIL health: ") ||
 			!strings.HasSuffix(got[1], "fix: ask the server's operator: its store does not answer") ||
@@ -118,7 +118,7 @@ func TestCheckFailSteps(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"temporarily_unavailable","error_description":"the signing key is unavailable"}`))
 			return true
 		}, nil)
-		code, out, errs := run([]string{"check", "-server", px, "-identity", "pat", "-credential", keyFile}, other)
+		code, out, errs := run([]string{"check", "-profile", "px2", "-server", px, "-identity", "pat", "-credential", keyFile}, other)
 		got := lines(out)
 		if code != 1 || len(got) != 5 || !strings.HasPrefix(got[4], "FAIL token: unavailable: the signing key is unavailable") ||
 			!strings.HasSuffix(got[4], "fix: retry later; the server is busy or its store is down") ||
@@ -133,7 +133,7 @@ func TestCheckFailSteps(t *testing.T) {
 				doc["tier"] = "probe"
 			}
 		})
-		code, out, errs := run([]string{"check", "-server", px, "-identity", "pat", "-credential", keyFile}, other)
+		code, out, errs := run([]string{"check", "-profile", "px3", "-server", px, "-identity", "pat", "-credential", keyFile}, other)
 		got := lines(out)
 		if code != 1 || len(got) != 6 || !strings.HasPrefix(got[5], "FAIL access: the server answered at the probe tier, not the identity tier") ||
 			!strings.HasSuffix(got[5], "fix: agentmesh-mcponly help troubleshoot") ||

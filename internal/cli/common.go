@@ -79,6 +79,11 @@ func open(ctx context.Context, o client.Options, stderr io.Writer) (*client.Conn
 		// the TUI's screen.
 		o.OpenLogger = slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	}
+	if o.Notice == nil {
+		// Trust events (first contact, a replaced root, a refused CRL) are for
+		// the operator, never stdout, where the result's JSON goes.
+		o.Notice = func(line string) { _, _ = fmt.Fprintf(stderr, "agentmesh: %s\n", line) }
+	}
 	c, err := client.Open(ctx, o)
 	if err != nil {
 		fail(stderr, err)

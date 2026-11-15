@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/identities"
 	"github.com/ericfitz/agentmesh/internal/credential"
+	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/profile"
 	"github.com/ericfitz/agentmesh/internal/server/cmd"
 	"github.com/ericfitz/agentmesh/internal/store/sqlite"
@@ -259,11 +261,16 @@ func TestRegisterPendingKeyReuse(t *testing.T) {
 	var dropped bool
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		mu.Lock()
-		bodies = append(bodies, string(b))
-		drop := !dropped
-		dropped = true
-		mu.Unlock()
+		// Only the registration is recorded and dropped; the trust step's
+		// discover call passes through.
+		drop := false
+		if r.URL.Path == "/v1/auth/register" {
+			mu.Lock()
+			bodies = append(bodies, string(b))
+			drop = !dropped
+			dropped = true
+			mu.Unlock()
+		}
 		req, _ := http.NewRequestWithContext(r.Context(), r.Method, base+r.URL.RequestURI(), strings.NewReader(string(b)))
 		req.Header = r.Header.Clone()
 		resp, err := http.DefaultClient.Do(req)
@@ -388,23 +395,23 @@ func TestRegisterPendingConflictAndStale(t *testing.T) {
 }
 
 func TestRegisterWritesTrustMembers(t *testing.T) {
-	const thumb = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	ctx := context.Background()
 	e := newTestEnv(t)
 	base := startServer(t, filepath.Join(t.TempDir(), "srv.sqlite"))
+	thumb, inst := discoverTrust(t, base)
 	register := func(args ...string) (int, string) {
 		var out, errb testkit.LockedBuffer
 		code := RunRegister(ctx, args, e.Environ, nil, &out, &errb)
 		return code, errb.String()
 	}
-	if code, errs := register("-profile", "lab", "-identity", "pat", "-server", base, "-insecure-http", "-root-thumbprint", thumb, "-installation", "prod"); code != 0 {
+	if code, errs := register("-profile", "lab", "-identity", "pat", "-server", base, "-insecure-http", "-root-thumbprint", thumb, "-installation", inst); code != 0 {
 		t.Fatalf("register: code %d %q", code, errs)
 	}
 	cfg, err := profile.Load(filepath.Join(e.ConfigDir, "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := cfg.Profiles["lab"]; !p.InsecureHTTP || p.RootThumbprint != thumb || p.Installation != "prod" {
+	if p := cfg.Profiles["lab"]; !p.InsecureHTTP || p.RootThumbprint != thumb || p.Installation != inst {
 		t.Fatalf("profile %+v", p)
 	}
 	if code, errs := register("-profile", "other", "-identity", "pat", "-server", "http://elsewhere:1"); code != 2 || !strings.Contains(errs, "-insecure-http") {
@@ -413,4 +420,25 @@ func TestRegisterWritesTrustMembers(t *testing.T) {
 	if code, errs := register("-profile", "lab", "-installation", "dev"); code != 2 || !strings.Contains(errs, "disagrees") {
 		t.Fatalf("installation clash: code %d %q", code, errs)
 	}
+}
+
+// discoverTrust reads the root thumbprint and the installation name a server
+// advertises, so a test can state them as the profile's expected values.
+func discoverTrust(t *testing.T, base string) (thumb, installation string) {
+	t.Helper()
+	resp, err := http.Get(base + "/v1/discover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var doc struct {
+		Trust struct {
+			Root         []byte `json:"root"`
+			Installation string `json:"installation"`
+		} `json:"trust"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	return pki.Thumbprint(doc.Trust.Root), doc.Trust.Installation
 }

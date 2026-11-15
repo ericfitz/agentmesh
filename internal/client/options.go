@@ -72,6 +72,17 @@ type Options struct {
 	InsecureHTTP   bool
 	RootThumbprint string
 	Installation   string
+	// AcceptNewRoot is -accept-new-root: a server whose root or installation
+	// name differs from the pinned one replaces the pin instead of stopping the
+	// command (spec 4.10).
+	AcceptNewRoot bool
+	// NoDiscover makes Open skip the discover call (the Stop hook: its budget
+	// is 500 ms). With a pin the layer still sends the held trust number; with
+	// none it sends nothing and applies nothing.
+	NoDiscover bool
+	// Notice receives one line per trust event (first contact, replacement,
+	// insecure_http, an unreachable discover, a refused CRL); nil is silent.
+	Notice func(line string)
 	// RegisterCommand is the command the missing-credential error tells the
 	// operator to run; empty: "agentmesh register" (the full binary's).
 	RegisterCommand string
