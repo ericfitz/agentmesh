@@ -12,12 +12,14 @@ var _ interface{ Bundle() bus.TrustBundle } = (*Manager)(nil)
 // loaded with it (section 4.9), with the root and the installation name for the
 // discover document. The snapshot is replaced at every Reload and at once after
 // this process's own change, so the number and the bytes never come from two
-// loads, and no call reaches the Store. The slices are shared and never
+// loads, and no call reaches the Store or waits for a load (the snapshot is read without
+// the manager's mutex). The slices are shared and never
 // modified: a caller must not change them.
 func (m *Manager) Bundle() bus.TrustBundle {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.bundle
+	if b := m.bundle.Load(); b != nil {
+		return *b
+	}
+	return bus.TrustBundle{}
 }
 
 // bundleOf builds the snapshot of mat: every stored intermediate that passes

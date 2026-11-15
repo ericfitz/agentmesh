@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
@@ -104,7 +105,6 @@ type Manager struct {
 	cur      *leafKey
 	prev     *leafKey
 	onChange func()
-	bundle   bus.TrustBundle // the snapshot of mat (Bundle)
 
 	// Renewal state (Step; guarded by mu): the time of the last reload Step ran,
 	// the time of a pending retry (zero: none) and the last failed issue.
@@ -119,6 +119,10 @@ type Manager struct {
 	// due and Run waits on.
 	stopped string
 	wake    chan struct{}
+
+	// bundle is the snapshot of the last load (Bundle). It is read without mu, so
+	// a reader never waits for a load that holds mu across a Store read.
+	bundle atomic.Pointer[bus.TrustBundle]
 }
 
 var _ token.KeySource = (*Manager)(nil)
@@ -262,7 +266,8 @@ func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 		}
 	}
 	m.mat, m.revoked, m.loaded = mat, revoked, true
-	m.bundle = m.trust.bundleOf(mat)
+	b := m.trust.bundleOf(mat)
+	m.bundle.Store(&b)
 	m.gen++
 	return changed, nil
 }

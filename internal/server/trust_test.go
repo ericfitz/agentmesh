@@ -13,9 +13,12 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ericfitz/agentmesh/internal/core"
+	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
 	"github.com/ericfitz/agentmesh/internal/store"
@@ -320,6 +323,10 @@ func TestTamperedRowsNever500(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The rows are only seen after a load: reload so the answers below read them.
+	if err := e.mgr.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
 	ok := func(name string, st int, declared ...int) {
 		t.Helper()
 		if !slices.Contains(declared, st) {
@@ -347,4 +354,81 @@ func TestTamperedRowsNever500(t *testing.T) {
 	ok("listSigningKeys", st, 200)
 	st, _, _ = e.send("", http.MethodGet, "/v1/auth/jwks")
 	ok("jwks", st, 200)
+}
+
+// blockRead is a Store whose Read parks until released once armed.
+type blockRead struct {
+	store.Store
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockRead) Read(ctx context.Context, fn func(context.Context, store.Tx) error) error {
+	if b.armed.Load() {
+		select {
+		case b.entered <- struct{}{}:
+		default:
+		}
+		select {
+		case <-b.release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return b.Store.Read(ctx, fn)
+}
+
+// A reload parked inside a blocked Store read holds the manager's mutex; discover
+// and the in-band answers read the snapshot and never wait for it.
+func TestDiscoverDoesNotWaitForReload(t *testing.T) {
+	e := keysEnv(t)
+	bs := &blockRead{Store: e.store, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	probe, err := core.New(bs, core.Defaults(), core.Options{Now: e.clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := e.fx.Manager(t, probe)
+	serving, err := core.New(e.store, core.Defaults(), core.Options{Now: e.clock.Now, Notifier: notify.NewMemory(), Trust: mgr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := New(serving, Options{Auth: InProcess{}})
+
+	bs.armed.Store(true)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = mgr.Reload(context.Background()) }()
+	<-bs.entered // the reload is inside the Store read, holding the manager's mutex
+
+	answered := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequest(http.MethodGet, "http://inproc/v1/discover", nil)
+		resp, err := InProcessTransport(h, "").RoundTrip(req)
+		if err != nil {
+			answered <- -1
+			return
+		}
+		_ = resp.Body.Close()
+		answered <- resp.StatusCode
+	}()
+	select {
+	case st := <-answered:
+		if st != 200 {
+			t.Errorf("discover = %d", st)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("discover waited for the reload")
+	}
+	got := make(chan int64, 1)
+	go func() { got <- mgr.Bundle().TrustNumber }()
+	select {
+	case n := <-got:
+		if n <= 0 {
+			t.Error("Bundle has no snapshot")
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("Bundle waited for the reload")
+	}
+	close(bs.release)
+	<-done
 }
