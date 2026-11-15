@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -83,6 +84,10 @@ type wakeServer struct {
 	*httptest.Server
 	number  atomic.Int64
 	watches atomic.Int32
+	// discovers counts discover requests; mode 1 answers them 503, mode 2 with
+	// another root (a renewal under a different root).
+	discovers atomic.Int32
+	mode      atomic.Int32
 }
 
 func newWakeServer(t *testing.T) *wakeServer {
@@ -96,6 +101,14 @@ func newWakeServer(t *testing.T) *wakeServer {
 	if err != nil {
 		t.Fatal(err)
 	}
+	k2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRoot, err := pki.NewRoot(k2, "other root", now.Add(-time.Hour), now.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
 	w := &wakeServer{}
 	w.number.Store(1)
 	var srv *httptest.Server
@@ -103,9 +116,18 @@ func newWakeServer(t *testing.T) *wakeServer {
 		rw.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/v1/discover":
+			w.discovers.Add(1)
+			der := root.Raw
+			switch w.mode.Load() {
+			case 1:
+				rw.WriteHeader(http.StatusServiceUnavailable)
+				return
+			case 2:
+				der = otherRoot.Raw
+			}
 			_ = json.NewEncoder(rw).Encode(map[string]any{"protocol_version": "1.0.0", "trust": map[string]any{
 				"trust_number": w.number.Load(), "intermediates": []string{}, "leaf_crls": []string{},
-				"root": root.Raw, "installation": "test-installation"}})
+				"root": der, "installation": "test-installation"}})
 		case r.URL.Path == "/.well-known/oauth-authorization-server":
 			_ = json.NewEncoder(rw).Encode(map[string]string{"issuer": srv.URL, "token_endpoint": srv.URL + "/v1/auth/token", "jwks_uri": srv.URL + "/jwks"})
 		case r.URL.Path == "/v1/auth/token":
@@ -221,5 +243,59 @@ func TestRegisterRefusalLeavesNoPendingKey(t *testing.T) {
 	}
 	if cs.Exists("pat") {
 		t.Fatal("credential left")
+	}
+}
+
+func trustLogLines(t *testing.T, e *testEnv) int {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(e.DataDir, "logs", "trust.log"))
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(b), "\n")
+}
+
+// A refresh that fails after a trust wake (discover answers 503, or answers
+// another root) must not become a request loop: the next watch sends the
+// wake's number in memory, the failure is said once, and the stored number
+// does not change.
+func TestFailedRefreshDoesNotSpin(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode int32
+	}{{"discover fails", 1}, {"another root", 2}} {
+		for _, loop := range []string{"parked wait", "watch loop"} {
+			t.Run(tc.name+"/"+loop, func(t *testing.T) {
+				e := newTestEnv(t)
+				w := newWakeServer(t)
+				c := wakeConn(t, e, w)
+				w.mode.Store(tc.mode)
+				base := w.discovers.Load()
+				ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+				defer cancel()
+				var out testkit.LockedBuffer
+				var err error
+				if loop == "parked wait" {
+					err = waitOnce(ctx, c.Bus, &wakeFilter{parked: func() bool { return true }}, "s1", false, 0, &out)
+				} else {
+					_, err = watchLoop(ctx, c.Bus, &wakeFilter{}, "s1", "pat", 0, false, &out)
+				}
+				if err == nil {
+					t.Fatal("returned nil")
+				}
+				if n := w.watches.Load(); n > 3 {
+					t.Fatalf("%d watch calls, want a bounded number", n)
+				}
+				if n := w.discovers.Load() - base; n > 1 {
+					t.Fatalf("%d discover calls after the wake, want at most 1", n)
+				}
+				if n := trustLogLines(t, e); n != 1 {
+					t.Fatalf("%d trust.log lines, want 1", n)
+				}
+				if got := heldNumber(t, e); got != 1 {
+					t.Fatalf("stored number %d, want 1 (unchanged)", got)
+				}
+			})
+		}
 	}
 }

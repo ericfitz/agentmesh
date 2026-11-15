@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
@@ -93,10 +95,11 @@ func ensureTrust(ctx context.Context, o Options, r Resolved, plain *gen.ClientWi
 // replacesExpected is true when -accept-new-root lets a Check failure about the
 // profile's expected root or installation, or about its server URL (section
 // 4.10: the root-mismatch error), go on to Accept, which checks the
-// expectation against the new root itself and replaces the pin.
+// expectation against the new root itself and replaces the pin. Without a
+// discover call (NoDiscover) nothing could replace it, so the failure stands.
 func replacesExpected(o Options, err error) bool {
 	var me *trust.MismatchError
-	return o.AcceptNewRoot && errors.As(err, &me) && (strings.HasPrefix(me.What, "expected ") || me.What == "server")
+	return o.AcceptNewRoot && !o.NoDiscover && errors.As(err, &me) && (strings.HasPrefix(me.What, "expected ") || me.What == "server")
 }
 
 // noTrustError is a 200 discover answer without trust material (Decision 33),
@@ -113,27 +116,30 @@ func (e *noTrustError) Error() string {
 func discoverBundle(ctx context.Context, plain *gen.ClientWithResponses, server string) (trust.Bundle, error) {
 	dctx, cancel := context.WithTimeout(ctx, discoverTimeout)
 	defer cancel()
-	res, err := plain.DiscoverWithResponse(dctx)
+	// The status is checked before any decoding, so only a 200 can be a
+	// missing-trust answer; an error status is a failure to reach the server
+	// whatever its body says.
+	resp, err := plain.Discover(dctx)
 	if err != nil {
-		// The generated client parses the body before it returns, so a body
-		// that is not JSON arrives as a decoding error, not as a missing JSON200.
+		return trust.Bundle{}, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return trust.Bundle{}, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var doc gen.Discovery
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&doc); err != nil {
 		var syn *json.SyntaxError
 		var typ *json.UnmarshalTypeError
-		if errors.As(err, &syn) || errors.As(err, &typ) {
+		if errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			return trust.Bundle{}, &noTrustError{server, " (the answer is not a discovery document)"}
 		}
 		return trust.Bundle{}, err
 	}
-	if res.HTTPResponse.StatusCode != http.StatusOK {
-		return trust.Bundle{}, fmt.Errorf("HTTP %d", res.HTTPResponse.StatusCode)
-	}
-	switch {
-	case res.JSON200 == nil:
-		return trust.Bundle{}, &noTrustError{server, " (the answer is not a discovery document)"}
-	case res.JSON200.Trust == nil:
+	if doc.Trust == nil {
 		return trust.Bundle{}, &noTrustError{server, ""}
 	}
-	return toTrustBundle(remote.FromGenTrustBundle(*res.JSON200.Trust)), nil
+	return toTrustBundle(remote.FromGenTrustBundle(*doc.Trust)), nil
 }
 
 // insecureTransport is an http URL to a host that is not loopback.
@@ -212,6 +218,15 @@ type trustBus struct {
 	o     Options
 	r     Resolved
 	plain *gen.ClientWithResponses // the unauthenticated client discover goes through; nil: no refresh
+
+	mu sync.Mutex
+	// wakeNumber, when set, is the server number of a trust wake whose refresh
+	// failed. Watch sends it instead of the stored number, so the server does
+	// not wake the watch again at once; the stored number never changes
+	// because of it, and a stored bundle clears it. failedNumber is the server
+	// number whose failure was already said once.
+	wakeNumber   *int64
+	failedNumber *int64
 }
 
 // number is the held trust number, or nil before any bundle was applied.
@@ -241,7 +256,14 @@ func (b *trustBus) apply(tb *bus.TrustBundle) {
 		appendTrustLog(b.r.DataDir, line)
 		return
 	}
+	b.clearWake()
 	reportRefused(b.o, b.r, rep)
+}
+
+func (b *trustBus) clearWake() {
+	b.mu.Lock()
+	b.wakeNumber, b.failedNumber = nil, nil
+	b.mu.Unlock()
 }
 
 func (b *trustBus) Open(ctx context.Context, in bus.OpenSessionInput) (bus.Session, error) {
@@ -276,44 +298,65 @@ func (b *trustBus) Receive(ctx context.Context, in bus.ReceiveInput) (bus.Receiv
 // bundle (count 0); a process that only watches (a parked wait, the watch loop)
 // would send the same stale number again and be woken at once, so the layer
 // brings the bundle itself from discover and stores it before it returns the
-// wake: the next Watch sends the new number.
+// wake: the next Watch sends the new number. When that refresh fails, the next
+// Watch sends the wake's number instead (in memory only), so the failure does
+// not turn into a request loop; a bundle stored later takes over again.
 func (b *trustBus) Watch(ctx context.Context, in bus.WatchInput) (bus.WatchResult, error) {
 	n, err := b.number()
 	if err != nil {
 		return bus.WatchResult{}, err
 	}
+	b.mu.Lock()
+	if b.wakeNumber != nil {
+		w := *b.wakeNumber
+		n = &w
+	}
+	b.mu.Unlock()
 	in.TrustNumber = n
 	r, err := b.Bus.Watch(ctx, in)
 	if err != nil || !r.Woke || r.Count != 0 || r.TrustNumber == nil || (n != nil && *n == *r.TrustNumber) || b.plain == nil {
 		return r, err
 	}
-	b.refresh(ctx)
+	if !b.refresh(ctx, *r.TrustNumber) {
+		w := *r.TrustNumber
+		b.mu.Lock()
+		b.wakeNumber = &w
+		b.mu.Unlock()
+	}
 	return r, nil
 }
 
-// refresh is the discover half of a trust wake. A failure is a notice and a
-// trust.log line, never an error: the wake itself must reach the caller.
-func (b *trustBus) refresh(ctx context.Context) {
-	fail := func(format string, a ...any) {
-		line := fmt.Sprintf("profile %s: after a trust wake, "+format, append([]any{b.r.Profile.Name}, a...)...)
-		notifier(b.o)("%s", line)
-		appendTrustLog(b.r.DataDir, line)
+// refresh is the discover half of a trust wake for the server number num; it
+// reports whether the bundle was stored. A failure is a notice and a trust.log
+// line once per server number, never an error: the wake itself must reach the
+// caller.
+func (b *trustBus) refresh(ctx context.Context, num int64) bool {
+	fail := func(format string, a ...any) bool {
+		b.mu.Lock()
+		again := b.failedNumber != nil && *b.failedNumber == num
+		b.failedNumber = &num
+		b.mu.Unlock()
+		if !again {
+			line := fmt.Sprintf("profile %s: after a trust wake, "+format, append([]any{b.r.Profile.Name}, a...)...)
+			notifier(b.o)("%s", line)
+			appendTrustLog(b.r.DataDir, line)
+		}
+		return false
 	}
 	p := b.r.Profile
 	bundle, err := discoverBundle(ctx, b.plain, p.Server)
 	if err != nil {
-		fail("discover at %s failed: %v", p.Server, err)
-		return
+		return fail("discover at %s failed: %v", p.Server, err)
 	}
 	exp := trust.Expect{Server: p.Server, RootThumbprint: p.RootThumbprint, Installation: p.Installation}
 	if _, err := b.store.Accept(bundle, exp, false); err != nil {
-		fail("the discover answer was refused: %v", err)
-		return
+		return fail("the discover answer was refused: %v", err)
 	}
 	rep, err := b.store.Apply(bundle)
 	if err != nil {
-		fail("storing the trust bundle in %s failed: %v", b.store.Dir, err)
-		return
+		return fail("storing the trust bundle in %s failed: %v", b.store.Dir, err)
 	}
+	b.clearWake()
 	reportRefused(b.o, b.r, rep)
+	return true
 }

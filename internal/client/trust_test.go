@@ -737,3 +737,51 @@ func TestDiscoverGarbled(t *testing.T) {
 		})
 	}
 }
+
+// Only a 200 can be a "sent no trust material" answer: an error status whose
+// body claims to be JSON is a failure to reach the server.
+func TestDiscoverErrorStatusIsUnreachable(t *testing.T) {
+	root := newTestRoot(t, "root")
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("<html>oops"))
+	}))
+	t.Cleanup(bad.Close)
+
+	e := trustEnv(t, bad.URL, nil)
+	var n notices
+	if _, err := openLab(e, &n, nil); err == nil || isResolveError(err) || strings.Contains(err.Error(), "no trust material") || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Fatalf("no pin: %v", err)
+	}
+
+	e2 := trustEnv(t, bad.URL, nil)
+	b := trust.Bundle{TrustNumber: 1, Root: root.cert.Raw, Installation: "inst-one"}
+	if _, err := trustStore(e2).Accept(b, trust.Expect{Server: bad.URL}, false); err != nil {
+		t.Fatal(err)
+	}
+	var n2 notices
+	mustOpen(t, e2, &n2, nil)
+	if got := n2.all(); len(got) != 1 || !strings.Contains(got[0], "going on with the trust held") {
+		t.Fatalf("notices %q", got)
+	}
+}
+
+// -accept-new-root cannot clear a mismatch when no discover call is made.
+func TestAcceptNewRootNeedsDiscover(t *testing.T) {
+	root := newTestRoot(t, "root")
+	a := newFakeDiscover(t, root, "inst-one")
+	b := newFakeDiscover(t, root, "inst-one")
+	e := trustEnv(t, a.URL, nil)
+	var n notices
+	mustOpen(t, e, &n, nil)
+	before := snapshot(t, trustStore(e).Dir)
+	e.Save(t, profile.Profile{Name: "default", Mode: profile.ModeLocal}, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: b.URL})
+	_, err := openLab(e, &n, func(o *Options) { o.AcceptNewRoot = true; o.NoDiscover = true })
+	if err == nil || !isResolveError(err) || !strings.Contains(err.Error(), "-accept-new-root") {
+		t.Fatalf("Open: %v", err)
+	}
+	if !sameSnapshot(before, snapshot(t, trustStore(e).Dir)) {
+		t.Fatal("the trust directory changed")
+	}
+}
