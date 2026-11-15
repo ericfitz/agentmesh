@@ -151,10 +151,13 @@ paths:
         Returns the health document at the caller's tier: probe without a credential
         (status, tier, version, protocol_version, now), identity for a registered
         identity (adds started_at, the store and the embedding state), admin for an
-        administrator (adds the embedding model and errors, storage, notices and the
-        maintenance loop). status is degraded when an operator notice is set or this
-        process's last maintenance tick recorded a lock error or a failed job, and
-        every tier sees the same status. A bearer the server rejects is 401 and is
+        administrator (adds the embedding model and errors, storage, notices, the
+        maintenance loop and, on a server, the signing section). status is degraded
+        when an operator notice is set, this process's last maintenance tick
+        recorded a lock error or a failed job, or, on a server, the intermediate
+        certificate has fewer than 30 days left, the last leaf renewal failed, the
+        current leaf is missing or expired, or signing has stopped; every tier sees
+        the same status. A bearer the server rejects is 401 and is
         never the probe tier; a valid bearer whose identity no longer exists is 403
         not_registered; a store that does not answer is 503 unavailable with the
         detail store unreachable and never a document. Open operation. The bearer is
@@ -5001,7 +5004,7 @@ components:
       properties:
         status:
           type: string
-          description: "ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same status."
+          description: "ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job, or, on a server, the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped. Every tier sees the same status."
           enum: [ok, degraded]
         tier:
           type: string
@@ -5107,7 +5110,7 @@ components:
         leaf_crl_number:
           type: integer
           format: int64
-          description: "The number of the leaf CRL of the configured signing key's issuer; 0 when none."
+          description: "The number of the leaf CRL of the intermediate in use (the one the signing key belongs to); 0 when none."
         last_failure_at:
           type: integer
           format: int64

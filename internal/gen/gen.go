@@ -966,7 +966,7 @@ type Health struct {
 	// StartedAt When this process started, in Unix milliseconds; identity tier and above.
 	StartedAt *int64 `json:"started_at,omitempty"`
 
-	// Status ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same status.
+	// Status ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job, or, on a server, the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped. Every tier sees the same status.
 	Status HealthStatus `json:"status"`
 
 	// Storage Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set.
@@ -982,7 +982,7 @@ type Health struct {
 	Version string `json:"version"`
 }
 
-// HealthStatus ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same status.
+// HealthStatus ok, or degraded when an operator notice (capacity, embedding or inspection) is set or this process's last maintenance tick recorded a lock error or a failed job, or, on a server, the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped. Every tier sees the same status.
 type HealthStatus string
 
 // HealthTier What the caller got: probe (no credential), identity (a registered identity) or admin (an administrator), so a probe-only view is never mistaken for health.
@@ -1086,7 +1086,7 @@ type HealthSigning struct {
 	// Leaf One certificate of the signing chain as the health document shows it: its thumbprint, its validity period and the whole days left.
 	Leaf *HealthCertificate `json:"leaf,omitempty"`
 
-	// LeafCrlNumber The number of the leaf CRL of the configured signing key's issuer; 0 when none.
+	// LeafCrlNumber The number of the leaf CRL of the intermediate in use (the one the signing key belongs to); 0 when none.
 	LeafCrlNumber int64 `json:"leaf_crl_number"`
 
 	// NextRenewalAt When the current leaf is next renewed, in Unix milliseconds; 0 when none is scheduled.
@@ -2737,7 +2737,7 @@ type ClientInterface interface {
 
 	// Health The health document as the caller's tier sees it
 	//
-	// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
+	// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices, the maintenance loop and, on a server, the signing section). status is degraded when an operator notice is set, this process's last maintenance tick recorded a lock error or a failed job, or, on a server, the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped; every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 	//
 	// Corresponds with GET /v1/health (the `Health` operationId).
 	Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3847,7 +3847,7 @@ func (c *Client) Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*
 
 // Health The health document as the caller's tier sees it
 //
-// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
+// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices, the maintenance loop and, on a server, the signing section). status is degraded when an operator notice is set, this process's last maintenance tick recorded a lock error or a failed job, or, on a server, the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped; every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 //
 // Corresponds with GET /v1/health (the `Health` operationId).
 func (c *Client) Health(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7572,7 +7572,7 @@ type ClientWithResponsesInterface interface {
 
 	// HealthWithResponse The health document as the caller's tier sees it
 	//
-	// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
+	// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices, the maintenance loop and, on a server, the signing section). status is degraded when an operator notice is set, this process's last maintenance tick recorded a lock error or a failed job, or, on a server, the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped; every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -13494,7 +13494,7 @@ func (c *ClientWithResponses) DiscoverWithResponse(ctx context.Context, reqEdito
 
 // HealthWithResponse The health document as the caller's tier sees it
 //
-// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices and the maintenance loop). status is degraded when an operator notice is set or this process's last maintenance tick recorded a lock error or a failed job, and every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
+// Returns the health document at the caller's tier: probe without a credential (status, tier, version, protocol_version, now), identity for a registered identity (adds started_at, the store and the embedding state), admin for an administrator (adds the embedding model and errors, storage, notices, the maintenance loop and, on a server, the signing section). status is degraded when an operator notice is set, this process's last maintenance tick recorded a lock error or a failed job, or, on a server, the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped; every tier sees the same status. A bearer the server rejects is 401 and is never the probe tier; a valid bearer whose identity no longer exists is 403 not_registered; a store that does not answer is 503 unavailable with the detail store unreachable and never a document. Open operation. The bearer is optional, and the tier is decided by the administrator flag. Writes nothing. No idempotency key: a read has nothing to repeat. Source: ADR 0010, Decision 73, spec 3.1.
 //
 // Returns a wrapper object for the known response body format(s).
 //

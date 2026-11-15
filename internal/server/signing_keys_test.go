@@ -268,3 +268,34 @@ func TestJWKSServesChains(t *testing.T) {
 		}
 	}
 }
+
+// TestJWKSOmitsExpiredLeaf: a leaf whose period (with the token leeway) has passed
+// on the injected clock is absent from the key set, though its row is stored.
+func TestJWKSOmitsExpiredLeaf(t *testing.T) {
+	e := keysEnv(t)
+	count := func() int {
+		t.Helper()
+		st, body, _ := e.send("", http.MethodGet, "/v1/auth/jwks")
+		if st != 200 {
+			t.Fatalf("jwks: %d %s", st, body)
+		}
+		var set struct {
+			Keys []json.RawMessage `json:"keys"`
+		}
+		if err := json.Unmarshal([]byte(body), &set); err != nil {
+			t.Fatal(err)
+		}
+		return len(set.Keys)
+	}
+	e.fx.Leaf(t, e.core, e.clock.Now(), time.Hour) // a short-lived leaf from another replica
+	if err := e.mgr.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 2 {
+		t.Fatalf("%d keys before expiry, want 2", n)
+	}
+	e.clock.Advance(2 * time.Hour) // the short leaf has expired; the manager's 168-hour leaf has not
+	if n := count(); n != 1 {
+		t.Fatalf("%d keys after the short leaf expired, want 1", n)
+	}
+}

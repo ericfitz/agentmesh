@@ -110,6 +110,7 @@ func (m *Manager) reactLocked(l loaded, p Picked, perr error) reloaded {
 			m.inUse = p.Use
 		}
 	}
+	// Publish last, after inUse and stopped are decided (the order is the point).
 	defer m.publishLocked()
 	r.stopped = m.stopped
 	if m.stopped != l.wasStopped {
@@ -200,6 +201,7 @@ func (m *Manager) writeBack(ctx context.Context, held []store.TrustCRL) (written
 			// The write raised the trust number: the snapshot must not lag it.
 			m.mu.Lock()
 			_, rerr := m.reloadLocked(ctx)
+			m.publishLocked()
 			m.mu.Unlock()
 			if rerr != nil {
 				t.Log.Warn("trust material rollback: the snapshot refresh failed", "error", failureLine(rerr))

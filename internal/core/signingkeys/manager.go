@@ -276,7 +276,10 @@ func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 	b := m.trust.bundleOf(mat)
 	m.bundle.Store(&b)
 	m.gen++
-	m.publishLocked()
+	// No publishLocked here: the snapshot Signing reads also holds the intermediate,
+	// which only reactLocked updates, so every caller publishes after its reaction
+	// (reactLocked, or writeBack for a refresh alone) and a reader never sees the
+	// new numbers with the old intermediate.
 	return changed, nil
 }
 
