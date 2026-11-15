@@ -155,6 +155,19 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 		return out, resolveErr(err)
 	}
 
+	// Trust first: a refusal leaves no pending key behind.
+	plain, err := unauthenticated(o.HTTP, p.Server)
+	if err != nil {
+		return out, err
+	}
+	dataDir, err := profile.DataDir(o.Environ)
+	if err != nil {
+		return out, resolveErr(err)
+	}
+	if _, err := ensureTrust(ctx, o, Resolved{Profile: p, ConfigDir: sel.ConfigDir, DataDir: dataDir}, plain); err != nil {
+		return out, err
+	}
+
 	// Key choice: the -credential file, else the saved credential, else the
 	// pending key a failed run left, else a new one written to the pending file
 	// before the request. A crash or a lost 201 after the server committed then
@@ -204,17 +217,6 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 			return out, err
 		}
 		fromPending = true
-	}
-	plain, err := unauthenticated(o.HTTP, p.Server)
-	if err != nil {
-		return out, err
-	}
-	dataDir, err := profile.DataDir(o.Environ)
-	if err != nil {
-		return out, resolveErr(err)
-	}
-	if _, err := ensureTrust(ctx, o, Resolved{Profile: p, ConfigDir: sel.ConfigDir, DataDir: dataDir}, plain); err != nil {
-		return out, err
 	}
 	res, err := Register(ctx, o.HTTP, p.Server, identity, signer.Public(), req.EnrollmentToken)
 	if err != nil {

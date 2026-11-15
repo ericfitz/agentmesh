@@ -35,7 +35,7 @@ func (e *MismatchError) Error() string {
 	case "expected root", "expected installation":
 		return fmt.Sprintf("trust: the profile expects %s %s, got %s; nothing was pinned", strings.TrimPrefix(e.What, "expected "), e.Held, e.Got)
 	default:
-		return fmt.Sprintf("trust: the pinned %s is %s, the profile's is %s", e.What, e.Held, e.Got)
+		return fmt.Sprintf("trust: the pinned %s is %s, the profile's is %s; nothing was changed (to trust the profile's server, run register or login with -accept-new-root)", e.What, e.Held, e.Got)
 	}
 }
 
@@ -116,8 +116,9 @@ func (s Store) Check(e Expect) error {
 
 // Accept takes the root and the name of a discover bundle. No pin: both must
 // satisfy e, then they are pinned (First). The same pin: nothing. A different
-// root or name: *MismatchError, unless acceptNew, which checks e and then
-// replaces the pin and removes the stored chain, CRLs and kept revocations.
+// root, name or server URL: *MismatchError, unless acceptNew, which checks e
+// and then replaces the pin and removes the stored chain, CRLs and kept
+// revocations.
 func (s Store) Accept(b Bundle, e Expect, acceptNew bool) (Accepted, error) {
 	root, err := x509.ParseCertificate(b.Root)
 	if err != nil {
@@ -155,9 +156,13 @@ func (s Store) Accept(b Bundle, e Expect, acceptNew bool) (Accepted, error) {
 				return &MismatchError{What: "root", Held: held.Thumbprint, Got: got.Thumbprint}
 			case held.Installation != got.Installation && !acceptNew:
 				return &MismatchError{What: "installation", Held: held.Installation, Got: got.Installation}
-			case held.Thumbprint == got.Thumbprint && held.Installation == got.Installation:
+			case held.Thumbprint == got.Thumbprint && held.Installation == got.Installation && held.Server == got.Server:
 				out = Accepted{Old: held, New: held}
 				return nil
+			case held.Thumbprint == got.Thumbprint && held.Installation == got.Installation && !acceptNew:
+				// Section 4.10: another server URL is the root-mismatch error,
+				// which -accept-new-root clears.
+				return &MismatchError{What: "server", Held: held.Server, Got: got.Server}
 			}
 		}
 		// Leftovers of a pin that is gone (or incomplete) never meet a new one.

@@ -3,6 +3,7 @@ package trust
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -245,5 +246,37 @@ func TestStoreUnwritable(t *testing.T) {
 	}
 	if _, ok, err := s2.Pinned(); err != nil || ok {
 		t.Fatalf("Pinned below a file: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestAcceptServerChanged(t *testing.T) {
+	const other = "https://other.example.test"
+	c := newCA(t, "root-a")
+	s := pinned(t, c, "inst")
+	inter := c.validInter(t, "inst")
+	if _, err := s.Apply(Bundle{TrustNumber: 2, Intermediates: [][]byte{inter.cert.Raw}, RootCRL: c.rootCRL(t, 1)}); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshot(t, s.Dir)
+	_, err := s.Accept(discover(c, "inst", 2), expect(other), false)
+	me := asMismatch(t, err, "server")
+	if me.Held != srv || me.Got != other || !strings.Contains(err.Error(), "-accept-new-root") {
+		t.Fatalf("%+v %v", me, err)
+	}
+	if !reflect.DeepEqual(before, snapshot(t, s.Dir)) {
+		t.Fatal("the directory changed without the flag")
+	}
+	acc, err := s.Accept(discover(c, "inst", 2), expect(other), true)
+	if err != nil || !acc.Replaced || acc.Old.Server != srv || acc.New.Server != other {
+		t.Fatalf("%+v %v", acc, err)
+	}
+	if p, ok, err := s.Pinned(); err != nil || !ok || p.Server != other {
+		t.Fatalf("pin %+v %v %v", p, ok, err)
+	}
+	if got := names(snapshot(t, s.Dir)); !reflect.DeepEqual(got, []string{"root.pem", "state.json"}) {
+		t.Fatalf("files = %v", got)
+	}
+	if err := s.Check(expect(other)); err != nil {
+		t.Fatal(err)
 	}
 }

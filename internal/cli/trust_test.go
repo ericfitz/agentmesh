@@ -1,15 +1,29 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/client"
+	"github.com/ericfitz/agentmesh/internal/credential"
+	"github.com/ericfitz/agentmesh/internal/pki"
+	"github.com/ericfitz/agentmesh/internal/profile"
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trust"
 )
 
 // pathCounter counts the requests that pass through it, by path.
@@ -58,5 +72,154 @@ func TestOneShotCallsDiscoverOnce(t *testing.T) {
 	}
 	if err2.String() != "" {
 		t.Fatalf("stderr %q: the pin was made by register, so a later command says nothing", err2.String())
+	}
+}
+
+// wakeServer is a server whose watch answers a trust wake at once while the
+// trust number the client sends differs from its own, and otherwise holds the
+// watch until the client gives up. It serves discover with the trust bundle,
+// the token exchange and nothing else.
+type wakeServer struct {
+	*httptest.Server
+	number  atomic.Int64
+	watches atomic.Int32
+}
+
+func newWakeServer(t *testing.T) *wakeServer {
+	t.Helper()
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	root, err := pki.NewRoot(k, "test root", now.Add(-time.Hour), now.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &wakeServer{}
+	w.number.Store(1)
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		rw.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/discover":
+			_ = json.NewEncoder(rw).Encode(map[string]any{"protocol_version": "1.0.0", "trust": map[string]any{
+				"trust_number": w.number.Load(), "intermediates": []string{}, "leaf_crls": []string{},
+				"root": root.Raw, "installation": "test-installation"}})
+		case r.URL.Path == "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(rw).Encode(map[string]string{"issuer": srv.URL, "token_endpoint": srv.URL + "/v1/auth/token", "jwks_uri": srv.URL + "/jwks"})
+		case r.URL.Path == "/v1/auth/token":
+			_ = json.NewEncoder(rw).Encode(map[string]any{"access_token": "t", "token_type": "Bearer", "expires_in": 3600})
+		case strings.HasSuffix(r.URL.Path, "/watch"):
+			w.watches.Add(1)
+			held, err := strconv.ParseInt(r.URL.Query().Get("trust_number"), 10, 64)
+			if err != nil || held != w.number.Load() {
+				_ = json.NewEncoder(rw).Encode(map[string]any{"seq": 0, "count": 0, "channels": []string{}, "trust_number": w.number.Load()})
+				return
+			}
+			<-r.Context().Done()
+		default:
+			rw.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	w.Server = srv
+	return w
+}
+
+// wakeConn opens a server profile on w with the trust pinned at number 1, then
+// moves the server to number 2.
+func wakeConn(t *testing.T, e *testEnv, w *wakeServer) *client.Conn {
+	t.Helper()
+	e.writeProfile(t, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: w.URL})
+	key, err := keys.Generate(keys.EdDSA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (credential.Store{Dir: profile.CredentialDir(e.ConfigDir, "lab")}).Save("pat", key); err != nil {
+		t.Fatal(err)
+	}
+	c := e.conn(t, "pat", func(o *client.Options) { o.Profile = "lab" })
+	w.number.Store(2)
+	return c
+}
+
+func heldNumber(t *testing.T, e *testEnv) int64 {
+	t.Helper()
+	n, ok, err := trust.Store{Dir: trust.Dir(e.ConfigDir, "lab")}.TrustNumber()
+	if err != nil || !ok {
+		t.Fatalf("no trust number held: %v %v", ok, err)
+	}
+	return n
+}
+
+// TestTrustWakeDoesNotSpinParkedWait: a parked wait drops every wake and
+// re-arms; the layer brings the bundle on the first trust wake, so the next
+// Watch carries the new number and the server holds it.
+func TestTrustWakeDoesNotSpinParkedWait(t *testing.T) {
+	e := newTestEnv(t)
+	w := newWakeServer(t)
+	c := wakeConn(t, e, w)
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	mf := &wakeFilter{parked: func() bool { return true }}
+	var out testkit.LockedBuffer
+	err := waitOnce(ctx, c.Bus, mf, "s1", false, 0, &out)
+	if err == nil || out.String() != "" {
+		t.Fatalf("waitOnce: %v, stdout %q", err, out.String())
+	}
+	if n := w.watches.Load(); n > 2 {
+		t.Fatalf("%d watch calls, want at most 2", n)
+	}
+	if got := heldNumber(t, e); got != 2 {
+		t.Fatalf("held number %d, want 2", got)
+	}
+}
+
+func TestTrustWakeDoesNotSpinWatchLoop(t *testing.T) {
+	e := newTestEnv(t)
+	w := newWakeServer(t)
+	c := wakeConn(t, e, w)
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	var out testkit.LockedBuffer
+	if _, err := watchLoop(ctx, c.Bus, &wakeFilter{}, "s1", "pat", 0, false, &out); err == nil {
+		t.Fatal("watchLoop returned nil")
+	}
+	if n := w.watches.Load(); n > 2 {
+		t.Fatalf("%d watch calls, want at most 2", n)
+	}
+	if got := heldNumber(t, e); got != 2 {
+		t.Fatalf("held number %d, want 2", got)
+	}
+}
+
+func TestGatedNotice(t *testing.T) {
+	var b bytes.Buffer
+	notice, up := gatedNotice(&b)
+	notice("before")
+	up()
+	notice("after")
+	if got := b.String(); got != "agentmesh: before\n" {
+		t.Fatalf("stderr %q", got)
+	}
+}
+
+// A refusal of the trust step leaves no pending credential file behind.
+func TestRegisterRefusalLeavesNoPendingKey(t *testing.T) {
+	ctx := context.Background()
+	e := newTestEnv(t)
+	base := startServer(t, filepath.Join(t.TempDir(), "srv.sqlite"))
+	var out, errb testkit.LockedBuffer
+	code := RunRegister(ctx, []string{"-profile", "lab", "-server", base, "-identity", "pat", "-root-thumbprint", strings.Repeat("A", 43)}, e.Environ, nil, &out, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "expects root") {
+		t.Fatalf("register: %d %q", code, errb.String())
+	}
+	cs := credential.Store{Dir: profile.CredentialDir(e.ConfigDir, "lab")}
+	if _, _, ok, err := cs.LoadPending("pat"); err != nil || ok {
+		t.Fatalf("pending key left: %v %v", ok, err)
+	}
+	if cs.Exists("pat") {
+		t.Fatal("credential left")
 	}
 }

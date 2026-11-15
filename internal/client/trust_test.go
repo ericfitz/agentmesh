@@ -635,7 +635,8 @@ func TestRefusedCRLIsLogged(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := n.all()
-	if len(got) != 1 || !strings.Contains(got[0], "3") || !strings.Contains(got[0], "7") || !strings.Contains(got[0], "refused") {
+	wantNotice := "profile lab: the server's root CRL number 3 is below the held number 7; it was refused"
+	if len(got) != 1 || got[0] != wantNotice {
 		t.Fatalf("notices %q", got)
 	}
 	log, err := os.ReadFile(filepath.Join(e.Data, "logs", "trust.log"))
@@ -665,5 +666,74 @@ func TestNoDiscoverWithoutPinHasNoLayer(t *testing.T) {
 	}
 	if _, err := os.Stat(trustStore(e).Dir); err == nil {
 		t.Fatal("NoDiscover created the trust directory")
+	}
+}
+
+func TestServerURLChangeNeedsAcceptNewRoot(t *testing.T) {
+	root := newTestRoot(t, "root")
+	a := newFakeDiscover(t, root, "inst-one")
+	b := newFakeDiscover(t, root, "inst-one")
+	e := trustEnv(t, a.URL, nil)
+	var n notices
+	mustOpen(t, e, &n, nil)
+	before := snapshot(t, trustStore(e).Dir)
+
+	e.Save(t, profile.Profile{Name: "default", Mode: profile.ModeLocal}, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: b.URL})
+	_, err := openLab(e, &n, nil)
+	if err == nil || !isResolveError(err) || !strings.Contains(err.Error(), a.URL) || !strings.Contains(err.Error(), b.URL) || !strings.Contains(err.Error(), "-accept-new-root") {
+		t.Fatalf("Open at another URL: %v", err)
+	}
+	if !sameSnapshot(before, snapshot(t, trustStore(e).Dir)) {
+		t.Fatal("the trust directory changed")
+	}
+	if b.count("/v1/discover") != 0 {
+		t.Fatal("discover was called before the check stopped")
+	}
+	var n2 notices
+	mustOpen(t, e, &n2, func(o *Options) { o.AcceptNewRoot = true })
+	pin, _, _ := trustStore(e).Pinned()
+	if pin.Server != b.URL {
+		t.Fatalf("pin server %s, want %s", pin.Server, b.URL)
+	}
+	if got := n2.all(); len(got) != 1 || !strings.Contains(got[0], a.URL) || !strings.Contains(got[0], b.URL) {
+		t.Fatalf("notices %q: want old and new server", got)
+	}
+}
+
+// A 200 whose body is not a discovery document fails like a missing trust
+// (Decision 33), with or without a pin.
+func TestDiscoverGarbled(t *testing.T) {
+	root := newTestRoot(t, "root")
+	f := newFakeDiscover(t, root, "inst-one")
+	e := trustEnv(t, f.URL, nil)
+	var n notices
+	mustOpen(t, e, &n, nil) // a pin
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("<html>not json"))
+	}))
+	t.Cleanup(garbled.Close)
+	for _, tc := range []struct {
+		name string
+		env  func() *testkit.ProfileEnv
+	}{
+		{"no pin", func() *testkit.ProfileEnv { return trustEnv(t, garbled.URL, nil) }},
+		{"pin", func() *testkit.ProfileEnv {
+			// The pin of the good server, moved to the garbled one's URL.
+			e2 := trustEnv(t, garbled.URL, nil)
+			st := trustStore(e2)
+			b := trust.Bundle{TrustNumber: 1, Root: root.cert.Raw, Installation: "inst-one"}
+			if _, err := st.Accept(b, trust.Expect{Server: garbled.URL}, false); err != nil {
+				t.Fatal(err)
+			}
+			return e2
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := openLab(tc.env(), &n, nil)
+			if err == nil || !isResolveError(err) || !strings.Contains(err.Error(), "sent no trust material") {
+				t.Fatalf("Open: %v", err)
+			}
+		})
 	}
 }

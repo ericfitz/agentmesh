@@ -77,8 +77,8 @@ type Options struct {
 	// command (spec 4.10).
 	AcceptNewRoot bool
 	// NoDiscover makes Open skip the discover call (the Stop hook: its budget
-	// is 500 ms). With a pin the layer still sends the held trust number; with
-	// none it sends nothing and applies nothing.
+	// is 500 ms). With a pin the layer is still on the Bus (its Open, Receive
+	// and Watch send the held trust number); with none there is no layer.
 	NoDiscover bool
 	// Notice receives one line per trust event (first contact, replacement,
 	// insecure_http, an unreachable discover, a refused CRL); nil is silent.

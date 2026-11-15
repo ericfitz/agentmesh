@@ -78,7 +78,7 @@ func openServer(ctx context.Context, o Options, r Resolved) (*Conn, error) {
 		return nil, err
 	}
 	return &Conn{
-		Bus:      wrapTrust(remote.New(authed), st, o, r),
+		Bus:      wrapTrust(remote.New(authed), st, o, r, plain),
 		Resolved: r,
 		Client:   authed,
 		Source:   src,
@@ -142,7 +142,7 @@ func openHuman(ctx context.Context, o Options, r Resolved) (*Conn, error) {
 		}
 	}
 	return &Conn{
-		Bus:      wrapTrust(remote.New(authed), st, o, r),
+		Bus:      wrapTrust(remote.New(authed), st, o, r, plain),
 		Resolved: r,
 		Client:   authed,
 		Human:    src,
