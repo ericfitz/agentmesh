@@ -31,6 +31,9 @@ func (s Service) Open(ctx context.Context, identity string, in bus.OpenSessionIn
 	if err := rules.CheckItems("cursors", len(in.Cursors)); err != nil {
 		return bus.Session{}, err
 	}
+	if err := rules.CheckTrustNumber("trust_number", in.TrustNumber); err != nil {
+		return bus.Session{}, err
+	}
 	seen := make(map[string]bool, len(in.Cursors))
 	for _, oc := range in.Cursors {
 		if oc.Channel == "" {

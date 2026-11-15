@@ -122,9 +122,11 @@ paths:
         The capabilities are computed, not configured: health and long_poll always,
         semantic_search when an embedder is configured. The authentication methods
         are computed from the security schemes of this document, and issuers lists
-        the configured external identity providers. It never touches the store, so
-        it is the liveness probe and a store outage does not fail it. Open
-        operation. Writes nothing. No idempotency key: a read has nothing to repeat.
+        the configured external identity providers. In server mode it also carries
+        trust, the trust bundle with the pinned root and the installation name,
+        answered from the process's in-memory copy of the trust material. It never
+        touches the store, so it is the liveness probe and a store outage does not
+        fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat.
         Source: spec 3.1, Decision 65, ADR 0010.
       responses:
         "200":
@@ -397,6 +399,16 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: trust_number
+          description: "The trust number the client holds (0 to 9007199254740992); the watch wakes at once, with a count of 0 and the server's number in trust_number, when the server's number differs from it; absent means the client holds no bundle"
+          example: 1794096000000
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+            maximum: 9007199254740992
       responses:
         "200":
           description: Woke.
@@ -3355,7 +3367,8 @@ components:
         seq: 42
         count: 1
         channels: [release-train]
-      description: "The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on."
+        trust_number: 1794096000000
+      description: "The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on, and the server's trust number. A wake because the trust number differs from the watch's has a count of 0 and no channels: call receive to bring the bundle."
       type: object
       required: [seq, count, channels]
       properties:
@@ -3371,6 +3384,10 @@ components:
           description: "The names of the channels the pending messages are on, sorted and without repeats; a channel reached only through a tag subscription is included."
           items:
             type: string
+        trust_number:
+          type: integer
+          format: int64
+          description: "The server's current trust number; present from a server, absent in local mode."
     Peek:
       example:
         count: 1
@@ -3443,7 +3460,14 @@ components:
         authorization_server: http://localhost:8420/.well-known/oauth-authorization-server
         openid_configuration: http://localhost:8420/.well-known/openid-configuration
         issuers: [https://idp.example.com]
-      description: "The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods and the issuer metadata locations."
+        trust:
+          trust_number: 1794096000000
+          intermediates: [cGxhY2Vob2xkZXItaW50ZXJtZWRpYXRlLWNlcnRpZmljYXRl]
+          root_crl: cGxhY2Vob2xkZXItcm9vdC1jcmw=
+          leaf_crls: [cGxhY2Vob2xkZXItbGVhZi1jcmw=]
+          root: cGxhY2Vob2xkZXItcm9vdC1jZXJ0aWZpY2F0ZQ==
+          installation: acme-prod
+      description: "The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods, the issuer metadata locations and, in server mode, the trust bundle."
       type: object
       required: [api_versions, server_version, protocol_version, capabilities, auth_methods, issuers]
       properties:
@@ -3484,6 +3508,8 @@ components:
           description: "The issuer URLs of the configured external identity providers whose access tokens the token endpoint exchanges for a human bearer; empty when none is configured."
           items:
             type: string
+        trust:
+          $ref: "#/components/schemas/TrustBundle"
     AuthorizationServerMetadata:
       example:
         issuer: http://localhost:8420
@@ -3554,13 +3580,55 @@ components:
           minimum: 0
           maximum: 9223372036854775807
           description: "The sequence number of the last message the client holds on the channel; delivery resumes above it. It is rejected as before_retention when messages after it are already removed, and as ahead when it is above the newest sequence number the server has assigned."
+    TrustBundle:
+      example:
+        trust_number: 1794096000000
+        intermediates: [cGxhY2Vob2xkZXItaW50ZXJtZWRpYXRlLWNlcnRpZmljYXRl]
+        root_crl: cGxhY2Vob2xkZXItcm9vdC1jcmw=
+        leaf_crls: [cGxhY2Vob2xkZXItbGVhZi1jcmw=]
+        root: cGxhY2Vob2xkZXItcm9vdC1jZXJ0aWZpY2F0ZQ==
+        installation: acme-prod
+      description: "The trust material a client needs to verify the server's certificate chains: the trust number, every stored intermediate certificate, the root CRL and the leaf CRLs. Certificates and CRLs are DER, base64 in JSON. The root and the installation name travel in the discovery document only; a bundle in a session or a receive answer has neither. The values in the example are placeholders, not certificates or CRLs."
+      type: object
+      required: [trust_number, intermediates, leaf_crls]
+      properties:
+        trust_number:
+          type: integer
+          format: int64
+          description: "The trust number: raised in the same transaction as every change to a CRL or to the set of intermediates, a time in Unix milliseconds. A client compares it for equality with the number it holds."
+        intermediates:
+          type: array
+          description: "Every stored intermediate certificate, the revoked and the expired included, DER, base64."
+          items:
+            type: string
+            format: byte
+            description: "One intermediate certificate, DER, base64."
+        root_crl:
+          type: string
+          format: byte
+          description: "The root CRL, DER, base64; absent when none is installed."
+        leaf_crls:
+          type: array
+          description: "The leaf CRLs, DER, base64; empty when no leaf was ever revoked."
+          items:
+            type: string
+            format: byte
+            description: "One leaf CRL, DER, base64."
+        root:
+          type: string
+          format: byte
+          description: "The pinned root certificate, DER, base64; present only in the discovery document."
+        installation:
+          type: string
+          description: "The installation name: the subject common name of the installation's intermediate certificates; present only in the discovery document."
     OpenSessionRequest:
       example:
         hint: builder
         cursors:
           - channel: release-train
             seq: 41
-      description: "Opens or resumes a session: an optional hint, an optional resume token and the cursors the client offers."
+        trust_number: 1794096000000
+      description: "Opens or resumes a session: an optional hint, an optional resume token, the cursors the client offers and the trust number it holds."
       type: object
       additionalProperties: false
       properties:
@@ -3580,6 +3648,12 @@ components:
             $ref: "#/components/schemas/OfferedCursor"
           maxItems: 256
           description: "Positions the client kept from an earlier session, so the new session resumes where it stopped instead of at the identity's acknowledged position; a channel may be offered once, and a resume does not apply them. At most 256 items."
+        trust_number:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740992
+          description: "The trust number the client holds, 0 to 9007199254740992. When it is absent or differs from the server's, the answer carries the trust bundle. The server compares for equality, so a number above the server's gets the bundle too."
     RejectedCursor:
       example:
         channel: release-train
@@ -3623,7 +3697,13 @@ components:
         pending:
           - channel: general
             pending: 2
-      description: "An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors and the pending counts."
+        trust_number: 1794096000000
+        trust:
+          trust_number: 1794096000000
+          intermediates: [cGxhY2Vob2xkZXItaW50ZXJtZWRpYXRlLWNlcnRpZmljYXRl]
+          root_crl: cGxhY2Vob2xkZXItcm9vdC1jcmw=
+          leaf_crls: [cGxhY2Vob2xkZXItbGVhZi1jcmw=]
+      description: "An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors, the pending counts and the server's trust number. The trust bundle, without the root and the installation name, is present when the request's trust number was absent or differed from the server's."
       type: object
       required: [id, identity, display_name, resume_token, resumed, rejected_cursors, pending]
       properties:
@@ -3652,13 +3732,20 @@ components:
           description: "One entry for each subscribed channel the caller may receive, with the messages waiting on it."
           items:
             $ref: "#/components/schemas/PendingChannel"
+        trust_number:
+          type: integer
+          format: int64
+          description: "The server's current trust number; present from a server, absent in local mode."
+        trust:
+          $ref: "#/components/schemas/TrustBundle"
     ReceiveRequest:
       example:
         ack: "0123456789abcdef01234567:o1"
         count: 10
         channels: [release-train]
         include_own: true
-      description: "Reads the next batch for a session: the batch token to acknowledge, a count, an optional channel filter and whether the session's own messages count."
+        trust_number: 1794096000000
+      description: "Reads the next batch for a session: the batch token to acknowledge, a count, an optional channel filter, whether the session's own messages count and the trust number the client holds."
       type: object
       additionalProperties: false
       properties:
@@ -3685,6 +3772,12 @@ components:
         include_own:
           type: boolean
           description: "Whether the session's own messages are delivered; default false. The setting is stored with the batch, so a redelivery repeats it."
+        trust_number:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9007199254740992
+          description: "The trust number the client holds, 0 to 9007199254740992. When it is absent or differs from the server's, the answer carries the trust bundle. The server compares for equality, so a number above the server's gets the bundle too."
     Gap:
       example:
         channel: release-train
@@ -3814,7 +3907,13 @@ components:
             to: 35
         notice: "agentmesh storage is over budget: sqlite_budget_mib=2048 MiB holds 2100 MiB (disk 2300 MiB, 1.12x); orphaned and expired rows, idle task lists and memories, and ordinary messages older than 1 hour are being deleted to make room"
         instruction: 'Pass ack="fedcba9876543210fedcba98:o1" on your next receive to acknowledge this batch.'
-      description: "One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice and an instruction."
+        trust_number: 1794096000000
+        trust:
+          trust_number: 1794096000000
+          intermediates: [cGxhY2Vob2xkZXItaW50ZXJtZWRpYXRlLWNlcnRpZmljYXRl]
+          root_crl: cGxhY2Vob2xkZXItcm9vdC1jcmw=
+          leaf_crls: [cGxhY2Vob2xkZXItbGVhZi1jcmw=]
+      description: "One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice, an instruction and the server's trust number. The trust bundle, without the root and the installation name, is present when the request's trust number was absent or differed from the server's."
       type: object
       required: [messages, batch, redelivered, ack_ignored, gaps]
       properties:
@@ -3843,6 +3942,12 @@ components:
         instruction:
           type: string
           description: "A sentence saying what to pass as ack, or to call receive again when more gap notices wait; present with a batch or when gap notices are deferred."
+        trust_number:
+          type: integer
+          format: int64
+          description: "The server's current trust number; present from a server, absent in local mode."
+        trust:
+          $ref: "#/components/schemas/TrustBundle"
     SessionInfo:
       example:
         id: 9f1c2e7a4b3d5c6e8f0a1b2c3d4e5f60
@@ -4842,6 +4947,23 @@ components:
           last_error: 'embedding service unreachable: connection refused'
           last_error_at: 1794095000000
           rejected_last: 'input exceeds the model context window'
+        signing:
+          installation: acme-prod
+          intermediate:
+            thumbprint: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+            not_before: 1786320000000
+            not_after: 1817856000000
+            days_left: 365
+          leaf:
+            thumbprint: zwSrBikCim_ftMfqmb9hdJyUhQVlZvWAizrqYnCW9eA
+            not_before: 1794092400000
+            not_after: 1794178800000
+            days_left: 1
+          next_renewal_at: 1794135600000
+          trust_number: 1794096000000
+          root_crl_number: 1794090000000
+          leaf_crl_number: 0
+          last_failure_at: 0
         storage:
           bytes: 352256
           budget_bytes: 2147483648
@@ -4912,6 +5034,87 @@ components:
             $ref: "#/components/schemas/Notice"
         maintenance:
           $ref: "#/components/schemas/HealthMaintenance"
+        signing:
+          $ref: "#/components/schemas/HealthSigning"
+    HealthCertificate:
+      example:
+        thumbprint: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+        not_before: 1786320000000
+        not_after: 1817856000000
+        days_left: 365
+      description: "One certificate of the signing chain as the health document shows it: its thumbprint, its validity period and the whole days left."
+      type: object
+      required: [thumbprint, not_before, not_after, days_left]
+      properties:
+        thumbprint:
+          type: string
+          description: "The certificate's SHA-256 thumbprint, base64url without padding."
+        not_before:
+          type: integer
+          format: int64
+          description: "The start of the validity period, in Unix milliseconds."
+        not_after:
+          type: integer
+          format: int64
+          description: "The end of the validity period, in Unix milliseconds."
+        days_left:
+          type: integer
+          description: "The whole days from the server's clock to not_after; negative once the certificate has expired."
+    HealthSigning:
+      example:
+        installation: acme-prod
+        intermediate:
+          thumbprint: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
+          not_before: 1786320000000
+          not_after: 1817856000000
+          days_left: 365
+        leaf:
+          thumbprint: zwSrBikCim_ftMfqmb9hdJyUhQVlZvWAizrqYnCW9eA
+          not_before: 1794092400000
+          not_after: 1794178800000
+          days_left: 1
+        next_renewal_at: 1794135600000
+        trust_number: 1794096000000
+        root_crl_number: 1794090000000
+        leaf_crl_number: 0
+        last_failure_at: 0
+      description: "The state of the server's signing certificates: the installation name, the intermediate in use and the current leaf, when the next renewal is due, the trust number and the CRL numbers, and the last renewal failure. Administrator tier only; absent in local mode."
+      type: object
+      required: [installation, next_renewal_at, trust_number, root_crl_number, leaf_crl_number, last_failure_at]
+      properties:
+        installation:
+          type: string
+          description: "The installation name."
+        intermediate:
+          $ref: "#/components/schemas/HealthCertificate"
+        leaf:
+          $ref: "#/components/schemas/HealthCertificate"
+        next_renewal_at:
+          type: integer
+          format: int64
+          description: "When the current leaf is next renewed, in Unix milliseconds; 0 when none is scheduled."
+        trust_number:
+          type: integer
+          format: int64
+          description: "The trust number this process holds."
+        root_crl_number:
+          type: integer
+          format: int64
+          description: "The number of the installed root CRL; 0 when none is installed."
+        leaf_crl_number:
+          type: integer
+          format: int64
+          description: "The number of the leaf CRL of the configured signing key's issuer; 0 when none."
+        last_failure_at:
+          type: integer
+          format: int64
+          description: "When the last renewal failed, in Unix milliseconds; 0 when none has."
+        last_failure:
+          type: string
+          description: "The text of the last renewal failure; absent when none has failed."
+        stopped:
+          type: string
+          description: "Why signing has stopped: intermediate_expired, intermediate_revoked or root_expired; absent while the server signs."
     HealthStore:
       example:
         engine: sqlite
@@ -5162,9 +5365,21 @@ components:
           example: wd0J3XjfHKG0wuu4k-HnRvW-UuFjVk6WkEjZfccrhtw
           maxLength: 64
           description: "The key id: the key's RFC 7638 SHA-256 thumbprint. Optional at register (a kid that is not the thumbprint is 400 validation). At most 64 bytes."
+        x5c:
+          type: array
+          maxItems: 2
+          description: "The certificate chain (RFC 7517 section 4.7) of a key the server publishes: the leaf certificate, then its intermediate's, base64 DER. The server sends it; register refuses a submitted key that carries it. At most 2 items."
+          items:
+            type: string
+            maxLength: 4096
+            description: "One certificate, base64 DER. At most 4096 code points."
+        x5t#S256:
+          type: string
+          maxLength: 64
+          description: "The SHA-256 thumbprint of the leaf certificate (RFC 7517 section 4.8), base64url without padding; equal to the kid of a key the server publishes. The server sends it; register refuses a submitted key that carries it. At most 64 bytes."
       additionalProperties: true
       maxProperties: 16
-      description: "A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own."
+      description: "A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {\"crv\":\"Ed25519\",\"kty\":\"OKP\",\"x\":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own. The server sends x5c and x5t#S256 in the key set it publishes; register refuses a submitted key that carries either."
     JWKS:
       example:
         keys:

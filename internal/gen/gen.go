@@ -856,7 +856,7 @@ type CredentialReset struct {
 	KeysRemoved int `json:"keys_removed"`
 }
 
-// Discovery The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods and the issuer metadata locations.
+// Discovery The liveness and discovery document: API versions, server and protocol versions, capabilities, authentication methods, the issuer metadata locations and, in server mode, the trust bundle.
 type Discovery struct {
 	// ApiVersions The API versions the server serves; v1 is the /v1 path prefix.
 	ApiVersions []string `json:"api_versions"`
@@ -881,6 +881,9 @@ type Discovery struct {
 
 	// ServerVersion The server's version string, the same value as version in the health document.
 	ServerVersion string `json:"server_version"`
+
+	// Trust The trust material a client needs to verify the server's certificate chains: the trust number, every stored intermediate certificate, the root CRL and the leaf CRLs. Certificates and CRLs are DER, base64 in JSON. The root and the installation name travel in the discovery document only; a bundle in a session or a receive answer has neither. The values in the example are placeholders, not certificates or CRLs.
+	Trust *TrustBundle `json:"trust,omitempty"`
 }
 
 // DoneScopeRequest Retires a scope; retire is with_bridge or normal.
@@ -957,6 +960,9 @@ type Health struct {
 	// ProtocolVersion The protocol version (this document's info.version): the major is the /v1 path, the minor is bumped on every addition, the patch on a documentation-only change. Independent of version.
 	ProtocolVersion string `json:"protocol_version"`
 
+	// Signing The state of the server's signing certificates: the installation name, the intermediate in use and the current leaf, when the next renewal is due, the trust number and the CRL numbers, and the last renewal failure. Administrator tier only; absent in local mode.
+	Signing *HealthSigning `json:"signing,omitempty"`
+
 	// StartedAt When this process started, in Unix milliseconds; identity tier and above.
 	StartedAt *int64 `json:"started_at,omitempty"`
 
@@ -981,6 +987,21 @@ type HealthStatus string
 
 // HealthTier What the caller got: probe (no credential), identity (a registered identity) or admin (an administrator), so a probe-only view is never mistaken for health.
 type HealthTier string
+
+// HealthCertificate One certificate of the signing chain as the health document shows it: its thumbprint, its validity period and the whole days left.
+type HealthCertificate struct {
+	// DaysLeft The whole days from the server's clock to not_after; negative once the certificate has expired.
+	DaysLeft int `json:"days_left"`
+
+	// NotAfter The end of the validity period, in Unix milliseconds.
+	NotAfter int64 `json:"not_after"`
+
+	// NotBefore The start of the validity period, in Unix milliseconds.
+	NotBefore int64 `json:"not_before"`
+
+	// Thumbprint The certificate's SHA-256 thumbprint, base64url without padding.
+	Thumbprint string `json:"thumbprint"`
+}
 
 // HealthEmbeddings The embedding state and backlog; the model, last error and rejection details are set at the administrator tier only.
 type HealthEmbeddings struct {
@@ -1048,6 +1069,39 @@ type HealthMaintenance struct {
 // HealthMaintenanceLock The result of this process's last attempt to take the maintenance lock: held, held_elsewhere, or unknown before the first tick and after a lock error.
 type HealthMaintenanceLock string
 
+// HealthSigning The state of the server's signing certificates: the installation name, the intermediate in use and the current leaf, when the next renewal is due, the trust number and the CRL numbers, and the last renewal failure. Administrator tier only; absent in local mode.
+type HealthSigning struct {
+	// Installation The installation name.
+	Installation string `json:"installation"`
+
+	// Intermediate One certificate of the signing chain as the health document shows it: its thumbprint, its validity period and the whole days left.
+	Intermediate *HealthCertificate `json:"intermediate,omitempty"`
+
+	// LastFailure The text of the last renewal failure; absent when none has failed.
+	LastFailure *string `json:"last_failure,omitempty"`
+
+	// LastFailureAt When the last renewal failed, in Unix milliseconds; 0 when none has.
+	LastFailureAt int64 `json:"last_failure_at"`
+
+	// Leaf One certificate of the signing chain as the health document shows it: its thumbprint, its validity period and the whole days left.
+	Leaf *HealthCertificate `json:"leaf,omitempty"`
+
+	// LeafCrlNumber The number of the leaf CRL of the configured signing key's issuer; 0 when none.
+	LeafCrlNumber int64 `json:"leaf_crl_number"`
+
+	// NextRenewalAt When the current leaf is next renewed, in Unix milliseconds; 0 when none is scheduled.
+	NextRenewalAt int64 `json:"next_renewal_at"`
+
+	// RootCrlNumber The number of the installed root CRL; 0 when none is installed.
+	RootCrlNumber int64 `json:"root_crl_number"`
+
+	// Stopped Why signing has stopped: intermediate_expired, intermediate_revoked or root_expired; absent while the server signs.
+	Stopped *string `json:"stopped,omitempty"`
+
+	// TrustNumber The trust number this process holds.
+	TrustNumber int64 `json:"trust_number"`
+}
+
 // HealthStore The store engine and its schema version.
 type HealthStore struct {
 	// Engine The store engine: sqlite or postgres.
@@ -1090,7 +1144,7 @@ type Identity struct {
 // IdentityKind Whether the identity is an agent or a human.
 type IdentityKind string
 
-// JWK A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own.
+// JWK A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own. The server sends x5c and x5t#S256 in the key set it publishes; register refuses a submitted key that carries either.
 type JWK = map[string]interface{}
 
 // JWKS A JSON Web Key Set: one key per unexpired, unrevoked leaf certificate the server has verified, the current one first. Each key also carries x5t#S256 (the leaf's thumbprint, equal to the kid) and x5c (the leaf's certificate, then its intermediate's, base64 DER). The x5c values in the example are shortened placeholders, not certificates.
@@ -1183,7 +1237,7 @@ type OfferedCursor struct {
 	Seq int64 `json:"seq"`
 }
 
-// OpenSessionRequest Opens or resumes a session: an optional hint, an optional resume token and the cursors the client offers.
+// OpenSessionRequest Opens or resumes a session: an optional hint, an optional resume token, the cursors the client offers and the trust number it holds.
 type OpenSessionRequest struct {
 	// Cursors Positions the client kept from an earlier session, so the new session resumes where it stopped instead of at the identity's acknowledged position; a channel may be offered once, and a resume does not apply them. At most 256 items.
 	Cursors *[]OfferedCursor `json:"cursors,omitempty"`
@@ -1193,6 +1247,9 @@ type OpenSessionRequest struct {
 
 	// ResumeToken The token of the session to resume, as the open that created it returned it. It is valid while the server retains the session row after its lease lapsed; a token the server no longer holds opens a fresh session. Exactly 43 code points of base64url.
 	ResumeToken *string `json:"resume_token,omitempty"`
+
+	// TrustNumber The trust number the client holds, 0 to 9007199254740992. When it is absent or differs from the server's, the answer carries the trust bundle. The server compares for equality, so a number above the server's gets the bundle too.
+	TrustNumber *int64 `json:"trust_number,omitempty"`
 }
 
 // Peek The read-only pending counts of a session: the total and the non-zero count of each channel.
@@ -1246,7 +1303,7 @@ type Problem struct {
 // ProblemCode agentmesh extension member (RFC 9457 section 3.2).
 type ProblemCode string
 
-// ReceiveRequest Reads the next batch for a session: the batch token to acknowledge, a count, an optional channel filter and whether the session's own messages count.
+// ReceiveRequest Reads the next batch for a session: the batch token to acknowledge, a count, an optional channel filter, whether the session's own messages count and the trust number the client holds.
 type ReceiveRequest struct {
 	// Ack The token of the previous batch, to acknowledge it so the session's position advances past it. A token that is not the pending one is ignored and reported as ack_ignored. At most 1024 bytes.
 	Ack *string `json:"ack,omitempty"`
@@ -1259,9 +1316,12 @@ type ReceiveRequest struct {
 
 	// IncludeOwn Whether the session's own messages are delivered; default false. The setting is stored with the batch, so a redelivery repeats it.
 	IncludeOwn *bool `json:"include_own,omitempty"`
+
+	// TrustNumber The trust number the client holds, 0 to 9007199254740992. When it is absent or differs from the server's, the answer carries the trust bundle. The server compares for equality, so a number above the server's gets the bundle too.
+	TrustNumber *int64 `json:"trust_number,omitempty"`
 }
 
-// ReceiveResult One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice and an instruction.
+// ReceiveResult One delivery batch: the messages, the batch token to acknowledge, whether the batch was redelivered, whether the acknowledgment was ignored, retention gaps, a server notice, an instruction and the server's trust number. The trust bundle, without the root and the installation name, is present when the request's trust number was absent or differed from the server's.
 type ReceiveResult struct {
 	// AckIgnored True when the request carried an ack that was not the pending token, so nothing was acknowledged.
 	AckIgnored bool `json:"ack_ignored"`
@@ -1283,6 +1343,12 @@ type ReceiveResult struct {
 
 	// Redelivered True when this is a batch delivered before and not yet acknowledged.
 	Redelivered bool `json:"redelivered"`
+
+	// Trust The trust material a client needs to verify the server's certificate chains: the trust number, every stored intermediate certificate, the root CRL and the leaf CRLs. Certificates and CRLs are DER, base64 in JSON. The root and the installation name travel in the discovery document only; a bundle in a session or a receive answer has neither. The values in the example are placeholders, not certificates or CRLs.
+	Trust *TrustBundle `json:"trust,omitempty"`
+
+	// TrustNumber The server's current trust number; present from a server, absent in local mode.
+	TrustNumber *int64 `json:"trust_number,omitempty"`
 }
 
 // RegisterRequest Registers a public key for an identity, with an enrollment token where the server requires one.
@@ -1293,7 +1359,7 @@ type RegisterRequest struct {
 	// Identity The identity name to claim: it must have no credential yet. At most 128 bytes (the server counts bytes).
 	Identity string `json:"identity"`
 
-	// PublicKeyJwk A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own.
+	// PublicKeyJwk A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own. The server sends x5c and x5t#S256 in the key set it publishes; register refuses a submitted key that carries either.
 	PublicKeyJwk JWK `json:"public_key_jwk"`
 }
 
@@ -1435,7 +1501,7 @@ type SendResult struct {
 	Seq int64 `json:"seq"`
 }
 
-// Session An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors and the pending counts.
+// Session An opened session: its id, identity and display name, the resume token, whether an existing session was resumed, the rejected cursors, the pending counts and the server's trust number. The trust bundle, without the root and the installation name, is present when the request's trust number was absent or differed from the server's.
 type Session struct {
 	// DisplayName The name the server gave the session: the identity, or identity/hint, with -2, -3 and so on added to be unique among the identity's sessions that are not closed.
 	DisplayName string `json:"display_name"`
@@ -1457,6 +1523,12 @@ type Session struct {
 
 	// Resumed True when an existing session was resumed, with its cursors and pending batch intact; false for a new session.
 	Resumed bool `json:"resumed"`
+
+	// Trust The trust material a client needs to verify the server's certificate chains: the trust number, every stored intermediate certificate, the root CRL and the leaf CRLs. Certificates and CRLs are DER, base64 in JSON. The root and the installation name travel in the discovery document only; a bundle in a session or a receive answer has neither. The values in the example are placeholders, not certificates or CRLs.
+	Trust *TrustBundle `json:"trust,omitempty"`
+
+	// TrustNumber The server's current trust number; present from a server, absent in local mode.
+	TrustNumber *int64 `json:"trust_number,omitempty"`
 }
 
 // SessionInfo One live session: its id, identity, display name and the time it was opened.
@@ -1783,6 +1855,27 @@ type TokenRequest struct {
 	SubjectTokenType *string `json:"subject_token_type,omitempty"`
 }
 
+// TrustBundle The trust material a client needs to verify the server's certificate chains: the trust number, every stored intermediate certificate, the root CRL and the leaf CRLs. Certificates and CRLs are DER, base64 in JSON. The root and the installation name travel in the discovery document only; a bundle in a session or a receive answer has neither. The values in the example are placeholders, not certificates or CRLs.
+type TrustBundle struct {
+	// Installation The installation name: the subject common name of the installation's intermediate certificates; present only in the discovery document.
+	Installation *string `json:"installation,omitempty"`
+
+	// Intermediates Every stored intermediate certificate, the revoked and the expired included, DER, base64.
+	Intermediates [][]byte `json:"intermediates"`
+
+	// LeafCrls The leaf CRLs, DER, base64; empty when no leaf was ever revoked.
+	LeafCrls [][]byte `json:"leaf_crls"`
+
+	// Root The pinned root certificate, DER, base64; present only in the discovery document.
+	Root *[]byte `json:"root,omitempty"`
+
+	// RootCrl The root CRL, DER, base64; absent when none is installed.
+	RootCrl *[]byte `json:"root_crl,omitempty"`
+
+	// TrustNumber The trust number: raised in the same transaction as every change to a CRL or to the set of intermediates, a time in Unix milliseconds. A client compares it for equality with the number it holds.
+	TrustNumber int64 `json:"trust_number"`
+}
+
 // Usage Storage use against the budget: bytes, budget, disk size and ratio, how close the use is to the budget, and the capacity notice text when one is set.
 type Usage struct {
 	// BudgetBytes The budget of the server's engine (sqlite_budget_mib or postgres_budget_mib) in bytes.
@@ -1810,7 +1903,7 @@ type Usage struct {
 // UsageTier How close bytes is to the budget. normal: at or below the size a sweep stops at (the budget less cleanup_free_percent). approaching: above that and within the budget. soft: over the budget and the sweep still has rows it deletes first. hard: over the budget and only rows it deletes last remain. exhausted: over the budget and nothing is left to evict.
 type UsageTier string
 
-// Wake The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on.
+// Wake The answer to a watch that woke: the sequence number, the count of pending messages and the channels they wait on, and the server's trust number. A wake because the trust number differs from the watch's has a count of 0 and no channels: call receive to bring the bundle.
 type Wake struct {
 	// Channels The names of the channels the pending messages are on, sorted and without repeats; a channel reached only through a tag subscription is included.
 	Channels []string `json:"channels"`
@@ -1820,6 +1913,9 @@ type Wake struct {
 
 	// Seq The highest sequence number among the pending messages that woke the watch.
 	Seq int64 `json:"seq"`
+
+	// TrustNumber The server's current trust number; present from a server, absent in local mode.
+	TrustNumber *int64 `json:"trust_number,omitempty"`
 }
 
 // WellKnown The answer of the well-known document: the path of the discovery document.
@@ -2072,6 +2168,9 @@ type WatchParams struct {
 
 	// IncludeOwn Whether the session's own messages count, so a message it sent wakes it; default false
 	IncludeOwn *bool `form:"include_own,omitempty" json:"include_own,omitempty"`
+
+	// TrustNumber The trust number the client holds (0 to 9007199254740992); the watch wakes at once, with a count of 0 and the server's number in trust_number, when the server's number differs from it; absent means the client holds no bundle
+	TrustNumber *int64 `form:"trust_number,omitempty" json:"trust_number,omitempty"`
 }
 
 // UnsubscribeTagsParams defines parameters for UnsubscribeTags.
@@ -2631,7 +2730,7 @@ type ClientInterface interface {
 
 	// Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
 	//
-	// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+	// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. In server mode it also carries trust, the trust bundle with the pinned root and the installation name, answered from the process's in-memory copy of the trust material. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
 	//
 	// Corresponds with GET /v1/discover (the `Discover` operationId).
 	Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3731,7 +3830,7 @@ func (c *Client) CreateTask(ctx context.Context, channel ChannelParam, params *C
 
 // Discover The liveness probe: API versions, server and protocol version, capabilities and auth methods
 //
-// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. In server mode it also carries trust, the trust bundle with the pinned root and the installation name, answered from the process's in-memory copy of the trust material. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
 //
 // Corresponds with GET /v1/discover (the `Discover` operationId).
 func (c *Client) Discover(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6602,6 +6701,18 @@ func NewWatchRequest(server string, session SessionParam, params *WatchParams) (
 
 		}
 
+		if params.TrustNumber != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "trust_number", *params.TrustNumber, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
 		if encoded := queryValues.Encode(); encoded != "" {
 			rawQueryFragments = append(rawQueryFragments, encoded)
 		}
@@ -7452,7 +7563,7 @@ type ClientWithResponsesInterface interface {
 
 	// DiscoverWithResponse The liveness probe: API versions, server and protocol version, capabilities and auth methods
 	//
-	// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+	// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. In server mode it also carries trust, the trust bundle with the pinned root and the installation name, answered from the process's in-memory copy of the trust material. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -13368,7 +13479,7 @@ func (c *ClientWithResponses) CreateTaskWithResponse(ctx context.Context, channe
 
 // DiscoverWithResponse The liveness probe: API versions, server and protocol version, capabilities and auth methods
 //
-// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
+// Returns the API versions, the server and protocol versions, the capabilities, the authentication methods and the issuer metadata locations. The capabilities are computed, not configured: health and long_poll always, semantic_search when an embedder is configured. The authentication methods are computed from the security schemes of this document, and issuers lists the configured external identity providers. In server mode it also carries trust, the trust bundle with the pinned root and the installation name, answered from the process's in-memory copy of the trust material. It never touches the store, so it is the liveness probe and a store outage does not fail it. Open operation. Writes nothing. No idempotency key: a read has nothing to repeat. Source: spec 3.1, Decision 65, ADR 0010.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -19896,6 +20007,19 @@ func (siw *ServerInterfaceWrapper) Watch(w http.ResponseWriter, r *http.Request)
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "include_own"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "include_own", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "trust_number" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "trust_number", r.URL.Query(), &params.TrustNumber, runtime.BindQueryParameterOptions{Type: "integer", Format: "int64"})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "trust_number"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "trust_number", Err: err})
 		}
 		return
 	}

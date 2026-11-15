@@ -165,3 +165,9 @@ rules:
   - id: NOSQL_HEURISTIC_201
     why: "Same cause as NOSQL_HEURISTIC_200 at createTask's 201: the store is SQL with bound parameters (internal/store/sqlstore) and the created task document echoes the subject CATS sent (round 3 Step 8 run-20261108T180340Z Test 2883); the operation reaches 201 only since the refData of Task 8.4."
     when: {response_code: 201, path: "/v1/channels/{channel}/tasks", method: POST, fuzzer: NoSqlInjectionInStringFields, result_reason: "NoSQL injection vulnerability detected"}
+  - id: REGISTER_REFUSES_CERTIFICATE_MEMBERS_400
+    why: "JWK is both the published key's schema (it carries x5c and x5t#S256, ADR 0019 section 4.9) and RegisterRequest.public_key_jwk's; register refuses a submitted key that carries either member (Plan ruling 31; internal/server/auth_handlers.go; TestRegisterRefusesCertificateMembers), so CATS's HappyPath, which fills every declared property, is refused by design. Same class as TASK_PATCH_DELETE_EXCLUSIVE_400."
+    when: {response_code: 400, path: /v1/auth/register, method: POST, json_body.code: validation, json_body.detail: {matches: "^public_key_jwk: keys: JWK carries (x5c|x5t#S256), which the server sends and register refuses$"}}
+  - id: REGISTER_MAX_BOUNDARY_NOT_A_KEY_400
+    why: "AllFieldsAtMaxBoundary fills x (and kid) to their maxLength of 64 characters; an Ed25519 x is exactly 43 base64url characters (32 bytes), so the filled value is not a key and go-jose refuses it (internal/auth/keys FromJWK). The bound is the transport ceiling (keys.MaxJWKMemberBytes, TestSpecBounds), not the key's exact length; 400 validation is the documented answer."
+    when: {response_code: 400, path: /v1/auth/register, method: POST, fuzzer: AllFieldsAtMaxBoundary, json_body.code: validation, json_body.detail: {starts_with: "public_key_jwk: go-jose/go-jose: invalid"}}

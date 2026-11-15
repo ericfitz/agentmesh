@@ -1056,6 +1056,37 @@ func TestRegisterRefusesWideJWK(t *testing.T) {
 	}
 }
 
+// TestRegisterRefusesCertificateMembers: the server sends x5c and x5t#S256 in
+// its own key set, but a key submitted at register carries neither: each, and
+// both, answer 400 validation naming public_key_jwk (an input the server does
+// not take is refused, not ignored).
+func TestRegisterRefusesCertificateMembers(t *testing.T) {
+	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
+	key := genKey(t, keys.EdDSA)
+	post := func(name string, mutate func(map[string]any)) *http.Response {
+		jwk := jwkJSON(t, key)
+		mutate(jwk)
+		b, _ := json.Marshal(map[string]any{"identity": name, "public_key_jwk": jwk})
+		return e.do("POST", "/v1/auth/register", "application/json", "", string(b))
+	}
+	x5c := func(j map[string]any) { j["x5c"] = []string{"cGxhY2Vob2xkZXI"} }
+	x5t := func(j map[string]any) { j["x5t#S256"] = jwkJSON(t, key)["kid"] }
+	wantAuthProblem(t, post("withx5c", x5c), 400, "validation", "public_key_jwk")
+	wantAuthProblem(t, post("withx5t", x5t), 400, "validation", "public_key_jwk")
+	wantAuthProblem(t, post("withboth", func(j map[string]any) { x5c(j); x5t(j) }), 400, "validation", "public_key_jwk")
+	if resp := post("bare", func(map[string]any) {}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("a bare key: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	for _, m := range []map[string]any{{"x5c": nil}, {"x5t#S256": nil}} {
+		if err := keys.CheckJWKCertificateMembers(m); err == nil {
+			t.Errorf("CheckJWKCertificateMembers accepted %v", m)
+		}
+	}
+	if err := keys.CheckJWKCertificateMembers(map[string]any{"kty": "OKP"}); err != nil {
+		t.Errorf("CheckJWKCertificateMembers refused a bare key: %v", err)
+	}
+}
+
 // A store outage behind an ordinary operation is a 503 problem+json whose
 // detail is one fixed sentence: never the driver's text ("sql: database is
 // closed", or pgx's connect error naming the user, database and host).

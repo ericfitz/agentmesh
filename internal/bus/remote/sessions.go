@@ -14,7 +14,7 @@ import (
 
 // OpenSessionRequest builds the request for Open; Body is always set.
 func OpenSessionRequest(in ab2bus.OpenSessionInput) gen.OpenSessionRequestObject {
-	body := gen.OpenSessionJSONRequestBody{Hint: strPtr(in.Hint), ResumeToken: strPtr(in.ResumeToken)}
+	body := gen.OpenSessionJSONRequestBody{Hint: strPtr(in.Hint), ResumeToken: strPtr(in.ResumeToken), TrustNumber: in.TrustNumber}
 	if len(in.Cursors) > 0 {
 		cs := make([]gen.OfferedCursor, len(in.Cursors))
 		for i, c := range in.Cursors {
@@ -30,6 +30,7 @@ func FromGenSession(s gen.Session) ab2bus.Session {
 	out := ab2bus.Session{
 		ID: s.Id, Identity: s.Identity, DisplayName: s.DisplayName,
 		ResumeToken: s.ResumeToken, Resumed: s.Resumed,
+		TrustNumber: s.TrustNumber, Trust: fromGenTrust(s.Trust),
 	}
 	for _, c := range s.RejectedCursors {
 		out.RejectedCursors = append(out.RejectedCursors, ab2bus.RejectedCursor{Channel: c.Channel, Reason: string(c.Reason)})
@@ -79,7 +80,7 @@ func CloseSessionRequest(in ab2bus.CloseSessionInput) gen.CloseSessionRequestObj
 // ReceiveRequest builds the request for Receive; Body is always set, and its
 // optional members are absent for their zero values.
 func ReceiveRequest(in ab2bus.ReceiveInput) gen.ReceiveRequestObject {
-	body := gen.ReceiveJSONRequestBody{Ack: strPtr(in.Ack), Channels: slicePtr(in.Channels)}
+	body := gen.ReceiveJSONRequestBody{Ack: strPtr(in.Ack), Channels: slicePtr(in.Channels), TrustNumber: in.TrustNumber}
 	if in.Count != 0 {
 		body.Count = &in.Count
 	}
@@ -95,6 +96,7 @@ func FromGenReceiveResult(w gen.ReceiveResult) (ab2bus.ReceiveResult, error) {
 	out := ab2bus.ReceiveResult{
 		Batch: w.Batch, Redelivered: w.Redelivered, AckIgnored: w.AckIgnored,
 		Notice: deref(w.Notice), Instruction: deref(w.Instruction),
+		TrustNumber: w.TrustNumber, Trust: fromGenTrust(w.Trust),
 	}
 	for _, m := range w.Messages {
 		msg, err := FromGenMessage(m)
@@ -127,7 +129,7 @@ func (b *Bus) Receive(ctx context.Context, in ab2bus.ReceiveInput) (ab2bus.Recei
 // WatchRequest builds the request for Watch; each parameter is absent for its
 // zero value.
 func WatchRequest(in ab2bus.WatchInput) gen.WatchRequestObject {
-	params := gen.WatchParams{After: int64Ptr(in.After), Timeout: seconds(in.Timeout)}
+	params := gen.WatchParams{After: int64Ptr(in.After), Timeout: seconds(in.Timeout), TrustNumber: in.TrustNumber}
 	if in.IncludeOwn {
 		params.IncludeOwn = ptr(true)
 	}
@@ -136,7 +138,7 @@ func WatchRequest(in ab2bus.WatchInput) gen.WatchRequestObject {
 
 // FromGenWake converts a wake; a 200 is a wake, so Woke is true.
 func FromGenWake(w gen.Wake) ab2bus.WatchResult {
-	return ab2bus.WatchResult{Woke: true, Seq: w.Seq, Count: w.Count, Channels: w.Channels}
+	return ab2bus.WatchResult{Woke: true, Seq: w.Seq, Count: w.Count, Channels: w.Channels, TrustNumber: w.TrustNumber}
 }
 
 func (b *Bus) Watch(ctx context.Context, in ab2bus.WatchInput) (ab2bus.WatchResult, error) {

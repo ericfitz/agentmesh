@@ -193,6 +193,26 @@ func CheckKty(v any) error {
 // #30, a plan ruling).
 const MaxJWKMemberBytes = 64
 
+// MaxJWKCertificateBytes bounds one x5c entry of a JWK (a base64 DER
+// certificate; the schema states it so a key the server publishes validates).
+// MaxJWKChainCertificates bounds the entries: the leaf and its intermediate.
+const (
+	MaxJWKCertificateBytes  = 4096
+	MaxJWKChainCertificates = 2
+)
+
+// CheckJWKCertificateMembers refuses a submitted JWK that carries x5c or
+// x5t#S256: the server sends them in the key set it publishes (ADR 0019), and
+// a key registered by a client is a bare key.
+func CheckJWKCertificateMembers(m map[string]any) error {
+	for _, name := range []string{"x5c", "x5t#S256"} {
+		if _, ok := m[name]; ok {
+			return fmt.Errorf("keys: JWK carries %s, which the server sends and register refuses", name)
+		}
+	}
+	return nil
+}
+
 // CheckJWKMembers' companion: CheckJWKStrings refuses a crv, x, y or kid
 // string longer than MaxJWKMemberBytes; a member that is not a string is left
 // to the JWK parser.

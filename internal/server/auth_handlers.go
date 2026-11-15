@@ -175,6 +175,9 @@ func (a *api) Register(ctx context.Context, req gen.RegisterRequestObject) (gen.
 	if err := keys.CheckJWKStrings(req.Body.PublicKeyJwk); err != nil {
 		return nil, core.E(bus.CodeValidation, "public_key_jwk: %s", err)
 	}
+	if err := keys.CheckJWKCertificateMembers(req.Body.PublicKeyJwk); err != nil {
+		return nil, core.E(bus.CodeValidation, "public_key_jwk: %s", err)
+	}
 	raw, err := json.Marshal(req.Body.PublicKeyJwk)
 	if err != nil {
 		return nil, core.E(bus.CodeValidation, "public_key_jwk: %s", err)

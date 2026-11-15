@@ -157,6 +157,24 @@ func TestOverBoundRefused(t *testing.T) {
 				_, err := b.Watch(ctx, ab2bus.WatchInput{Session: sid, Timeout: 241 * 1e9})
 				return err
 			}, "at most 240 seconds"},
+			{"open_trust_number_over", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.Open(ctx, ab2bus.OpenSessionInput{TrustNumber: boundsPtr(int64(1<<53 + 1))})
+				return err
+			}, "trust_number must be from 0 to 9007199254740992"},
+			{"open_trust_number_negative", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.Open(ctx, ab2bus.OpenSessionInput{TrustNumber: boundsPtr(int64(-1))})
+				return err
+			}, "trust_number must be from 0 to 9007199254740992"},
+			{"receive_trust_number_over", receive(ab2bus.ReceiveInput{TrustNumber: boundsPtr(int64(1<<53 + 1))}), "trust_number must be from 0 to 9007199254740992"},
+			{"receive_trust_number_negative", receive(ab2bus.ReceiveInput{TrustNumber: boundsPtr(int64(-1))}), "trust_number must be from 0 to 9007199254740992"},
+			{"watch_trust_number_over", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.Watch(ctx, ab2bus.WatchInput{Session: sid, TrustNumber: boundsPtr(int64(1<<53 + 1))})
+				return err
+			}, "trust_number must be from 0 to 9007199254740992"},
+			{"watch_trust_number_negative", func(ctx context.Context, b ab2bus.Bus) error {
+				_, err := b.Watch(ctx, ab2bus.WatchInput{Session: sid, TrustNumber: boundsPtr(int64(-1))})
+				return err
+			}, "trust_number must be from 0 to 9007199254740992"},
 			{"watch_after_negative", func(ctx context.Context, b ab2bus.Bus) error {
 				_, err := b.Watch(ctx, ab2bus.WatchInput{Session: sid, After: -1})
 				return err
@@ -466,6 +484,15 @@ func TestAtBoundAccepted(t *testing.T) {
 		ok("history count 10000", err)
 		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: sess.ID, Count: 10000})
 		ok("receive count 10000", err)
+		const maxTrust = int64(1 << 53)
+		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: sess.ID, TrustNumber: boundsPtr(maxTrust)})
+		ok("receive trust_number 2^53", err)
+		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: sess.ID, TrustNumber: boundsPtr(int64(0))})
+		ok("receive trust_number 0", err)
+		_, err = b.Open(ctx, ab2bus.OpenSessionInput{TrustNumber: boundsPtr(maxTrust)})
+		ok("open trust_number 2^53", err)
+		_, err = b.Watch(ctx, ab2bus.WatchInput{Session: sess.ID, TrustNumber: boundsPtr(maxTrust), Timeout: 1e9})
+		ok("watch trust_number 2^53", err)
 		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: long(1024)})
 		codeOf(t, err, ab2bus.CodeNotFound) // past the bound check, then unknown
 		_, err = b.Receive(ctx, ab2bus.ReceiveInput{Session: sess.ID, Ack: long(1024)})

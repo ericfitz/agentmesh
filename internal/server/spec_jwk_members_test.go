@@ -17,7 +17,7 @@ import (
 // refused by the schema, not by go-jose.
 func TestJWKDeclaresAcceptedMembers(t *testing.T) {
 	jwk := Spec().Components.Schemas["JWK"].Value
-	for _, name := range []string{"kty", "crv", "x", "y", "kid"} {
+	for _, name := range []string{"kty", "crv", "x", "y", "kid", "x5c", "x5t#S256"} {
 		if jwk.Properties[name] == nil {
 			t.Errorf("JWK declares no %s", name)
 		}

@@ -75,6 +75,7 @@ type Health struct {
 	Storage         *Usage             // nil below the admin tier
 	Notices         []Notice           // nil below the admin tier; non-nil (possibly empty) at it
 	Maintenance     *HealthMaintenance // nil below the admin tier
+	Signing         *HealthSigning     // nil below the admin tier and in local mode
 }
 
 // HealthStore names the engine and its schema version.
@@ -115,4 +116,24 @@ type HealthJob struct {
 // Monitoring is the health seam: every caller may ask, the answer is tiered.
 type Monitoring interface {
 	Health(ctx context.Context) (Health, error)
+}
+
+// HealthCertificate is one certificate of the signing chain as the health
+// document shows it. NotBefore and NotAfter are Unix milliseconds.
+type HealthCertificate struct {
+	Thumbprint          string
+	NotBefore, NotAfter int64
+	DaysLeft            int
+}
+
+// HealthSigning is the state of the server's signing certificates (ADR 0019
+// section 4.14, plan ruling 16). Intermediate and Leaf are nil when the server
+// holds none; the numbers are 0 when there is nothing to number; Stopped is ""
+// while the server signs, else "intermediate_expired", "intermediate_revoked"
+// or "root_expired". Times are Unix milliseconds.
+type HealthSigning struct {
+	Installation                                                            string
+	Intermediate, Leaf                                                      *HealthCertificate
+	NextRenewalAt, TrustNumber, RootCRLNumber, LeafCRLNumber, LastFailureAt int64
+	LastFailure, Stopped                                                    string
 }

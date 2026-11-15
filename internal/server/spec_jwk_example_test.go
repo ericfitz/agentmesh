@@ -45,6 +45,10 @@ func TestSpecJWKExamplesRegister(t *testing.T) {
 			checkLeafJWKExample(t, raw)
 			continue
 		}
+		// register refuses x5c and x5t#S256, so a request example has neither.
+		if err := keys.CheckJWKCertificateMembers(ex.(map[string]any)); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 		var jwk jose.JSONWebKey
 		if err := jwk.UnmarshalJSON(raw); err != nil {
 			t.Errorf("%s: %v", name, err)

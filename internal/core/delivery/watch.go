@@ -29,6 +29,9 @@ func (s Service) Watch(ctx context.Context, identity string, in bus.WatchInput) 
 	if err := rules.NonNegative("after", in.After); err != nil {
 		return bus.WatchResult{}, err
 	}
+	if err := rules.CheckTrustNumber("trust_number", in.TrustNumber); err != nil {
+		return bus.WatchResult{}, err
+	}
 	limit := time.Duration(s.Cfg.WatchMaxSeconds) * time.Second
 	timeout := in.Timeout
 	if timeout == 0 || timeout > limit {

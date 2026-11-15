@@ -491,7 +491,7 @@ func TestSpecDescriptions(t *testing.T) {
 		}{
 			{"tags", len(doc.Tags), 9},
 			{"operations", len(byID), 57},
-			{"schemas", len(doc.Components.Schemas), 73},
+			{"schemas", len(doc.Components.Schemas), 76},
 			{"properties", countProperties(doc), propertyCount},
 		} {
 			if c.got != c.wants {
@@ -503,7 +503,7 @@ func TestSpecDescriptions(t *testing.T) {
 
 // propertyCount is what countProperties reports over the component schemas
 // (every property reached through inline schemas, `$ref` members included).
-const propertyCount = 328
+const propertyCount = 359
 
 // ---- JSON-level checks over every example and description ----
 
