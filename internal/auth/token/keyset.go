@@ -70,8 +70,8 @@ func thumbprintS256(der []byte) string {
 	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-// ContextSigner signs a digest under a context. Like crypto.Signer, it returns
-// DER for ES256 and the raw signature for EdDSA.
+// ContextSigner signs a message under a context. Like crypto.Signer for an
+// Ed25519 key, it returns the raw signature.
 type ContextSigner interface {
 	Public() crypto.PublicKey
 	SignContext(ctx context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error)

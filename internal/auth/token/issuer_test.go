@@ -54,35 +54,34 @@ func signRaw(t *testing.T, k crypto.Signer, kid string, c jwt.Claims) string {
 }
 
 func TestMintThenVerify(t *testing.T) {
-	for _, alg := range []keys.Algorithm{keys.EdDSA} {
-		i := newIssuer(t)
-		raw, exp, err := i.Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !exp.Equal(t0.Add(time.Hour)) {
-			t.Errorf("%s: expiresAt = %v", alg, exp)
-		}
-		jws, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA, jose.ES256})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := jws.Signatures[0].Header.KeyID; got != i.KID() {
-			t.Errorf("%s: header kid %q, want %q", alg, got, i.KID())
-		}
-		id, err := i.Verify(context.Background(), raw, t0.Add(time.Minute))
-		if err != nil || id != "alice" {
-			t.Errorf("%s: Verify = %q, %v", alg, id, err)
-		}
-		if i.Algorithm() != alg || i.URL() != issURL || i.Lifetime() != time.Hour {
-			t.Errorf("%s: accessors", alg)
-		}
-		if i.TokenEndpoint() != issURL+"/v1/auth/token" || i.JWKSURI() != issURL+"/v1/auth/jwks" {
-			t.Errorf("%s: endpoints %q %q", alg, i.TokenEndpoint(), i.JWKSURI())
-		}
-		if _, _, err := i.Mint(context.Background(), MintInput{Kind: KindAgent}); err == nil {
-			t.Errorf("%s: empty identity minted", alg)
-		}
+	alg := keys.EdDSA
+	i := newIssuer(t)
+	raw, exp, err := i.Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exp.Equal(t0.Add(time.Hour)) {
+		t.Errorf("%s: expiresAt = %v", alg, exp)
+	}
+	jws, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA, jose.ES256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := jws.Signatures[0].Header.KeyID; got != i.KID() {
+		t.Errorf("%s: header kid %q, want %q", alg, got, i.KID())
+	}
+	id, err := i.Verify(context.Background(), raw, t0.Add(time.Minute))
+	if err != nil || id != "alice" {
+		t.Errorf("%s: Verify = %q, %v", alg, id, err)
+	}
+	if i.Algorithm() != alg || i.URL() != issURL || i.Lifetime() != time.Hour {
+		t.Errorf("%s: accessors", alg)
+	}
+	if i.TokenEndpoint() != issURL+"/v1/auth/token" || i.JWKSURI() != issURL+"/v1/auth/jwks" {
+		t.Errorf("%s: endpoints %q %q", alg, i.TokenEndpoint(), i.JWKSURI())
+	}
+	if _, _, err := i.Mint(context.Background(), MintInput{Kind: KindAgent}); err == nil {
+		t.Errorf("%s: empty identity minted", alg)
 	}
 }
 
@@ -172,32 +171,28 @@ func TestIssuerVerifyRefusesWrongClaims(t *testing.T) {
 }
 
 func TestJWKSShape(t *testing.T) {
-	for _, alg := range []keys.Algorithm{keys.EdDSA} {
-		i := newIssuer(t)
-		set := i.JWKS(context.Background())
-		if len(set.Keys) != 1 {
-			t.Fatalf("%s: %d keys", alg, len(set.Keys))
+	alg := keys.EdDSA
+	i := newIssuer(t)
+	set := i.JWKS(context.Background())
+	if len(set.Keys) != 1 {
+		t.Fatalf("%s: %d keys", alg, len(set.Keys))
+	}
+	k := set.Keys[0]
+	kty := "OKP"
+	if k.KeyID != i.KID() || k.Algorithm != string(alg) || k.Use != "sig" || !k.IsPublic() {
+		t.Errorf("%s: key %+v", alg, k)
+	}
+	raw, err := k.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"kty":"` + kty + `"`, `"use":"sig"`, `"alg":"` + string(alg) + `"`, `"kid":"` + i.KID() + `"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("%s: json %s lacks %s", alg, raw, want)
 		}
-		k := set.Keys[0]
-		kty := "OKP"
-		if alg == keys.ES256 {
-			kty = "EC"
-		}
-		if k.KeyID != i.KID() || k.Algorithm != string(alg) || k.Use != "sig" || !k.IsPublic() {
-			t.Errorf("%s: key %+v", alg, k)
-		}
-		raw, err := k.MarshalJSON()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, want := range []string{`"kty":"` + kty + `"`, `"use":"sig"`, `"alg":"` + string(alg) + `"`, `"kid":"` + i.KID() + `"`} {
-			if !strings.Contains(string(raw), want) {
-				t.Errorf("%s: json %s lacks %s", alg, raw, want)
-			}
-		}
-		if strings.Contains(string(raw), `"d":`) {
-			t.Errorf("%s: private material in JWKS", alg)
-		}
+	}
+	if strings.Contains(string(raw), `"d":`) {
+		t.Errorf("%s: private material in JWKS", alg)
 	}
 }
 

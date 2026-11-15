@@ -309,14 +309,10 @@ func (i *Issuer) Mint(ctx context.Context, in MintInput) (string, time.Time, err
 	if a := set.Active; (!a.NotBefore.IsZero() && now.Before(a.NotBefore)) || (!a.NotAfter.IsZero() && !now.Before(a.NotAfter)) {
 		return "", time.Time{}, fmt.Errorf("%w: the signing certificate is not valid at this time", ErrSignerUnavailable)
 	}
-	ja := jose.EdDSA
-	if set.Active.Algorithm == keys.ES256 {
-		ja = jose.ES256
-	}
 	sctx, cancel := context.WithTimeout(ctx, SignTimeout)
 	defer cancel()
 	opts := (&jose.SignerOptions{}).WithType("at+jwt").WithHeader("kid", set.Active.KID).WithHeader("x5t#S256", set.Active.KID)
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: ja, Key: cryptosigner.Opaque(ctxSigner{sctx, set.Signer})}, opts)
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: cryptosigner.Opaque(ctxSigner{sctx, set.Signer})}, opts)
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("%w: %w", ErrSignerUnavailable, err)
 	}
@@ -407,17 +403,15 @@ func (i *Issuer) JWKS(ctx context.Context) jose.JSONWebKeySet {
 			// validate admitted the key, so this cannot happen.
 			continue
 		}
-		if len(k.Chain) > 0 {
-			// validate parsed every certificate of the chain, so these parses cannot fail.
-			certs := make([]*x509.Certificate, 0, len(k.Chain))
-			for _, der := range k.Chain {
-				if c, err := x509.ParseCertificate(der); err == nil {
-					certs = append(certs, c)
-				}
+		// validate parsed every certificate of the chain, so these parses cannot fail.
+		certs := make([]*x509.Certificate, 0, len(k.Chain))
+		for _, der := range k.Chain {
+			if c, err := x509.ParseCertificate(der); err == nil {
+				certs = append(certs, c)
 			}
-			thumb, _ := base64.RawURLEncoding.DecodeString(thumbprintS256(k.Chain[0]))
-			j.Certificates, j.CertificateThumbprintSHA256 = certs, thumb
 		}
+		thumb, _ := base64.RawURLEncoding.DecodeString(thumbprintS256(k.Chain[0]))
+		j.Certificates, j.CertificateThumbprintSHA256 = certs, thumb
 		out.Keys = append(out.Keys, j)
 	}
 	return out

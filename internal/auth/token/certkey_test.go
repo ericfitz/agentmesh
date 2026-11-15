@@ -418,18 +418,27 @@ func TestKeyNeedsAChain(t *testing.T) {
 	emptyChain.Chain = [][]byte{}
 	foreign := c.key // the chain is c's, the key another
 	foreign.Public = pub
-	cases := map[string]Key{"nil chain": noChain, "empty chain": emptyChain, "chain of another key": foreign}
-	for name, k := range cases {
-		t.Run(name, func(t *testing.T) {
-			if err := (KeySet{Active: k, Signer: cryptoSigner{c.signer}, Keys: []Key{k}}).validate(); err == nil {
-				t.Error("validate accepted the key as active")
+	cases := []struct {
+		name string
+		key  Key
+		want string
+	}{
+		{"nil chain", noChain, "has no certificate chain"},
+		{"empty chain", emptyChain, "has no certificate chain"},
+		{"chain of another key", foreign, "the key is not the leaf certificate's"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k := tc.key
+			check := func(what string, err error) {
+				t.Helper()
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("validate (%s) = %v, want an error containing %q", what, err, tc.want)
+				}
 			}
-			if err := (KeySet{Active: c.key, Signer: cryptoSigner{c.signer}, Keys: []Key{c.key, k}}).validate(); err == nil {
-				t.Error("validate accepted the key as a listed key")
-			}
-			if err := (KeySet{Keys: []Key{k}}).validate(); err == nil {
-				t.Error("validate accepted the key in a verify-only set")
-			}
+			check("active", (KeySet{Active: k, Signer: cryptoSigner{c.signer}, Keys: []Key{k}}).validate())
+			check("listed", (KeySet{Active: c.key, Signer: cryptoSigner{c.signer}, Keys: []Key{c.key, k}}).validate())
+			check("verify-only", (KeySet{Keys: []Key{k}}).validate())
 		})
 	}
 }
