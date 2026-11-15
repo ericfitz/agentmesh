@@ -16,7 +16,9 @@ An ok line is "ok   STEP: DETAIL". A failure is
 failed" on standard error, and exit 1. With no identity, check stops after
 health, prints the register command to run next and exits 0.
 
-check creates no session and changes no configuration. The token step always
+check creates no session and writes no configuration file, but it pins the
+server's root on first contact, and with -accept-new-root replaces the pin, as
+every command does. The token step always
 asks the server for a new bearer, so it proves the key works now, and it caches
 that bearer in the data directory as serve does.
 

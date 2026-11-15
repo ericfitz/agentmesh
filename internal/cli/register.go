@@ -13,8 +13,7 @@ import (
 
 // RunRegister is `agentmesh register [-profile P] [-identity I] [-server URL]
 // [-enrollment-token T] [-insecure-http] [-root-thumbprint T] [-installation NAME]
-// [-accept-new-root]
-// [-algorithm EdDSA|ES256]` (Milestone 6 choice 14;
+// [-accept-new-root] [-algorithm EdDSA|ES256]` (Milestone 6 choice 14;
 // Decision (Eric, 2026-10-21), item 6): generate a key, write it to the
 // pending file (credential.Store.PendingPath), register its public half and,
 // once the server answered 201, save that key as the credential and remove the

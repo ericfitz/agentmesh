@@ -170,7 +170,7 @@ func TestCheckReportsMismatch(t *testing.T) {
 	code, out, errs := run(args, environ)
 	got := lines(out)
 	if code != 1 || len(got) != 1 || !strings.HasPrefix(got[0], "FAIL reach: ") || !strings.Contains(got[0], s.thumbs[0]) || !strings.Contains(got[0], s.thumbs[1]) ||
-		!strings.Contains(got[0], "fix: ") || !strings.Contains(got[0][strings.Index(got[0], "fix: "):], "-accept-new-root") ||
+		!strings.Contains(got[0], "fix: ") || !strings.Contains(got[0][strings.Index(got[0], "fix: "):], "check -profile lab -server "+s.URL+" -accept-new-root") ||
 		!strings.Contains(errs, "check: reach failed") {
 		t.Fatalf("mismatch: %d, stdout %q, stderr %q", code, out, errs)
 	}

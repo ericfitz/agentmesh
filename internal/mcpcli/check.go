@@ -16,7 +16,6 @@ import (
 	"github.com/ericfitz/agentmesh/internal/fileacl"
 	"github.com/ericfitz/agentmesh/internal/mcpserver"
 	"github.com/ericfitz/agentmesh/internal/profile"
-	"github.com/ericfitz/agentmesh/internal/trust"
 )
 
 // checkTimeout bounds each network step of `check`.
@@ -111,12 +110,15 @@ func resolveFix(err error) string {
 // installation or server is replaced with -accept-new-root after the operator
 // has verified the new root's thumbprint out of band; anything else is a
 // matter for the troubleshooting topic.
-func trustFix(err error, server string) string {
-	var me *trust.MismatchError
-	if errors.As(err, &me) && (me.What == "root" || me.What == "installation" || me.What == "server") {
-		return fmt.Sprintf("if the change is expected and you checked the new root's thumbprint with the server's operator, run %s check -server %s -accept-new-root", Binary, server)
+func trustFix(err error, server, profileName string) string {
+	if !client.IsRootMismatch(err) {
+		return Binary + " help troubleshoot"
 	}
-	return Binary + " help troubleshoot"
+	prof := ""
+	if profileName != "" && profileName != "default" {
+		prof = " -profile " + profileName
+	}
+	return fmt.Sprintf("if the change is expected and you checked the new root's thumbprint with the server's operator, run %s check%s -server %s -accept-new-root", Binary, prof, server)
 }
 
 // ownerOnlyFix is the command that makes a key file owner-only.
@@ -130,7 +132,9 @@ func ownerOnlyFix(path string) string {
 // runCheck is `agentmesh-mcponly check [-server URL] [-identity I]
 // [-credential FILE] [-profile P]`: reach, health, identity, credential,
 // token and access, one line each, stopping at the first FAIL (exit 1). It
-// creates no session and changes no configuration; the token step always
+// creates no session and writes no configuration file, but its reach step pins
+// the server's root on first contact (and replaces the pin with
+// -accept-new-root), as every command does; the token step always
 // exchanges (never uses a cached bearer) and caches the new bearer in the data
 // directory, as serve does. A second or overlapping run does the same. Without an identity it stops after health with
 // the register command to run next (exit 0).
@@ -167,7 +171,7 @@ func runCheck(ctx context.Context, args []string, environ []string, _ io.Reader,
 		return rep.fail("reach", err.Error(), fmt.Sprintf("check the URL and that the server is running, then %s check -server %s", Binary, server))
 	}
 	if err := client.EnsureServerTrust(ctx, o, hc); err != nil {
-		return rep.fail("reach", err.Error(), trustFix(err, server))
+		return rep.fail("reach", err.Error(), trustFix(err, server, selectedProfile(o)))
 	}
 	rep.ok("reach", "%s (server %s, protocol %s)", server, info.ServerVersion, info.ProtocolVersion)
 
@@ -241,4 +245,14 @@ func credentialFix(err error, path, registerFix string) string {
 		return ownerOnlyFix(path)
 	}
 	return registerFix
+}
+
+// selectedProfile is the name of the profile the options select; empty when
+// the selection fails (the trust step has already reported that).
+func selectedProfile(o client.Options) string {
+	sel, err := client.SelectProfile(o)
+	if err != nil {
+		return ""
+	}
+	return sel.Name
 }

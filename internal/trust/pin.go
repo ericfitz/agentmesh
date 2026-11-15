@@ -31,11 +31,11 @@ type MismatchError struct{ What, Held, Got string }
 func (e *MismatchError) Error() string {
 	switch e.What {
 	case "root", "installation":
-		return fmt.Sprintf("trust: the server's %s is %s, the pinned %s is %s; nothing was changed (to trust the new one, run register or login with -accept-new-root)", e.What, e.Got, e.What, e.Held)
+		return fmt.Sprintf("trust: the server's %s is %s, the pinned %s is %s; nothing was changed (to trust the new one, rerun the command with -accept-new-root)", e.What, e.Got, e.What, e.Held)
 	case "expected root", "expected installation":
 		return fmt.Sprintf("trust: the profile expects %s %s, got %s; nothing was pinned", strings.TrimPrefix(e.What, "expected "), e.Held, e.Got)
 	default:
-		return fmt.Sprintf("trust: the pinned %s is %s, the profile's is %s; nothing was changed (to trust the profile's server, run register or login with -accept-new-root)", e.What, e.Held, e.Got)
+		return fmt.Sprintf("trust: the pinned %s is %s, the profile's is %s; nothing was changed (to trust the profile's server, rerun the command with -accept-new-root)", e.What, e.Held, e.Got)
 	}
 }
 
@@ -51,7 +51,7 @@ type Accepted struct {
 type incompleteError struct{ dir, why string }
 
 func (e *incompleteError) Error() string {
-	return fmt.Sprintf("trust: the pin in %s is incomplete (%s), perhaps after an interrupted run; nothing was changed (run register or login with -accept-new-root, or delete the directory)", e.dir, e.why)
+	return fmt.Sprintf("trust: the pin in %s is incomplete (%s), perhaps after an interrupted run; nothing was changed (rerun the command with -accept-new-root, or delete the directory)", e.dir, e.why)
 }
 
 // pin reads the pin under the caller's lock. There is no pin only when

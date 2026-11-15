@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/gen"
 	"github.com/ericfitz/agentmesh/internal/profile"
+	"github.com/ericfitz/agentmesh/internal/trust"
 )
 
 // ServerInfo is what GET /v1/discover says about a server.
@@ -72,6 +74,13 @@ func EnsureServerTrust(ctx context.Context, o Options, hc *http.Client) error {
 	}
 	_, err = ensureTrust(ctx, o, Resolved{Profile: p, ConfigDir: sel.ConfigDir, DataDir: dataDir}, plain)
 	return err
+}
+
+// IsRootMismatch reports whether err is the refusal of a changed root,
+// installation name or server URL, which -accept-new-root replaces.
+func IsRootMismatch(err error) bool {
+	var me *trust.MismatchError
+	return errors.As(err, &me) && (me.What == "root" || me.What == "installation" || me.What == "server")
 }
 
 // ProbeHealth is the health document at the probe tier: GET /v1/health with no
