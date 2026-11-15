@@ -99,6 +99,7 @@ func (m *Manager) renewLocked(ctx context.Context) {
 		// A retry timed for a leaf the clock has since left (a stepped clock):
 		// Ruling 13 wins over the retry schedule.
 		m.retryAt = time.Time{}
+		m.publishLocked()
 	}
 	due := !inPeriod || !now.Before(cur.issuedAt.Add(m.validity/2))
 	if due && !m.retryAt.IsZero() && now.Before(m.retryAt) {
@@ -115,12 +116,14 @@ func (m *Manager) renewLocked(ctx context.Context) {
 	defer m.mu.Unlock()
 	if err == nil {
 		m.failure, m.retryAt = nil, time.Time{}
+		m.publishLocked()
 		return
 	}
 	msg := failureLine(err)
 	m.failure = &Failure{At: now, Message: msg}
 	m.retryOutside = !m.inPeriod(m.cur, now)
 	m.retryAt = now.Add(m.retryDelay(now))
+	m.publishLocked()
 	m.trust.Log.Warn("signingkeys: issuing the leaf failed", "error", msg, "retry_at", m.retryAt.UTC().Format(time.RFC3339))
 }
 

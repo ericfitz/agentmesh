@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/identities"
+	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/store"
 	"github.com/ericfitz/agentmesh/internal/version"
 )
@@ -160,4 +163,100 @@ func TestHealthProbeBodyOmitsNoticeText(t *testing.T) {
 	if strings.Contains(string(body), "SECRET-NOTICE-TEXT") || !strings.Contains(string(body), `"degraded"`) {
 		t.Fatalf("probe body = %s", body)
 	}
+}
+
+type wireHealthSigning struct {
+	Installation string `json:"installation"`
+	Intermediate *struct {
+		Thumbprint string `json:"thumbprint"`
+		DaysLeft   int    `json:"days_left"`
+	} `json:"intermediate"`
+	Leaf *struct {
+		Thumbprint string `json:"thumbprint"`
+		NotAfter   int64  `json:"not_after"`
+	} `json:"leaf"`
+	NextRenewalAt int64   `json:"next_renewal_at"`
+	TrustNumber   int64   `json:"trust_number"`
+	LastFailureAt int64   `json:"last_failure_at"`
+	Stopped       *string `json:"stopped"`
+}
+
+func (e *env) healthWire(identity string) (status string, signing *wireHealthSigning) {
+	e.t.Helper()
+	st, body, _ := e.send(identity, http.MethodGet, "/v1/health")
+	if st != 200 {
+		e.t.Fatalf("health: %d %s", st, body)
+	}
+	var h struct {
+		Status  string             `json:"status"`
+		Signing *wireHealthSigning `json:"signing"`
+	}
+	if err := json.Unmarshal([]byte(body), &h); err != nil {
+		e.t.Fatalf("health body %q: %v", body, err)
+	}
+	return h.Status, h.Signing
+}
+
+// The administrator tier of a server with a leaf manager carries the signing
+// section; the identity and probe tiers do not; a stopped manager makes the status
+// degraded and the answer is still a 200.
+func TestHealthSigningWire(t *testing.T) {
+	e := keysEnv(t)
+	st, sg := e.healthWire("root")
+	if st != "ok" || sg == nil || sg.Installation != e.fx.Installation || sg.Intermediate == nil || sg.Leaf == nil ||
+		sg.NextRenewalAt == 0 || sg.TrustNumber != e.mgr.Bundle().TrustNumber || sg.Stopped != nil {
+		t.Fatalf("admin tier: %q %+v", st, sg)
+	}
+	cur, _ := e.mgr.Current()
+	if sg.Leaf.Thumbprint != cur {
+		t.Errorf("leaf %s, current %s", sg.Leaf.Thumbprint, cur)
+	}
+	for _, id := range []string{"pat", ""} {
+		if _, sg := e.healthWire(id); sg != nil {
+			t.Errorf("identity %q sees %+v", id, sg)
+		}
+	}
+	e.clock.Advance(9 * 24 * time.Hour) // the leaf has expired and nothing renewed it
+	if st, sg := e.healthWire("root"); st != "degraded" || sg == nil || sg.Leaf == nil || sg.Leaf.NotAfter > e.core.NowMs() {
+		t.Errorf("expired leaf: %q %+v", st, sg)
+	}
+	// local mode: no signing at all.
+	l := newEnv(t, envOptions{})
+	l.identity("root", true)
+	if st, sg := l.healthWire("root"); st != "ok" || sg != nil {
+		t.Errorf("local mode: %q %+v", st, sg)
+	}
+}
+
+// Health answers while a reload is parked inside a Store read holding the
+// manager's mutex: the signing section reads the snapshot.
+func TestHealthSigningDoesNotWaitForReload(t *testing.T) {
+	e := keysEnv(t)
+	bs := &blockRead{Store: e.store, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	probe, err := core.New(bs, core.Defaults(), core.Options{Now: e.clock.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := e.fx.Manager(t, probe)
+	serving, err := core.New(e.store, core.Defaults(), core.Options{Now: e.clock.Now, Notifier: notify.NewMemory(), Trust: mgr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.core = serving
+	bs.armed.Store(true)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = mgr.Reload(context.Background()) }()
+	<-bs.entered
+	answered := make(chan *wireHealthSigning, 1)
+	go func() { _, sg := e.healthWire("root"); answered <- sg }()
+	select {
+	case sg := <-answered:
+		if sg == nil || sg.Leaf == nil {
+			t.Errorf("signing %+v", sg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("health waited for the reload")
+	}
+	close(bs.release)
+	<-done
 }

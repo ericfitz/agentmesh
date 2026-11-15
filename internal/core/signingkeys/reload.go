@@ -106,7 +106,11 @@ func (m *Manager) reactLocked(l loaded, p Picked, perr error) reloaded {
 		r.pickErr = perr
 	} else {
 		m.stopped = m.stopReason(p, l.mat)
+		if p.Use != nil {
+			m.inUse = p.Use
+		}
 	}
+	defer m.publishLocked()
 	r.stopped = m.stopped
 	if m.stopped != l.wasStopped {
 		r.changed = true

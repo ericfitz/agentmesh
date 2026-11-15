@@ -96,6 +96,17 @@ func (s Service) Health(ctx context.Context, identity, serverVersion string) (bu
 			degraded = true
 		}
 	}
+	// The signing section exists in server mode only (a trust source); the
+	// certificate rules degrade the status at every tier, the object itself
+	// is shown at the admin tier only (section 4.14).
+	var signing *bus.HealthSigning
+	if ts := s.Trust(); ts != nil {
+		sg := ts.Signing()
+		signing = &sg
+		if signingDegraded(sg, s.NowMs()) {
+			degraded = true
+		}
+	}
 	h := bus.Health{Status: bus.HealthOK, Tier: tier, Version: serverVersion, ProtocolVersion: version.Protocol, Now: s.NowMs()}
 	if degraded {
 		h.Status = bus.HealthDegraded
@@ -141,5 +152,21 @@ func (s Service) Health(ctx context.Context, identity, serverVersion string) (bu
 		}
 	}
 	h.Maintenance = m
+	h.Signing = signing
 	return h, nil
+}
+
+// minIntermediateDays is the days left under which the intermediate makes the
+// status degraded (section 4.14).
+const minIntermediateDays = 30
+
+// signingDegraded applies the rules of section 4.14 to the signing section at
+// nowMs: the intermediate expires within 30 days, the last renewal failed, there
+// is no leaf or it has expired, or signing has stopped (the intermediate expired
+// or its key revoked, or the root expired).
+func signingDegraded(sg bus.HealthSigning, nowMs int64) bool {
+	return (sg.Intermediate != nil && sg.Intermediate.DaysLeft < minIntermediateDays) ||
+		sg.LastFailureAt != 0 ||
+		sg.Leaf == nil || sg.Leaf.NotAfter <= nowMs ||
+		sg.Stopped != ""
 }

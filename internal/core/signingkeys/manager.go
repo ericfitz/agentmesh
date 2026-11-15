@@ -123,6 +123,13 @@ type Manager struct {
 	// bundle is the snapshot of the last load (Bundle). It is read without mu, so
 	// a reader never waits for a load that holds mu across a Store read.
 	bundle atomic.Pointer[bus.TrustBundle]
+
+	// inUse is the intermediate the last successful Pick chose (the last one
+	// chosen while none is valid: it then shows as expired; guarded by mu).
+	inUse *x509.Certificate
+	// signing is the snapshot Signing reads, rebuilt by publishLocked at every
+	// change of the state it summarizes.
+	signing atomic.Pointer[signingSnap]
 }
 
 var _ token.KeySource = (*Manager)(nil)
@@ -269,6 +276,7 @@ func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 	b := m.trust.bundleOf(mat)
 	m.bundle.Store(&b)
 	m.gen++
+	m.publishLocked()
 	return changed, nil
 }
 
@@ -425,5 +433,6 @@ func (m *Manager) adopt(pl pendingLeaf) (notify func()) {
 	pl.key.gen = m.gen
 	m.prev, m.cur = m.cur, pl.key
 	m.failure, m.retryAt = nil, time.Time{}
+	m.publishLocked()
 	return m.onChange
 }

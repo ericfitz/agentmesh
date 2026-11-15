@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/pki"
 )
 
 // keysEnv is an env with an issuer, an administrator "root", a non-administrator
@@ -201,6 +204,67 @@ func TestSigningKeysUnconfigured(t *testing.T) {
 		if st != 503 || !strings.HasPrefix(ct, "application/problem+json") || !strings.Contains(body, `"code":"unavailable"`) ||
 			!strings.Contains(body, `"retryable":false`) || !strings.Contains(body, bus.SigningKeysNotConfigured) {
 			t.Errorf("%s %s: %d %s %s", c.method, c.path, st, ct, body)
+		}
+	}
+}
+
+// TestJWKSServesChains: the key set has one key per verified, unrevoked leaf, each
+// with kid equal to x5t#S256 and an x5c of two certificates (the leaf, then its
+// intermediate); a leaf a rotation revoked is absent.
+func TestJWKSServesChains(t *testing.T) {
+	e := keysEnv(t)
+	e.fx.Leaf(t, e.core, e.clock.Now(), 24*time.Hour) // another replica's leaf
+	if err := e.mgr.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	type jwk struct {
+		Kid string   `json:"kid"`
+		X5t string   `json:"x5t#S256"`
+		X5c []string `json:"x5c"`
+	}
+	get := func() []jwk {
+		t.Helper()
+		st, body, _ := e.send("", http.MethodGet, "/v1/auth/jwks")
+		if st != 200 {
+			t.Fatalf("jwks: %d %s", st, body)
+		}
+		var set struct {
+			Keys []jwk `json:"keys"`
+		}
+		if err := json.Unmarshal([]byte(body), &set); err != nil {
+			t.Fatal(err)
+		}
+		return set.Keys
+	}
+	check := func(ks []jwk, n int) {
+		t.Helper()
+		if len(ks) != n {
+			t.Fatalf("%d keys, want %d: %+v", len(ks), n, ks)
+		}
+		for _, k := range ks {
+			if k.Kid == "" || k.Kid != k.X5t || len(k.X5c) != 2 {
+				t.Errorf("key %+v: kid must equal x5t#S256 and x5c hold two certificates", k)
+			}
+			leaf, err := base64.StdEncoding.DecodeString(k.X5c[0])
+			if err != nil || pki.Thumbprint(leaf) != k.Kid {
+				t.Errorf("x5c[0] does not hash to the kid %s: %v", k.Kid, err)
+			}
+			inter, err := base64.StdEncoding.DecodeString(k.X5c[1])
+			if err != nil || pki.Thumbprint(inter) != pki.Thumbprint(e.fx.Intermediate.Raw) {
+				t.Errorf("x5c[1] is not the intermediate: %v", err)
+			}
+		}
+	}
+	before := get()
+	check(before, 2)
+	if st, body := e.rotate("root", ""); st != 200 {
+		t.Fatalf("rotate: %d %s", st, body)
+	}
+	after := get()
+	check(after, 1)
+	for _, k := range before {
+		if k.Kid == after[0].Kid {
+			t.Errorf("the rotated key set still holds a revoked leaf %s", k.Kid)
 		}
 	}
 }

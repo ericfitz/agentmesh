@@ -6,6 +6,9 @@ import "github.com/ericfitz/agentmesh/internal/bus"
 // server mode; nil in local mode). Nothing behind it touches the Store.
 type TrustSource interface {
 	Bundle() bus.TrustBundle // with Root and Installation
+	// Signing is the health document's signing section at the source's clock; like
+	// Bundle it never waits for a load.
+	Signing() bus.HealthSigning
 }
 
 // Trust is the process's trust source, nil in local mode.

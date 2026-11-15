@@ -60,10 +60,11 @@ The administrator flag is the one that gates `GET /v1/admin/status` (see `admin-
 | `maintenance.last_tick_at` | integer, Unix ms | admin | when this process last ticked (absent before its first tick) |
 | `maintenance.lock_error` | string | admin | the last lock error (absent when none) |
 | `maintenance.jobs` | array | admin | the last tick's jobs: `name`, `changed`, `skipped`, and `error` when one failed; `[]` before the first tick or when the lock was held elsewhere |
+| `signing` | object | admin | server mode only: `installation`; `intermediate` and `leaf` (`thumbprint`, `not_before`, `not_after`, whole `days_left`, negative once expired; each absent when the server holds none); `next_renewal_at` (Unix ms, 0 when none is scheduled); `trust_number`, `root_crl_number` and `leaf_crl_number` (0 when none); `last_failure_at` and `last_failure` (the last failed leaf renewal, cleared by the next success); `stopped` (`intermediate_expired`, `intermediate_revoked` or `root_expired`; absent while the server signs) |
 
 ### The status rule
 
-- `degraded` when the `capacity`, the `embedding` or the `inspection` notice is set (an `inspection` notice that no replica has rewritten for `inspection_notice_ttl_seconds` no longer counts, and the next successful inspection on any replica clears it whatever its age), or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same `status`; only an administrator sees why.
+- `degraded` when the `capacity`, the `embedding` or the `inspection` notice is set (an `inspection` notice that no replica has rewritten for `inspection_notice_ttl_seconds` no longer counts, and the next successful inspection on any replica clears it whatever its age), this process's last maintenance tick recorded a lock error or a failed job, or (server mode) the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped (`stopped` is set). Every tier sees the same `status`; only an administrator sees why.
 - `ok` otherwise.
 - Not a document (both this and the 401 are declared responses of the `health` operation in `api/openapi.yaml`): when the store does not answer, the response is a 503 problem (`application/problem+json`) with `code` `unavailable`, `retryable` true and `detail` exactly `store unreachable`. The cause (a driver error that names a host, user or file path) is logged on the server and never sent, because the probe tier is unauthenticated.
 

@@ -11,6 +11,8 @@ type fixedTrust struct{ b bus.TrustBundle }
 
 func (f fixedTrust) Bundle() bus.TrustBundle { return f.b }
 
+func (f fixedTrust) Signing() bus.HealthSigning { return bus.HealthSigning{} }
+
 func TestInBand(t *testing.T) {
 	src := fixedTrust{bus.TrustBundle{TrustNumber: 7, Intermediates: [][]byte{{1}}, Root: []byte{9}, Installation: "inst"}}
 	num := func(n int64) *int64 { return &n }
