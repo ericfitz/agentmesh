@@ -15,7 +15,7 @@ import (
 
 // runRegister is `agentmesh-mcponly register [-server URL] [-identity I]
 // [-credential FILE] [-profile P] [-enrollment-token T |
-// -enrollment-token-file FILE] [-algorithm EdDSA|ES256]`: client.RegisterIdentity
+// -enrollment-token-file FILE] [-algorithm EdDSA|ES256] [-accept-new-root]`: client.RegisterIdentity
 // with this binary's flags. A second run registers the same key again and
 // prints `(existing key)`; with -credential nothing is written locally, so a
 // failed run leaves nothing; without it a failed run leaves the pending key
@@ -25,6 +25,8 @@ func runRegister(ctx context.Context, args []string, environ []string, _ io.Read
 	fs := newFlagSet("register", stderr)
 	o := client.Options{Environ: environ}
 	commonFlags(fs, &o)
+	acceptNewRootFlag(fs, &o)
+	o.Notice = stderrNotice(stderr)
 	var token, tokenFile, algName string
 	fs.StringVar(&token, "enrollment-token", "", "enrollment token, for a server in enrollment mode (default: AGENTMESH_ENROLLMENT_TOKEN)")
 	fs.StringVar(&tokenFile, "enrollment-token-file", "", "file holding the enrollment token")

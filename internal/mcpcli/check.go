@@ -16,6 +16,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/fileacl"
 	"github.com/ericfitz/agentmesh/internal/mcpserver"
 	"github.com/ericfitz/agentmesh/internal/profile"
+	"github.com/ericfitz/agentmesh/internal/trust"
 )
 
 // checkTimeout bounds each network step of `check`.
@@ -106,6 +107,18 @@ func resolveFix(err error) string {
 	return Binary + " help troubleshoot"
 }
 
+// trustFix is the fix for a failed trust step of reach: a changed root,
+// installation or server is replaced with -accept-new-root after the operator
+// has verified the new root's thumbprint out of band; anything else is a
+// matter for the troubleshooting topic.
+func trustFix(err error, server string) string {
+	var me *trust.MismatchError
+	if errors.As(err, &me) && (me.What == "root" || me.What == "installation" || me.What == "server") {
+		return fmt.Sprintf("if the change is expected and you checked the new root's thumbprint with the server's operator, run %s check -server %s -accept-new-root", Binary, server)
+	}
+	return Binary + " help troubleshoot"
+}
+
 // ownerOnlyFix is the command that makes a key file owner-only.
 func ownerOnlyFix(path string) string {
 	if runtime.GOOS == "windows" {
@@ -125,6 +138,8 @@ func runCheck(ctx context.Context, args []string, environ []string, _ io.Reader,
 	fs := newFlagSet("check", stderr)
 	o := client.Options{Environ: environ}
 	commonFlags(fs, &o)
+	acceptNewRootFlag(fs, &o)
+	o.Notice = stderrNotice(stderr)
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
 	}
@@ -150,6 +165,9 @@ func runCheck(ctx context.Context, args []string, environ []string, _ io.Reader,
 	info, err := client.DiscoverServer(ctx, hc, server)
 	if err != nil {
 		return rep.fail("reach", err.Error(), fmt.Sprintf("check the URL and that the server is running, then %s check -server %s", Binary, server))
+	}
+	if err := client.EnsureServerTrust(ctx, o, hc); err != nil {
+		return rep.fail("reach", err.Error(), trustFix(err, server))
 	}
 	rep.ok("reach", "%s (server %s, protocol %s)", server, info.ServerVersion, info.ProtocolVersion)
 

@@ -99,6 +99,12 @@ func open(ctx context.Context, o client.Options, stderr io.Writer) (*client.Conn
 	return c, 0
 }
 
+// acceptNewRootFlag registers -accept-new-root, the flag of register, login and
+// login -human only (ADR 0019 section 4.13): no other command can replace a pin.
+func acceptNewRootFlag(fs *flag.FlagSet, o *client.Options) {
+	fs.BoolVar(&o.AcceptNewRoot, "accept-new-root", false, "trust the server's new root or installation name and replace the pinned one (prints the old and the new)")
+}
+
 // processTable is the process table that watch, wait and the hooks locate
 // their session through. Tests swap it for a fake.
 var processTable procs.Table = procs.System

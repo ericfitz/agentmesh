@@ -30,6 +30,18 @@ func commonFlags(fs *flag.FlagSet, o *client.Options) {
 	fs.StringVar(&o.Profile, "profile", "", "profile name (default: AGENTMESH_PROFILE, then .local/agentmesh.json, then default)")
 }
 
+// acceptNewRootFlag registers -accept-new-root, the flag of register and check
+// only (ADR 0019 section 4.13).
+func acceptNewRootFlag(fs *flag.FlagSet, o *client.Options) {
+	fs.BoolVar(&o.AcceptNewRoot, "accept-new-root", false, "trust the server's new root or installation name and replace the pinned one (prints the old and the new)")
+}
+
+// stderrNotice is Options.Notice for every command: trust events are for the
+// operator on standard error, never on standard output.
+func stderrNotice(stderr io.Writer) func(string) {
+	return func(line string) { _, _ = fmt.Fprintf(stderr, "%s: %s\n", Binary, line) }
+}
+
 // applyEnv fills an empty Server from AGENTMESH_SERVER, an empty Credential
 // from AGENTMESH_CREDENTIAL, an empty RootThumbprint from
 // AGENTMESH_ROOT_THUMBPRINT, an empty Installation from AGENTMESH_INSTALLATION

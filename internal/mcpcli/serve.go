@@ -16,6 +16,7 @@ func serveOptions(args, environ []string, stderr io.Writer) (mcpserver.Options, 
 	fs := newFlagSet("serve", stderr)
 	o := client.Options{Environ: environ}
 	commonFlags(fs, &o)
+	o.Notice = stderrNotice(stderr)
 	if err := fs.Parse(args); err != nil {
 		return mcpserver.Options{}, parseExit(err)
 	}

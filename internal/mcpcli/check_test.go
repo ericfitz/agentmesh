@@ -58,7 +58,7 @@ func TestCheckSteps(t *testing.T) {
 	// No identity: reach and health pass, then the next step is printed.
 	code, out, errs := run([]string{"check", "-server", base}, environ)
 	got := lines(out)
-	if code != 0 || errs != "" || len(got) != 3 ||
+	if code != 0 || noPin(errs) != "" || len(got) != 3 ||
 		!strings.HasPrefix(got[0], "ok   reach: "+base+" (server ") || !strings.Contains(got[0], ", protocol "+version.Protocol+")") ||
 		!strings.HasPrefix(got[1], "ok   health: ") || !strings.HasSuffix(got[1], " (probe tier)") ||
 		got[2] != "next: agentmesh-mcponly register -server "+base+" -identity NAME" {
@@ -91,7 +91,7 @@ func TestCheckSteps(t *testing.T) {
 	got = lines(out)
 	if code != 1 || len(got) != 5 || !strings.HasPrefix(got[4], "FAIL token: unauthenticated:") ||
 		!strings.HasSuffix(got[4], "fix: agentmesh-mcponly register -server "+base+" -identity nobody (if nobody already holds another key, an administrator runs agentmesh server admin reset-credential nobody first)") ||
-		strings.TrimSpace(errs) != "agentmesh-mcponly: check: token failed" {
+		strings.TrimSpace(noPin(errs)) != "agentmesh-mcponly: check: token failed" {
 		t.Errorf("unregistered key: code %d, stdout %q, stderr %q", code, out, errs)
 	}
 	if !strings.HasPrefix(got[3], "ok   credential: "+key) {
@@ -103,7 +103,7 @@ func TestCheckSteps(t *testing.T) {
 	got = lines(out)
 	if code != 1 || len(got) != 1 || !strings.HasPrefix(got[0], "FAIL reach: ") ||
 		!strings.HasSuffix(got[0], "fix: check the URL and that the server is running, then agentmesh-mcponly check -server http://127.0.0.1:1") ||
-		strings.TrimSpace(errs) != "agentmesh-mcponly: check: reach failed" {
+		strings.TrimSpace(noPin(errs)) != "agentmesh-mcponly: check: reach failed" {
 		t.Errorf("closed port: code %d, stdout %q, stderr %q", code, out, errs)
 	}
 }
@@ -202,7 +202,7 @@ func TestCheckIdentityGuard(t *testing.T) {
 	got := lines(out)
 	if code != 1 || len(got) != 3 || !strings.HasPrefix(got[2], "FAIL identity: ") ||
 		!strings.Contains(got[2], "is the OS login name") || !strings.Contains(got[2], "fix: ") ||
-		strings.TrimSpace(errs) != "agentmesh-mcponly: check: identity failed" {
+		strings.TrimSpace(noPin(errs)) != "agentmesh-mcponly: check: identity failed" {
 		t.Errorf("code %d, stdout %q, stderr %q", code, out, errs)
 	}
 	// Another login name passes the step.

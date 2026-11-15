@@ -98,7 +98,7 @@ func TestRegisterCredentialAndRerun(t *testing.T) {
 	}
 	args := []string{"register", "-server", base, "-identity", "pat", "-credential", key}
 	code, out, errs := run(args, environ)
-	if code != 0 || out != "registered pat at "+base+" (created)\n" || errs != "" {
+	if code != 0 || out != "registered pat at "+base+" (created)\n" || noPin(errs) != "" {
 		t.Fatalf("first run: code %d, stdout %q, stderr %q", code, out, errs)
 	}
 	code, out, errs = run(args, environ)

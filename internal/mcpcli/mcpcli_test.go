@@ -125,3 +125,15 @@ func TestServeIdentityGuard(t *testing.T) {
 		t.Errorf("code %d, stdout %q, stderr %q", code, out, errs)
 	}
 }
+
+// noPin drops the first-contact line ("pinned root ...") of a stderr text: a
+// test of another behavior that first meets a server need not repeat it.
+func noPin(s string) string {
+	var keep []string
+	for _, l := range strings.SplitAfter(s, "\n") {
+		if !strings.Contains(l, ": pinned root ") {
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "")
+}

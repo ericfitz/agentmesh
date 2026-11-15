@@ -1,7 +1,9 @@
 agentmesh-mcponly help verify: the six steps of check
 
 check runs six steps, prints one line for each and stops at the first FAIL:
-  reach       the server answers its discovery document
+  reach       the server answers its discovery document, and its trust root and
+              installation name are the pinned ones (a changed root is a FAIL
+              whose fix names -accept-new-root)
   health      the server's health endpoint answers
   identity    an identity is chosen (-identity, AGENTMESH_IDENTITY, the profile's
               identity or the profile's only credential)

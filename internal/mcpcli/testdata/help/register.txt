@@ -16,6 +16,13 @@ is never printed.
   $ agentmesh-mcponly register -server https://agentbus.example.com -identity my-agent -enrollment-token-file ./enrollment-token
     > registered my-agent at https://agentbus.example.com (created)
 
+register pins the server's trust root first, before it sends anything, and
+says so on standard error: "pinned root THUMBPRINT, installation NAME, for
+profile P (URL)". If the server's root or installation name later differs from
+the pinned one, register stops with exit 2 and names both; confirm the new
+thumbprint with the server's operator, then run register again with
+-accept-new-root to replace the pin.
+
 Running it again is safe. It registers the same key and says so; a token is
 not needed for a key the server already has.
 
