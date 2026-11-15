@@ -2,6 +2,8 @@ package config
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -317,6 +319,14 @@ func TestUnknownSettingRefused(t *testing.T) {
 		_, err = Load("", []string{EnvName(name) + "=1"}, nil)
 		if err == nil || !strings.Contains(err.Error(), "unknown setting") {
 			t.Errorf("environment %s: err %v, want unknown setting", name, err)
+		}
+		file := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(file, []byte(`{"`+name+`": 1}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err = Load(file, nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "unknown field") || !strings.Contains(err.Error(), name) {
+			t.Errorf("config file %s: err %v, want an unknown field refusal", name, err)
 		}
 	}
 }

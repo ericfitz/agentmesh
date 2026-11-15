@@ -38,8 +38,9 @@ func bufLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(&buf, nil)), &buf
 }
 
-// TestOpenCreatesPrivateFile: the database is the server's, so a fresh file is 0600 under umask 022, and the -wal and -shm files
-// SQLite creates next to it follow its mode.
+// TestOpenCreatesPrivateFile: the database is the server's, so a fresh file is
+// 0600 under umask 022, and the -wal and -shm files SQLite creates next to it
+// follow its mode.
 func TestOpenCreatesPrivateFile(t *testing.T) {
 	withUmask(t, 0o022)
 	path := newPath(t)

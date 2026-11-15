@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -558,5 +559,51 @@ func TestServeSigningKeysAdminAPI(t *testing.T) {
 	}
 	if st, body := get(t, Config{SigningKeys: &signingkeys.Manager{}}); st != 200 || !strings.Contains(body, `"state":"current"`) {
 		t.Errorf("with a service: %d %s", st, body)
+	}
+}
+
+// Serve runs the expired leaf removal job when it is given a leaf manager and
+// lists no such job without one.
+func TestServeExpiredLeafRemovalJob(t *testing.T) {
+	jobs := func(t *testing.T, withManager bool) []string {
+		t.Helper()
+		st := openSQLite(t, filepath.Join(t.TempDir(), "ab2.db"))
+		c := Config{Store: st, Cfg: oneSecond()}
+		if withManager {
+			cr, err := core.New(st, core.Defaults(), core.Options{Now: time.Now})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.SigningKeys = trusttest.New(t, time.Time{}).Manager(t, cr)
+		}
+		got := make(chan []string, 1)
+		c.OnTick = func(ran bool, report []maintenance.JobResult) {
+			if !ran {
+				return
+			}
+			names := make([]string, len(report))
+			for i, r := range report {
+				names[i] = r.Name
+			}
+			select {
+			case got <- names:
+			default:
+			}
+		}
+		startServe(t, c)
+		select {
+		case names := <-got:
+			return names
+		case <-time.After(10 * time.Second):
+			t.Fatal("no maintenance tick ran")
+			return nil
+		}
+	}
+	has := func(names []string) bool { return slices.Contains(names, "expired leaf removal") }
+	if names := jobs(t, true); !has(names) {
+		t.Errorf("with a leaf manager the jobs are %v, want expired leaf removal", names)
+	}
+	if names := jobs(t, false); has(names) {
+		t.Errorf("without a leaf manager the jobs are %v, want no expired leaf removal", names)
 	}
 }

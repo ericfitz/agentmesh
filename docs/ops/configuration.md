@@ -154,4 +154,4 @@ The first successful exchange binds the person's identity to the token's subject
 
 ## What replicas must share
 
-Replicas over one Postgres database must use the same `issuer`. Replicas also share the trust material, because it is rows in the database (see `deploy.md`); every replica must set the same `root_certificate_file`, `installation_name` and intermediate key.
+Replicas over one Postgres database must use the same `issuer`. Replicas also share the trust material, because it is rows in the database (see `deploy.md`); every replica must use the same root certificate (the same content, not the same path), `installation_name` and intermediate key.

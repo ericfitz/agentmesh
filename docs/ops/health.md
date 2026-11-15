@@ -108,7 +108,7 @@ $ curl -sS -H "Authorization: Bearer $BEARER" http://127.0.0.1:8431/v1/health
 The maintenance block is this process's view, kept in memory; nothing about a run is stored in the database. The loop ticks once per `maintenance_interval_seconds`, the first tick one interval after start on the server (in local mode, in `agentmesh mcp` and `agentmesh tui`, after a random delay of up to one interval), so `lock` is `unknown` and `jobs` is empty until then (and after a lock error). After a tick (here with an interval of 1 second):
 
 ```
-"maintenance":{"interval_seconds":1,"jobs":[{"changed":0,"name":"lapsed sessions","skipped":false}, ...14 jobs, 16 on a server...],"last_tick_at":1792911399430,"lock":"held","owner":"724fe2f04ea92cd30e839391"}
+"maintenance":{"interval_seconds":1,"jobs":[{"changed":0,"name":"lapsed sessions","skipped":false}, ...14 jobs, 15 on a server...],"last_tick_at":1792911399430,"lock":"held","owner":"724fe2f04ea92cd30e839391"}
 ```
 
 The one extra job on a server, which runs just before the last job (`assertion replay expiry`), is `expired leaf removal`. It reports how many leaf certificate rows it deleted: those whose "not after" is more than an hour past, at most 500 a run. An intermediate row is never deleted, and a revoked leaf's serial number stays on the CRL.
