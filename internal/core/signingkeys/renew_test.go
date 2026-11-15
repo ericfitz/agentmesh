@@ -12,8 +12,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/ericfitz/agentmesh/internal/auth/token"
+	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
+	"github.com/ericfitz/agentmesh/internal/store"
 )
 
 // downProvider wraps the file provider: while down is set, Signer fails with
@@ -450,4 +452,105 @@ func TestStepNextDueEdges(t *testing.T) {
 			t.Fatalf("next = %v, want the retry time %v", next, want)
 		}
 	})
+}
+
+// doorbell runs m.Run over a memory notifier and returns the notifier, a read
+// counter (reads of the stored trust number that hints caused) and the count of
+// OnChange calls. Run is parked before doorbell returns.
+func doorbell(t *testing.T, m *signingkeys.Manager) (n *notify.Memory, reads, changes *atomic.Int32) {
+	t.Helper()
+	n, reads, changes = notify.NewMemory(), &atomic.Int32{}, &atomic.Int32{}
+	signingkeys.SetTrustReadHook(func() { reads.Add(1) })
+	parked := make(chan struct{}, 1)
+	signingkeys.SetRunParkedHook(func() {
+		select {
+		case parked <- struct{}{}:
+		default:
+		}
+	})
+	m.SetOnChange(func() { changes.Add(1) })
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); m.Run(ctx, n) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		signingkeys.SetTrustReadHook(nil)
+		signingkeys.SetRunParkedHook(nil)
+	})
+	select {
+	case <-parked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not park")
+	}
+	changes.Store(0)
+	return n, reads, changes
+}
+
+func waitCount(t *testing.T, c *atomic.Int32, want int32, what string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for c.Load() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s = %d, want %d", what, c.Load(), want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestManagerReloadsOnHint(t *testing.T) {
+	e, m, _ := renewEnv(t)
+	n, reads, changes := doorbell(t, m)
+	held := m.Bundle().TrustNumber
+
+	// A message hint (sequence number above 0) causes no read.
+	n.Publish(notify.Hint{ChannelID: 1, Seq: 5})
+	time.Sleep(100 * time.Millisecond)
+	if reads.Load() != 0 {
+		t.Fatalf("a message hint caused %d reads", reads.Load())
+	}
+
+	// A hint when nothing changed: one read, no reload.
+	n.Publish(notify.Hint{})
+	waitCount(t, reads, 1, "reads")
+	time.Sleep(100 * time.Millisecond)
+	if changes.Load() != 0 || m.Bundle().TrustNumber != held {
+		t.Fatalf("a hint with nothing changed reloaded: %d OnChange calls", changes.Load())
+	}
+
+	// Another Trust changed the material: the next read finds it. The fake
+	// clock has not moved, so this hint waits out the one-second limit once.
+	e.tx(t, func(ctx context.Context, tx store.Tx) error {
+		_, err := tx.BumpTrustNumber(ctx, e.nowMs())
+		return err
+	})
+	n.Publish(notify.Hint{})
+	waitCount(t, changes, 1, "OnChange calls")
+	if got := m.Bundle().TrustNumber; got <= held {
+		t.Fatalf("number = %d, held %d before", got, held)
+	}
+	// The manager's own hint (a real OnChange publishes one) finds the numbers equal.
+	before := changes.Load()
+	n.Publish(notify.Hint{})
+	time.Sleep(1200 * time.Millisecond)
+	if changes.Load() != before {
+		t.Fatalf("a second hint reloaded again: %d OnChange calls, want %d", changes.Load(), before)
+	}
+}
+
+// A clock that moves past the second lets the next hint read at once.
+func TestManagerHintReadsAtMostOncePerSecond(t *testing.T) {
+	e, m, _ := renewEnv(t)
+	n, reads, _ := doorbell(t, m)
+	for range 100 {
+		n.Publish(notify.Hint{})
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if got := reads.Load(); got < 1 || got > 2 {
+		t.Fatalf("a burst of 100 hints caused %d reads, want at most 2", got)
+	}
+	base := reads.Load()
+	e.clk.advance(1100 * time.Millisecond)
+	n.Publish(notify.Hint{})
+	waitCount(t, reads, base+1, "reads after the second passed")
 }

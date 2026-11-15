@@ -130,6 +130,19 @@ func Serve(ctx context.Context, c Config) error {
 		return err
 	}
 	embed.Install(cr)
+	if c.SigningKeys != nil {
+		// A change of this process's trust material reloads its issuer and tells
+		// the serving core's watchers (a doorbell hint, sequence number 0). The
+		// callback runs under the manager's locks: it only invalidates and
+		// publishes, both idempotent and non-blocking.
+		iss := c.Issuer
+		c.SigningKeys.SetOnChange(func() {
+			if iss != nil {
+				iss.Invalidate()
+			}
+			cr.Publish(notify.Hint{})
+		})
+	}
 	if err := (channels.Service{Core: cr}).EnsureGeneral(ctx); err != nil {
 		return fmt.Errorf("server: creating the general channel: %w", err)
 	}
@@ -173,7 +186,7 @@ func Serve(ctx context.Context, c Config) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c.SigningKeys.Run(mctx, nil)
+			c.SigningKeys.Run(mctx, cr.Notifier())
 		}()
 	}
 	wg.Add(1)

@@ -322,9 +322,10 @@ func exampleRows() []exRow {
 			},
 			after: func(c *replay, body any) { c.sent = memberInt(c.t, body, "seq") }},
 		{op: "peek", status: 200, live: sessionPath},
-		// Two messages the session itself sent are pending and include_own is
-		// true (ruling 15), so the wake comes at once, after the merge window (Decision 45, 2 s).
-		{op: "watch", status: 200,
+		// The example's trust_number is not the server's, so the watch wakes at
+		// once for the trust numbers (Decision 27): count 0, no channels, no merge
+		// window, although two messages the session sent are pending.
+		{op: "watch", status: 200, emptyOK: []string{"/channels"},
 			live: with(sessionPath, "/query/after", func(c *replay) any { return c.reply - 1 })},
 		{op: "receive", status: 200,
 			emptyOK: []string{"/gaps"}, // gaps appear only after budget eviction deletes unread messages

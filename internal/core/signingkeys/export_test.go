@@ -15,3 +15,7 @@ func (m *Manager) Wake() <-chan struct{} { return m.wake }
 // SetRunParkedHook sets the function Run calls just before it waits for its
 // timer, the wake channel or its context (nil clears it).
 func SetRunParkedHook(f func()) { runParkedHook = f }
+
+// SetTrustReadHook sets the function Run calls before each read of the stored
+// trust number that a hint causes (nil clears it).
+func SetTrustReadHook(f func()) { trustReadHook = f }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/token"
 	"github.com/ericfitz/agentmesh/internal/core/notify"
+	"github.com/ericfitz/agentmesh/internal/store"
 )
 
 // MaxFailureBytes bounds Failure.Message.
@@ -164,13 +165,76 @@ func (m *Manager) nextDue() time.Time {
 	return next
 }
 
+// trustReadInterval is the least time between two reads of the stored trust
+// number that hints cause (Plan ruling 15).
+const trustReadInterval = time.Second
+
+// trustReadHook, when set (export_test.go), is called before each read of the
+// stored trust number that a hint causes.
+var trustReadHook func()
+
+// reloadIfTrustChanged reads the stored trust number and reloads when it
+// differs from the number this process holds. The manager's own change finds
+// the numbers equal: its reload already replaced the snapshot.
+func (m *Manager) reloadIfTrustChanged(ctx context.Context) {
+	if trustReadHook != nil {
+		trustReadHook()
+	}
+	var n int64
+	err := m.trust.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
+		var err error
+		n, err = tx.TrustNumber(ctx)
+		return err
+	})
+	if err != nil {
+		if ctx.Err() == nil {
+			m.trust.Log.Warn("signingkeys: reading the trust number failed", "error", failureLine(err))
+		}
+		return
+	}
+	if n == m.Bundle().TrustNumber {
+		return
+	}
+	if err := m.Reload(ctx); err != nil && ctx.Err() == nil {
+		m.trust.Log.Warn("signingkeys: reload of the trust material failed", "error", failureLine(err))
+	}
+}
+
 // Run calls Step until ctx ends, sleeping until the time it returned. The
 // returned time is on the core's clock: Run waits the difference between it and
 // the core's now on a real timer, so a stepped clock only shortens or lengthens
-// one wait (Step is at most token.ReloadInterval ahead). hints may be nil; a
-// hints is unused until Task 29 makes a hint that carries no message wake Run.
-// Run also wakes when Reload makes an issue due (the manager's wake channel).
-func (m *Manager) Run(ctx context.Context, _ notify.Notifier) {
+// one wait (Step is at most token.ReloadInterval ahead). Run also wakes when
+// Reload makes an issue due (the manager's wake channel).
+//
+// hints may be nil. A hint with sequence number 0 is the trust doorbell: Run
+// reads the stored trust number (at most once a second on the core's clock; a
+// hint inside that second causes one later read when it ends) and reloads when
+// it differs from the number it holds, so a change another process made does
+// not wait for the next periodic reload (Plan ruling 15). A hint with a
+// sequence number above 0 is a message and causes no read.
+func (m *Manager) Run(ctx context.Context, hints notify.Notifier) {
+	var hintC <-chan notify.Hint
+	if hints != nil {
+		c, cancel := hints.Subscribe()
+		defer cancel()
+		hintC = c
+	}
+	var lastRead time.Time
+	var trail *time.Timer
+	var trailC <-chan time.Time
+	defer func() {
+		if trail != nil {
+			trail.Stop()
+		}
+	}()
+	read := func() {
+		if trail != nil {
+			trail.Stop()
+			trail, trailC = nil, nil
+		}
+		lastRead = m.trust.Now()
+		m.reloadIfTrustChanged(ctx)
+	}
 	for ctx.Err() == nil {
 		next := m.Step(ctx)
 		wait := next.Sub(m.trust.Now())
@@ -181,13 +245,34 @@ func (m *Manager) Run(ctx context.Context, _ notify.Notifier) {
 		if runParkedHook != nil {
 			runParkedHook()
 		}
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		case <-m.wake:
-			timer.Stop()
+	parked:
+		for {
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				break parked
+			case <-m.wake:
+				timer.Stop()
+				break parked
+			case h := <-hintC:
+				if h.Seq != 0 {
+					continue
+				}
+				now := m.trust.Now()
+				switch {
+				case lastRead.IsZero() || now.Before(lastRead) || !now.Before(lastRead.Add(trustReadInterval)):
+					read()
+				case trailC == nil:
+					w := min(max(lastRead.Add(trustReadInterval).Sub(now), 0), trustReadInterval)
+					trail = time.NewTimer(w)
+					trailC = trail.C
+				}
+			case <-trailC:
+				trail, trailC = nil, nil
+				read()
+			}
 		}
 	}
 }

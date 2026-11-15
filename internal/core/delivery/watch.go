@@ -65,6 +65,9 @@ func (s Service) Watch(ctx context.Context, identity string, in bus.WatchInput) 
 		if err != nil {
 			return bus.WatchResult{}, err
 		}
+		if woke && res.Count == 0 {
+			return res, nil // the trust numbers differ: no merge window applies
+		}
 		if woke {
 			// Merge window (Decision 45): let a burst finish, then report
 			// the whole of it.
@@ -88,7 +91,7 @@ func (s Service) Watch(ctx context.Context, identity string, in bus.WatchInput) 
 		case <-ctx.Done():
 			return bus.WatchResult{}, ctx.Err()
 		case <-timer.C:
-			return bus.WatchResult{}, nil
+			return bus.WatchResult{TrustNumber: s.trustNumber()}, nil
 		}
 	}
 }
@@ -114,6 +117,12 @@ func (s Service) check(ctx context.Context, identity string, in bus.WatchInput, 
 		case sess.WatchID != watchID:
 			return core.E(bus.CodeReplaced, "a newer watch replaced this one")
 		}
+		// The trust numbers (Decisions 12, 27): any difference, lower or
+		// higher, wakes the watch at once with a count of 0.
+		if n := s.trustNumber(); n != nil && in.TrustNumber != nil && *n != *in.TrustNumber {
+			out, woke = bus.WatchResult{Woke: true, TrustNumber: n}, true
+			return nil
+		}
 		w, err := s.peek(ctx, tx, p, sess, in.After, in.IncludeOwn)
 		if err != nil || w.count == 0 {
 			return err
@@ -122,7 +131,7 @@ func (s Service) check(ctx context.Context, identity string, in bus.WatchInput, 
 		if err != nil {
 			return err
 		}
-		out, woke = bus.WatchResult{Woke: true, Seq: w.seq, Count: w.count, Channels: names}, true
+		out, woke = bus.WatchResult{Woke: true, Seq: w.seq, Count: w.count, Channels: names, TrustNumber: s.trustNumber()}, true
 		return nil
 	})
 	if err != nil {
@@ -132,4 +141,15 @@ func (s Service) check(ctx context.Context, identity string, in bus.WatchInput, 
 		return bus.WatchResult{}, false, core.FromStore(err)
 	}
 	return out, woke, nil
+}
+
+// trustNumber is the server's trust number from the in-memory snapshot (never
+// the Store); nil in local mode.
+func (s Service) trustNumber() *int64 {
+	ts := s.Trust()
+	if ts == nil {
+		return nil
+	}
+	n := ts.Bundle().TrustNumber
+	return &n
 }

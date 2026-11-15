@@ -17,8 +17,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
+	"github.com/ericfitz/agentmesh/internal/core/channels"
+	"github.com/ericfitz/agentmesh/internal/core/delivery"
 	"github.com/ericfitz/agentmesh/internal/core/notify"
+	"github.com/ericfitz/agentmesh/internal/core/sessions"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
 	"github.com/ericfitz/agentmesh/internal/store"
@@ -431,4 +435,145 @@ func TestDiscoverDoesNotWaitForReload(t *testing.T) {
 	}
 	close(bs.release)
 	<-done
+}
+
+type wireWake struct {
+	Seq         int64    `json:"seq"`
+	Count       int      `json:"count"`
+	Channels    []string `json:"channels"`
+	TrustNumber *int64   `json:"trust_number"`
+}
+
+// watchWire runs one watch over HTTP; a 204 is a nil wake.
+func (e *env) watchWire(session, query string) (int, *wireWake) {
+	e.t.Helper()
+	st, body, _ := e.send("pat", http.MethodGet, "/v1/sessions/"+session+"/watch?"+query)
+	if st != 200 {
+		return st, nil
+	}
+	var w wireWake
+	if err := json.Unmarshal([]byte(body), &w); err != nil {
+		e.t.Fatalf("watch body %q: %v", body, err)
+	}
+	return st, &w
+}
+
+func (e *env) watchCore(session string, number *int64, timeout time.Duration, includeOwn ...bool) bus.WatchResult {
+	e.t.Helper()
+	svc := delivery.Service{Core: e.core, Sessions: sessions.Service{Core: e.core}}
+	r, err := svc.Watch(context.Background(), "pat", bus.WatchInput{Session: session, Timeout: timeout, TrustNumber: number, IncludeOwn: len(includeOwn) > 0 && includeOwn[0]})
+	if err != nil {
+		e.t.Fatalf("watch: %v", err)
+	}
+	return r
+}
+
+func TestWatchWakesOnTrustNumber(t *testing.T) {
+	e := keysEnv(t)
+	server := e.mgr.Bundle().TrustNumber
+	s := e.openTrust("")
+	for _, c := range []struct {
+		name   string
+		number int64
+	}{{"lower", server - 1}, {"higher", server + 1}} {
+		t.Run(c.name, func(t *testing.T) {
+			start := time.Now()
+			st, w := e.watchWire(s.ID, fmt.Sprintf("timeout=5&trust_number=%d", c.number))
+			if st != 200 || w == nil || w.Count != 0 || len(w.Channels) != 0 || w.TrustNumber == nil || *w.TrustNumber != server {
+				t.Fatalf("watch with number %d: %d %+v, want 200, count 0, number %d", c.number, st, w, server)
+			}
+			if d := time.Since(start); d > time.Second {
+				t.Fatalf("the trust wake took %v: the merge window must not apply", d)
+			}
+		})
+	}
+	t.Run("equal", func(t *testing.T) {
+		n := server
+		start := time.Now()
+		r := e.watchCore(s.ID, &n, 300*time.Millisecond)
+		if r.Woke || r.Count != 0 || r.TrustNumber == nil || *r.TrustNumber != server || time.Since(start) < 250*time.Millisecond {
+			t.Fatalf("equal number: %+v after %v, want no wake before the timeout and the number on the timeout answer", r, time.Since(start))
+		}
+		if st, w := e.watchWire(s.ID, fmt.Sprintf("timeout=0.3&trust_number=%d", server)); st != 204 || w != nil {
+			t.Fatalf("equal number over HTTP: %d %+v, want 204", st, w)
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		r := e.watchCore(s.ID, nil, 300*time.Millisecond)
+		if r.Woke || r.TrustNumber == nil || *r.TrustNumber != server {
+			t.Fatalf("absent number: %+v, want a timeout carrying the number", r)
+		}
+	})
+	t.Run("message wake carries the number", func(t *testing.T) {
+		if err := (channels.Service{Core: e.core}).EnsureGeneral(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		s := e.openTrust("")
+		req, err := http.NewRequest(http.MethodPut, "http://inproc/v1/channels/general/subscription", strings.NewReader(`{"from":"oldest"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if resp := e.raw("pat", req); resp.StatusCode/100 != 2 {
+			t.Fatalf("subscribe: %d", resp.StatusCode)
+		}
+		if st, b := e.postJSON("root", "/v1/channels/general/messages", `{"content":"hi","type":"note"}`, nil); st/100 != 2 {
+			t.Fatalf("send: %d %s", st, b)
+		}
+		n := server
+		r := e.watchCore(s.ID, &n, 5*time.Second, true)
+		if !r.Woke || r.Count == 0 || r.TrustNumber == nil || *r.TrustNumber != server {
+			t.Fatalf("message wake: %+v", r)
+		}
+	})
+	t.Run("local mode", func(t *testing.T) {
+		l := newEnv(t, envOptions{})
+		l.identity("pat", false)
+		id := l.openTrust("").ID
+		n := int64(5)
+		r := l.watchCore(id, &n, 200*time.Millisecond)
+		if r.Woke || r.TrustNumber != nil {
+			t.Fatalf("local mode: %+v, want a plain timeout", r)
+		}
+	})
+}
+
+func TestWatchWakesWhenTrustChanges(t *testing.T) {
+	e := keysEnv(t)
+	server := e.mgr.Bundle().TrustNumber
+	s := e.openTrust("")
+	type answer struct {
+		st int
+		w  *wireWake
+	}
+	got := make(chan answer, 1)
+	go func() {
+		st, body, _ := e.send("pat", http.MethodGet, fmt.Sprintf("/v1/sessions/%s/watch?timeout=20&trust_number=%d", s.ID, server))
+		var w wireWake
+		if st == 200 {
+			_ = json.Unmarshal([]byte(body), &w)
+		}
+		got <- answer{st, &w}
+	}()
+	select {
+	case a := <-got:
+		t.Fatalf("the watch answered before any change: %d %+v", a.st, a.w)
+	case <-time.After(300 * time.Millisecond):
+	}
+	start := time.Now()
+	st, body := e.rotate("root", "")
+	if st != 200 {
+		t.Fatalf("rotate: %d %s", st, body)
+	}
+	select {
+	case a := <-got:
+		if a.st != 200 || a.w.Count != 0 || a.w.TrustNumber == nil || *a.w.TrustNumber <= server {
+			t.Fatalf("wake: %d %+v, want count 0 and a number above %d", a.st, a.w, server)
+		}
+		if d := time.Since(start); d > time.Second {
+			t.Fatalf("the wake took %v after the renewal", d)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a forced renewal did not wake the watch")
+	}
 }

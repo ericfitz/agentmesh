@@ -137,6 +137,12 @@ func newEnv(t *testing.T, o envOptions) *env {
 		if e.core, err = core.New(s, cfg, opts); err != nil {
 			t.Fatalf("core.New (serving): %v", err)
 		}
+		// As Serve does: a change of the trust material also rings the doorbell
+		// of the serving core's watchers (a hint with sequence number 0).
+		e.mgr.SetOnChange(func() {
+			e.issuer.Invalidate()
+			e.core.Publish(notify.Hint{})
+		})
 		e.opts = Options{Registration: o.registration, Issuer: e.issuer, External: o.external}
 		if o.auth == nil {
 			b := Bearer{Verifier: token.Verifier{Own: e.issuer}, Now: e.clock.Now}
