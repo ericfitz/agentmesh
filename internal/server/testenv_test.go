@@ -131,6 +131,12 @@ func newEnv(t *testing.T, o envOptions) *env {
 			t.Fatalf("token.NewIssuer: %v", err)
 		}
 		e.mgr.SetOnChange(e.issuer.Invalidate)
+		// The serving core gets the manager as its trust source, as cmd does: the
+		// manager runs over a first core on the same Store and clock.
+		opts.Trust = e.mgr
+		if e.core, err = core.New(s, cfg, opts); err != nil {
+			t.Fatalf("core.New (serving): %v", err)
+		}
 		e.opts = Options{Registration: o.registration, Issuer: e.issuer, External: o.external}
 		if o.auth == nil {
 			b := Bearer{Verifier: token.Verifier{Own: e.issuer}, Now: e.clock.Now}

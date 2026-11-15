@@ -121,7 +121,11 @@ func Serve(ctx context.Context, c Config) error {
 	if c.Cfg != nil {
 		cfg = *c.Cfg
 	}
-	cr, err := core.New(c.Store, cfg, core.Options{Now: c.Now, Notifier: c.Notifier, Embedder: c.Embedder, Inspector: c.Inspector, Logger: c.Logger})
+	copts := core.Options{Now: c.Now, Notifier: c.Notifier, Embedder: c.Embedder, Inspector: c.Inspector, Logger: c.Logger}
+	if c.SigningKeys != nil { // never a typed nil in the interface
+		copts.Trust = c.SigningKeys
+	}
+	cr, err := core.New(c.Store, cfg, copts)
 	if err != nil {
 		return err
 	}

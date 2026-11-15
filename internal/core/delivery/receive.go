@@ -157,6 +157,7 @@ func (s Service) Receive(ctx context.Context, identity string, in bus.ReceiveInp
 	if err != nil {
 		return bus.ReceiveResult{}, core.FromStore(err)
 	}
+	res.TrustNumber, res.Trust = core.InBand(s.Trust(), in.TrustNumber)
 	return res, nil
 }
 

@@ -177,7 +177,14 @@ func (m *Manager) RotateSigningKey(ctx context.Context, admin string, in bus.Rot
 		if err != nil || replayed {
 			return err
 		}
-		if notify := m.adopt(pl); notify != nil {
+		notify := m.adopt(pl)
+		// The commit raised the trust number: reload at once so the in-band
+		// snapshot (Bundle) carries it, not after the next 30 second reload.
+		// Reload takes neither the issuing mutex nor the trust lock.
+		if err := m.Reload(ctx); err != nil {
+			t.Log.Warn("signingkeys: the reload after a forced renewal failed", "error", failureLine(err))
+		}
+		if notify != nil {
 			notify()
 		}
 		return nil

@@ -84,6 +84,7 @@ func (s Service) Open(ctx context.Context, identity string, in bus.OpenSessionIn
 	if err != nil {
 		return bus.Session{}, core.FromStore(err)
 	}
+	out.TrustNumber, out.Trust = core.InBand(s.Trust(), in.TrustNumber)
 	return out, nil
 }
 

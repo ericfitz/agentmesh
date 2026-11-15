@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	ab2bus "github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/bus/local"
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/dbtest"
@@ -125,6 +126,37 @@ func TestInprocResponseCheckWired(t *testing.T) {
 		}
 		if got < 1 {
 			t.Fatalf("a ListChannels through newBus was checked %d times, want at least 1: newBus bypasses the response validator", got)
+		}
+	})
+}
+
+// TestInprocCarriesTrust: a session opened in the inproc run carries the server's
+// trust number and, for a client that holds none, the bundle (the inproc
+// transport's responses are validated against the document by respcheck); in the
+// local run there is no trust source and neither member (section 7).
+func TestInprocCarriesTrust(t *testing.T) {
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		h := newHarness(t, e, harnessOptions{})
+		s, err := h.as("pat").Open(context.Background(), ab2bus.OpenSessionInput{})
+		if err != nil {
+			t.Fatalf("Open: %v", err)
+		}
+		if transport == "local" {
+			if s.TrustNumber != nil || s.Trust != nil {
+				t.Fatalf("a local session carries trust: %+v", s)
+			}
+			return
+		}
+		if s.TrustNumber == nil || *s.TrustNumber <= 0 || s.Trust == nil || s.Trust.TrustNumber != *s.TrustNumber ||
+			len(s.Trust.Intermediates) == 0 || s.Trust.Root != nil || s.Trust.Installation != "" {
+			t.Fatalf("an inproc session = number %v, bundle %+v", s.TrustNumber, s.Trust)
+		}
+		again, err := h.as("pat").Open(context.Background(), ab2bus.OpenSessionInput{TrustNumber: s.TrustNumber})
+		if err != nil {
+			t.Fatalf("Open with the number: %v", err)
+		}
+		if again.TrustNumber == nil || *again.TrustNumber != *s.TrustNumber || again.Trust != nil {
+			t.Fatalf("an open with the current number = number %v, bundle %+v", again.TrustNumber, again.Trust)
 		}
 	})
 }

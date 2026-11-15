@@ -14,6 +14,7 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/auth/token"
+	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/pki"
@@ -103,6 +104,7 @@ type Manager struct {
 	cur      *leafKey
 	prev     *leafKey
 	onChange func()
+	bundle   bus.TrustBundle // the snapshot of mat (Bundle)
 
 	// Renewal state (Step; guarded by mu): the time of the last reload Step ran,
 	// the time of a pending retry (zero: none) and the last failed issue.
@@ -260,6 +262,7 @@ func (m *Manager) reloadLocked(ctx context.Context) (changed bool, err error) {
 		}
 	}
 	m.mat, m.revoked, m.loaded = mat, revoked, true
+	m.bundle = m.trust.bundleOf(mat)
 	m.gen++
 	return changed, nil
 }

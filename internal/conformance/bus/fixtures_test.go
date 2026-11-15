@@ -20,6 +20,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/core/rules"
 	"github.com/ericfitz/agentmesh/internal/dbtest"
 	ab2store "github.com/ericfitz/agentmesh/internal/store"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 // fakeClock is the harness's injected clock (Decision 49).
@@ -145,6 +146,7 @@ type harness struct {
 	notifier notify.Notifier // *notify.Memory by default, *notify.Polling when harnessOptions.polling > 0; tests use Subscribe() only
 	embedder *fakeEmbedder
 	cfg      core.Config
+	fx       *trusttest.Fixture // the inproc run's certificate fixture; nil in the local run
 
 	reopen func() (ab2store.Store, error)
 	dsn    string // the database the Store opened (SQLite path, or the schema-scoped Postgres DSN)
@@ -198,6 +200,21 @@ func (h *harness) build(s ab2store.Store, o harnessOptions) {
 		h.cfg.EmbeddingModel = h.embedder.Model()
 		opts.Embedder = h.embedder
 	}
+	if transport == "inproc" {
+		// The serving core of the inproc run has a trust source, as cmd gives it
+		// (section 7): the manager runs over a first core on the same Store and
+		// clock; the certificates are valid on the harness clock. The local run
+		// has none. The first core uses the unwrapped Store, so an injected fault
+		// is not spent on the manager's writes.
+		first, err := core.New(h.raw, h.cfg, core.Options{Now: h.clock.Now, Notifier: h.notifier, Logger: o.logger})
+		if err != nil {
+			h.t.Fatalf("core.New (trust manager): %v", err)
+		}
+		if h.fx == nil { // a sibling shares its parent's root
+			h.fx = trusttest.New(h.t, h.clock.Now())
+		}
+		opts.Trust = h.fx.Manager(h.t, first)
+	}
 	c, err := core.New(h.store, h.cfg, opts)
 	if err != nil {
 		h.t.Fatalf("core.New: %v", err)
@@ -218,7 +235,7 @@ func (h *harness) sibling(o harnessOptions) *harness {
 	if err != nil {
 		h.t.Fatalf("sibling Open: %v", err)
 	}
-	sib := &harness{t: h.t, e: h.e, reopen: h.reopen, dsn: h.dsn}
+	sib := &harness{t: h.t, e: h.e, reopen: h.reopen, dsn: h.dsn, fx: h.fx}
 	sib.build(s, o)
 	return sib
 }
