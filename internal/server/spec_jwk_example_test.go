@@ -2,7 +2,6 @@ package server
 
 import (
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"testing"
@@ -40,15 +39,15 @@ func TestSpecJWKExamplesRegister(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var jwk jose.JSONWebKey
-		if err := jwk.UnmarshalJSON(raw); err != nil {
-			t.Errorf("%s: %v", name, err)
-			continue
-		}
 		if name == "JWKS.keys[0]" {
 			// A published key is a leaf certificate's: its kid is the certificate
 			// thumbprint (x5t#S256), not the RFC 7638 one, and the chain is in x5c.
-			checkLeafJWKExample(t, jwk)
+			checkLeafJWKExample(t, raw)
+			continue
+		}
+		var jwk jose.JSONWebKey
+		if err := jwk.UnmarshalJSON(raw); err != nil {
+			t.Errorf("%s: %v", name, err)
 			continue
 		}
 		pub, _, kid, err := keys.FromJWK(jwk)
@@ -71,30 +70,53 @@ func TestSpecJWKExamplesRegister(t *testing.T) {
 	}
 }
 
-// checkLeafJWKExample checks the JWKS example's key the way the server builds
-// it: the kid is the SHA-256 thumbprint of the first x5c certificate and equals
-// x5t#S256, the key is that certificate's key, and the chain has the leaf and
-// its intermediate.
-func checkLeafJWKExample(t *testing.T, jwk jose.JSONWebKey) {
+// checkLeafJWKExample checks the JWKS example's key as far as its members can
+// be checked: the kid equals x5t#S256 (a 43-character base64url thumbprint),
+// x5c has the leaf and its intermediate, and x is a public Ed25519 key. The
+// example's certificates are placeholders (Eric 2026-11-14), so go-jose cannot
+// parse x5c and the certificate-to-thumbprint check is gone; the key is built
+// from the members without x5c.
+func checkLeafJWKExample(t *testing.T, raw []byte) {
 	t.Helper()
-	if len(jwk.Certificates) != 2 {
-		t.Errorf("JWKS.keys[0]: x5c has %d certificates, want the leaf and its intermediate", len(jwk.Certificates))
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Errorf("JWKS.keys[0]: %v", err)
 		return
 	}
-	leaf := jwk.Certificates[0]
-	want := base64.RawURLEncoding.EncodeToString(sum256(leaf.Raw))
-	if jwk.KeyID != want || base64.RawURLEncoding.EncodeToString(jwk.CertificateThumbprintSHA256) != want {
-		t.Errorf("JWKS.keys[0]: kid %q and x5t#S256 must both be the leaf's thumbprint %q", jwk.KeyID, want)
+	if x5c, ok := m["x5c"].([]any); !ok || len(x5c) != 2 {
+		t.Errorf("JWKS.keys[0]: x5c is %v, want the leaf and its intermediate as 2 strings", m["x5c"])
+	} else {
+		for i, e := range x5c {
+			if _, ok := e.(string); !ok {
+				t.Errorf("JWKS.keys[0]: x5c[%d] is not a string", i)
+			}
+		}
+	}
+	thumb, _ := m["x5t#S256"].(string)
+	if m["kid"] != thumb {
+		t.Errorf("JWKS.keys[0]: kid %v and x5t#S256 %q must be equal", m["kid"], thumb)
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(thumb); err != nil || len(thumb) != 43 || len(b) != 32 {
+		t.Errorf("JWKS.keys[0]: x5t#S256 %q is not 43 characters of base64url (%v)", thumb, err)
+	}
+	if m["alg"] != "EdDSA" {
+		t.Errorf("JWKS.keys[0]: alg %v, want EdDSA", m["alg"])
+	}
+	delete(m, "x5c")
+	delete(m, "x5t#S256")
+	keyOnly, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jwk jose.JSONWebKey
+	if err := jwk.UnmarshalJSON(keyOnly); err != nil {
+		t.Errorf("JWKS.keys[0]: %v", err)
+		return
 	}
 	if !jwk.IsPublic() {
 		t.Errorf("JWKS.keys[0] is not a public key")
 	}
-	if pub, ok := jwk.Key.(ed25519.PublicKey); !ok || !pub.Equal(leaf.PublicKey) {
-		t.Errorf("JWKS.keys[0]: x is not the leaf certificate's key")
+	if _, ok := jwk.Key.(ed25519.PublicKey); !ok {
+		t.Errorf("JWKS.keys[0]: x is not an Ed25519 key")
 	}
-}
-
-func sum256(b []byte) []byte {
-	h := sha256.Sum256(b)
-	return h[:]
 }

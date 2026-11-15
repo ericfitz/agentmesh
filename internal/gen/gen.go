@@ -1093,7 +1093,7 @@ type IdentityKind string
 // JWK A public JSON Web Key (RFC 7517): the members of the key (kty is required, RFC 7517 section 4.1; so are crv and x, the members both supported key types need) and its kid, alg and use. At most 16 keys: the members of a submitted key. A key submitted at register must be public (no private member) and its kid, when present, must be the key's RFC 7638 SHA-256 thumbprint (base64url, no padding; for Ed25519 the hash of {"crv":"Ed25519","kty":"OKP","x":...}); a kid that is not the thumbprint is 400 validation. The kid shown here is the example key's own.
 type JWK = map[string]interface{}
 
-// JWKS A JSON Web Key Set: one key per unexpired, unrevoked leaf certificate the server has verified, the current one first. Each key also carries x5t#S256 (the leaf's thumbprint, equal to the kid) and x5c (the leaf's certificate, then its intermediate's, base64 DER).
+// JWKS A JSON Web Key Set: one key per unexpired, unrevoked leaf certificate the server has verified, the current one first. Each key also carries x5t#S256 (the leaf's thumbprint, equal to the kid) and x5c (the leaf's certificate, then its intermediate's, base64 DER). The x5c values in the example are shortened placeholders, not certificates.
 type JWKS struct {
 	// Keys The public keys, each with its kid.
 	Keys []JWK `json:"keys"`
