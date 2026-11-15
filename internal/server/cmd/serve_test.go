@@ -21,6 +21,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/identities"
 	"github.com/ericfitz/agentmesh/internal/core/maintenance"
+	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/slackapi"
 	"github.com/ericfitz/agentmesh/internal/slackapi/slackfake"
@@ -606,4 +607,72 @@ func TestServeExpiredLeafRemovalJob(t *testing.T) {
 	if names := jobs(t, false); has(names) {
 		t.Errorf("without a leaf manager the jobs are %v, want no expired leaf removal", names)
 	}
+}
+
+// serveWithManager starts Serve over a memory notifier and a real leaf manager
+// and returns the manager, the notifier and a function that bumps the stored
+// trust number the way another process does (no hint).
+func serveWithManager(t *testing.T) (*signingkeys.Manager, *notify.Memory, func()) {
+	t.Helper()
+	st := openSQLite(t, filepath.Join(t.TempDir(), "ab2.db"))
+	cr, err := core.New(st, core.Defaults(), core.Options{Now: time.Now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := trusttest.New(t, time.Time{}).Manager(t, cr)
+	n := notify.NewMemory()
+	startServe(t, Config{Store: st, Notifier: n, SigningKeys: m})
+	return m, n, func() {
+		t.Helper()
+		err := st.Tx(context.Background(), func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.BumpTrustNumber(ctx, time.Now().UnixMilli())
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Serve connects the trust manager to the serving core's notifier in both
+// directions (ADR 0019 section 4.9, Task 29): a change of the manager's trust
+// material publishes a Seq-0 hint, and a Seq-0 hint makes the manager read the
+// stored trust number. Deleting either line in Serve fails one subtest.
+func TestServeWiresTrustDoorbell(t *testing.T) {
+	t.Run("OnChange publishes a hint", func(t *testing.T) {
+		m, n, bump := serveWithManager(t)
+		hints, cancel := n.Subscribe()
+		defer cancel()
+		time.Sleep(300 * time.Millisecond)
+		select {
+		case <-hints:
+		default:
+		}
+		bump()
+		if err := m.Reload(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case h := <-hints:
+			if h != (notify.Hint{}) {
+				t.Fatalf("hint = %v, want the Seq-0 hint", h)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatal("a change of the trust material published no hint on the serving core")
+		}
+	})
+	t.Run("Run listens to the serving core's hints", func(t *testing.T) {
+		m, n, bump := serveWithManager(t)
+		held := m.Bundle().TrustNumber
+		time.Sleep(300 * time.Millisecond) // Run has subscribed
+		bump()
+		n.Publish(notify.Hint{})
+		deadline := time.Now().Add(5 * time.Second) // the periodic reload is 30 s away
+		for m.Bundle().TrustNumber == held {
+			if time.Now().After(deadline) {
+				t.Fatal("a Seq-0 hint did not make the manager reload")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
 }

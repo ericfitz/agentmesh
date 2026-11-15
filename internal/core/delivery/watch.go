@@ -61,11 +61,11 @@ func (s Service) Watch(ctx context.Context, identity string, in bus.WatchInput) 
 	defer timer.Stop()
 	deadline := time.Now().Add(timeout)
 	for {
-		res, woke, err := s.check(ctx, identity, in, watchID)
+		res, woke, trustWake, err := s.check(ctx, identity, in, watchID)
 		if err != nil {
 			return bus.WatchResult{}, err
 		}
-		if woke && res.Count == 0 {
+		if woke && trustWake {
 			return res, nil // the trust numbers differ: no merge window applies
 		}
 		if woke {
@@ -78,7 +78,7 @@ func (s Service) Watch(ctx context.Context, identity string, in bus.WatchInput) 
 					return bus.WatchResult{}, ctx.Err()
 				case <-time.After(merge):
 				}
-				if again, ok, err := s.check(ctx, identity, in, watchID); err != nil {
+				if again, ok, _, err := s.check(ctx, identity, in, watchID); err != nil {
 					return bus.WatchResult{}, err
 				} else if ok {
 					res = again
@@ -97,12 +97,11 @@ func (s Service) Watch(ctx context.Context, identity string, in bus.WatchInput) 
 }
 
 // check is one peek: replaced when the session's watch id is no longer ours,
-// otherwise whether anything wakes the session.
-func (s Service) check(ctx context.Context, identity string, in bus.WatchInput, watchID string) (bus.WatchResult, bool, error) {
-	var out bus.WatchResult
-	var woke bool
-	err := s.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
-		out, woke = bus.WatchResult{}, false
+// otherwise whether anything wakes the session. trustWake is true when the wake
+// is for the trust numbers (count 0, no merge window).
+func (s Service) check(ctx context.Context, identity string, in bus.WatchInput, watchID string) (out bus.WatchResult, woke, trustWake bool, err error) {
+	err = s.Store.Read(ctx, func(ctx context.Context, tx store.Tx) error {
+		out, woke, trustWake = bus.WatchResult{}, false, false
 		p, err := access.Resolve(ctx, tx, identity)
 		if err != nil {
 			return err
@@ -120,7 +119,7 @@ func (s Service) check(ctx context.Context, identity string, in bus.WatchInput, 
 		// The trust numbers (Decisions 12, 27): any difference, lower or
 		// higher, wakes the watch at once with a count of 0.
 		if n := s.trustNumber(); n != nil && in.TrustNumber != nil && *n != *in.TrustNumber {
-			out, woke = bus.WatchResult{Woke: true, TrustNumber: n}, true
+			out, woke, trustWake = bus.WatchResult{Woke: true, TrustNumber: n}, true, true
 			return nil
 		}
 		w, err := s.peek(ctx, tx, p, sess, in.After, in.IncludeOwn)
@@ -136,11 +135,11 @@ func (s Service) check(ctx context.Context, identity string, in bus.WatchInput, 
 	})
 	if err != nil {
 		if ctx.Err() != nil {
-			return bus.WatchResult{}, false, ctx.Err()
+			return bus.WatchResult{}, false, false, ctx.Err()
 		}
-		return bus.WatchResult{}, false, core.FromStore(err)
+		return bus.WatchResult{}, false, false, core.FromStore(err)
 	}
-	return out, woke, nil
+	return out, woke, trustWake, nil
 }
 
 // trustNumber is the server's trust number from the in-memory snapshot (never

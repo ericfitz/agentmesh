@@ -357,7 +357,10 @@ paths:
         wakes for a message above the watch floor, the highest of the session's
         position, the end of any pending batch and after, so a batch already handed
         out never wakes it. After a wake the server waits up to watch_merge_seconds
-        (default 2) so a burst is reported as one wake. It answers 200 with seq,
+        (default 2) so a burst is reported as one wake. It also wakes at once, with
+        no merge window, a count of 0 and the server's number in trust_number, when
+        trust_number is given and differs from the server's trust number, lower or
+        higher; call receive to bring the bundle. It answers 200 with seq,
         count and channels, or 204 when the wait ended with nothing new. The wait is
         cut to watch_max_seconds (default 50), which also applies to a timeout of 0.
         A newer watch on the same session replaces this one, which answers 409
@@ -366,7 +369,7 @@ paths:
         Side effects: registers the watch on the session, replacing the older one,
         and renews the lease. No idempotency key: a watch is a wait, and repeating
         it registers a new watch that replaces the first. Source: spec 3.5,
-        Decisions 42, 45, 68, ADR 0003.
+        Decisions 42, 45, 68, ADR 0003, ADR 0019 Decisions 12 and 27.
       parameters:
         - $ref: "#/components/parameters/SessionParam"
         - name: after
@@ -400,7 +403,7 @@ paths:
             type: boolean
             default: false
         - name: trust_number
-          description: "The trust number the client holds (0 to 9007199254740992); the watch wakes at once, with a count of 0 and the server's number in trust_number, when the server's number differs from it; absent means the client holds no bundle"
+          description: "The trust number the client holds (0 to 9007199254740992); the watch wakes at once, with a count of 0 and the server's number in trust_number, when the server's number differs from it; absent: no trust wake (the client holds no bundle)"
           example: 1794096000000
           in: query
           required: false
@@ -3375,7 +3378,7 @@ components:
         seq:
           type: integer
           format: int64
-          description: "The highest sequence number among the pending messages that woke the watch."
+          description: "The highest sequence number among the pending messages that woke the watch; 0 on a wake for the trust numbers."
         count:
           type: integer
           description: "How many messages are pending above the watch floor, each source (a channel, or the tag matches) counting at most receive_max_count."

@@ -211,7 +211,10 @@ func (m *Manager) reloadIfTrustChanged(ctx context.Context) {
 // hint inside that second causes one later read when it ends) and reloads when
 // it differs from the number it holds, so a change another process made does
 // not wait for the next periodic reload (Plan ruling 15). A hint with a
-// sequence number above 0 is a message and causes no read.
+// sequence number above 0 is a message and causes no read. The notifier holds
+// one pending hint per subscriber, so a Seq-0 hint published while Run is busy
+// (in Step, say) can be dropped; the periodic reload every token.ReloadInterval
+// (30 seconds) covers it.
 func (m *Manager) Run(ctx context.Context, hints notify.Notifier) {
 	var hintC <-chan notify.Hint
 	if hints != nil {
