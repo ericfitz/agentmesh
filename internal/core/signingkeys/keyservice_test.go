@@ -2,6 +2,10 @@ package signingkeys_test
 
 import (
 	"context"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"errors"
 	"os"
@@ -186,6 +190,7 @@ func TestKeyServiceIntermediate(t *testing.T) {
 		later := craft(t, e.f, pub1, func(c *x509.Certificate) { c.NotBefore = e.clk.now().Add(-time.Minute) })
 		e.putIntermediate(t, later, fake.Repoint().Ref)
 		before := e.snap(t)
+		calls := fake.Calls()
 
 		_, err := rotate(ctx, m, "k1")
 		var be *bus.Error
@@ -196,6 +201,9 @@ func TestKeyServiceIntermediate(t *testing.T) {
 			t.Fatalf("rotate err = %v", err)
 		}
 		e.wantSnap(t, before)
+		// The pre-sign guard refused: no signature was requested of the service.
+		// (Pick uses the row's pinned reference, so not even Next is called.)
+		wantCalls(t, fake, calls, 0, "a repointed alias")
 
 		e.at(84 * time.Hour)
 		m.Step(ctx)
@@ -209,6 +217,68 @@ func TestKeyServiceIntermediate(t *testing.T) {
 			t.Fatalf("not logged:\n%s", e.logs.String())
 		}
 	})
+}
+
+// lyingProvider opens signers that report the right public key and sign with
+// another one, once lie is set: the pre-sign guard cannot see it.
+type lyingProvider struct {
+	*kmsfake.Fake
+	lie   bool
+	other *ecdsa.PrivateKey
+}
+
+func (p *lyingProvider) Signer(ctx context.Context, k keyprovider.Key) (keyprovider.Signer, error) {
+	s, err := p.Fake.Signer(ctx, k)
+	if err != nil || !p.lie {
+		return s, err
+	}
+	return lyingSigner{Signer: s, other: p.other}, nil
+}
+
+type lyingSigner struct {
+	keyprovider.Signer
+	other *ecdsa.PrivateKey
+}
+
+func (s lyingSigner) SignContext(_ context.Context, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return ecdsa.SignASN1(rand.Reader, s.other, digest)
+}
+
+// A signer that reports the intermediate's public key but signs with another:
+// the leaf it makes is never current and never stored, and the renewal reports
+// the failure (Ruling 9). Go's x509.CreateCertificate verifies the signature
+// against the signer's public key inside pki.IssueLeaf, so this case is refused
+// there, one step before the manager's own VerifyChain of the new leaf; that
+// post-sign check stays as defense in depth and no signer can reach it (a valid
+// signature by the intermediate's key over a leaf IssueLeaf built passes it).
+func TestKeyServiceWrongSignature(t *testing.T) {
+	ctx := context.Background()
+	e, fake := keyServiceEnv(t)
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lp := &lyingProvider{Fake: fake, other: other}
+	e.tr.Provider = lp
+	m := e.newManager(t)
+	first, _ := m.Current()
+	before := e.snap(t)
+	lp.lie = true
+
+	_, err = rotate(ctx, m, "k1")
+	var be *bus.Error
+	if !errors.As(err, &be) || be.Code != bus.CodeUnavailable || be.Retryable || !strings.Contains(err.Error(), "sign the leaf") {
+		t.Fatalf("rotate err = %v, want a not retryable unavailable naming the failed signature", err)
+	}
+	e.wantSnap(t, before)
+	e.at(84 * time.Hour)
+	m.Step(ctx)
+	if f, ok := m.LastFailure(); !ok || !strings.Contains(f.Message, "sign the leaf") {
+		t.Fatalf("LastFailure = %+v, %v", f, ok)
+	}
+	if cur, _ := m.Current(); cur != first || len(e.leafRows(t)) != 1 {
+		t.Fatal("a leaf with a bad signature was stored or became current")
+	}
 }
 
 // TestKeyChange is section 4.4 in the file form: a second key for the same
@@ -285,7 +355,7 @@ func TestKeyChange(t *testing.T) {
 	if thumbs(res.Revoked)[oldTP] || !thumbs(res.Revoked)[newTP] {
 		t.Fatalf("revoked %v: the old key's leaf must stay, the new key's former leaf must go", res.Revoked)
 	}
-	if !e.logged(oldTP) || !e.logged("not covered") {
+	if !e.loggedTogether(oldTP, "is not covered by this revocation") {
 		t.Fatalf("the old key's leaf was not reported as not covered:\n%s", e.logs.String())
 	}
 	accepted(t, newIss, fromOld, e.clk.now())

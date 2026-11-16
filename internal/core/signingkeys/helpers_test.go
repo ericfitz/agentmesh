@@ -211,6 +211,20 @@ func (e *env) putCRL(t *testing.T, kind, issuerKey string, der []byte) {
 
 func (e *env) logged(sub string) bool { return strings.Contains(e.logs.String(), sub) }
 
+// loggedTogether reports whether one log line holds every one of subs.
+func (e *env) loggedTogether(subs ...string) bool {
+	for _, line := range strings.Split(e.logs.String(), "\n") {
+		all := true
+		for _, s := range subs {
+			all = all && strings.Contains(line, s)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
 func keyID(c *x509.Certificate) string { return pki.KeyID(c.SubjectKeyId) }
 
 func parsePEMKey(t *testing.T, path string) *ecdsa.PrivateKey {

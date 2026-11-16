@@ -114,6 +114,11 @@ func TestFirstContactEndToEnd(t *testing.T) {
 		t.Fatalf("login against the changed root: exit %d, stderr %q, want 2", got.code, got.err)
 	}
 
+	// Nothing was registered with the second server: the identity is unknown to it.
+	if got := run(home, "channels", "list", "-profile", "lab", "-identity", "pin-pat"); got.code == 0 {
+		t.Fatalf("the identity is known to the second server before -accept-new-root: stdout %q", got.stdout)
+	}
+
 	r = run(home, "register", "-profile", "lab", "-identity", "pin-pat", "-server", b.url, "-accept-new-root")
 	if r.code != 0 || !strings.Contains(r.err, "replaced pinned root "+thumbA+", ") || !strings.Contains(r.err, ", with root ") {
 		t.Fatalf("-accept-new-root: exit %d, stdout %q, stderr %q", r.code, r.stdout, r.err)
