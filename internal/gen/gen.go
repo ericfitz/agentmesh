@@ -837,7 +837,7 @@ type CreateChannelRequestKind string
 
 // CreateIdentityByEmailRequest Creates a human identity from an email address.
 type CreateIdentityByEmailRequest struct {
-	// Email The email address the human identity is created for; it is trimmed and lowercased, and the result is the identity's name. At most 128 bytes (the server counts bytes).
+	// Email The email address the human identity is created for; it is trimmed and lowercased, and the result is the identity's name. It must hold exactly one '@' with text on each side (400 validation). At most 128 bytes (the server counts bytes).
 	Email string `json:"email"`
 }
 

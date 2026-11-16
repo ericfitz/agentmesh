@@ -4799,7 +4799,7 @@ components:
           description: "True when the update deleted the task, in which case task is the task as it was; absent otherwise."
     ClaimTaskRequest:
       example:
-        leased_until: 1794182400000
+        leased_until: 4102444800000
       description: Claims a task for the caller, optionally with a lease that runs until a time.
       type: object
       additionalProperties: false
@@ -5468,7 +5468,7 @@ components:
         email:
           type: string
           maxLength: 128
-          description: "The email address the human identity is created for; it is trimmed and lowercased, and the result is the identity's name. At most 128 bytes (the server counts bytes)."
+          description: "The email address the human identity is created for; it is trimmed and lowercased, and the result is the identity's name. It must hold exactly one '@' with text on each side (400 validation). At most 128 bytes (the server counts bytes)."
     HumanIdentity:
       example:
         identity: dana@example.com
