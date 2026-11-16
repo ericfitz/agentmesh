@@ -3,7 +3,7 @@
 # the real repository (installers, workflows, templates, the shared helpers);
 # part 2 applies six mutations in a throwaway worktree of HEAD and proves the
 # check each one targets fires. It is the self-test of the release tooling
-# (Definition of Done C) and runs as the m9-exit-selftest CI job.
+# (Definition of Done C) and is the m9-exit-selftest job of the dispatch-only ci.yml.
 #   usage: m9-exit-checks.sh [--real-only]     (--real-only skips the mutations)
 # Output is the check-gates.sh contract: "ok  <name>" or "FAIL <name>: <why>";
 # exit 1 on any FAIL, 2 on a bad argument. Signing, notarization, the tagged
