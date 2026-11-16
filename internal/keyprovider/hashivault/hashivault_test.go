@@ -491,7 +491,7 @@ func TestSignVerifiesAsJWS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := jose.ParseSigned(compact, []jose.SignatureAlgorithm{jose.ES256})
+	parsed, err := jose.ParseSignedCompact(compact, []jose.SignatureAlgorithm{jose.ES256})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -63,7 +63,7 @@ func TestMintThenVerify(t *testing.T) {
 	if !exp.Equal(t0.Add(time.Hour)) {
 		t.Errorf("%s: expiresAt = %v", alg, exp)
 	}
-	jws, err := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA, jose.ES256})
+	jws, err := jose.ParseSignedCompact(raw, []jose.SignatureAlgorithm{jose.EdDSA, jose.ES256})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -97,7 +97,7 @@ func TestSignThenParseAndVerify(t *testing.T) {
 			t.Errorf("%s: Verify: %v", alg, err)
 		}
 		// Header carries typ client-authentication+jwt.
-		jws, _ := jose.ParseSigned(raw, []jose.SignatureAlgorithm{jose.EdDSA, jose.ES256})
+		jws, _ := jose.ParseSignedCompact(raw, []jose.SignatureAlgorithm{jose.EdDSA, jose.ES256})
 		if jws.Signatures[0].Header.ExtraHeaders[jose.HeaderType] != JWTType {
 			t.Errorf("%s: typ header missing", alg)
 		}
