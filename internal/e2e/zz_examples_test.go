@@ -256,7 +256,18 @@ func exampleRows() []exRow {
 		{op: "wellKnown", status: 200},
 		{op: "authorizationServerMetadata", status: 200},
 		{op: "openidConfiguration", status: 200},
-		{op: "discover", status: 200, emptyOK: []string{"/issuers"}}, // the e2e servers configure no external issuer
+		// The example's trust.leaf_crls is filled, which a server answers only
+		// after a leaf has been revoked: a throwaway administrator forces a
+		// renewal first, so the row does not depend on what ran before it.
+		// The replay's own bearer is signed after this, by the new leaf.
+		{op: "discover", status: 200, emptyOK: []string{"/issuers"}, // the e2e servers configure no external issuer
+			setup: func(c *replay) {
+				saved := c.tg.bearer
+				defer func() { c.tg.bearer = saved }()
+				c.registerAndLogin(c.tg, "acme-renewer")
+				c.makeAdmin(c.tg, "acme-renewer")
+				c.must(http.MethodPost, "/v1/admin/signing-keys/rotate", nil, http.StatusOK)
+			}},
 		{op: "jwks", status: 200},
 		{op: "register", status: 201,
 			setup: func(c *replay) {
