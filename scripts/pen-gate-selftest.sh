@@ -34,7 +34,7 @@ printf 'const PrivateEnterpriseNumber = 99999\nconst PrivateEnterpriseNumber = 9
 mk assigned 'const PrivateEnterpriseNumber = 99999'
 
 check zero 1 'pen-gate: FAIL '
-check standin 1 'pen-gate: FAIL 32473 is the documentation number (RFC 5612); the assigned number is not in yet (ADR 0019, Decision 36)'
+check standin 1 'pen-gate: FAIL 32473 is the documentation number (RFC 5612), not the assigned number (ADR 0019, Decision 50)'
 check toolarge 1 'pen-gate: FAIL '
 check noconst 1 'pen-gate: FAIL '
 check twice 1 'pen-gate: FAIL '

@@ -68,7 +68,7 @@ release-lint: ## actionlint over the workflows and shellcheck over release/, scr
 	shellcheck -s sh install.sh
 release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; a dispatch-only ci.yml job)
 	bash release/test-install.sh $(RELEASE_INSTALL_ARGS)
-verify:      ## Done gate (CLAUDE.md): build, the m4, m6, m7 and m10 dependency rules, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, conformance suites on both engines, gate checks
+verify:      ## Done gate (CLAUDE.md): build, the m4, m6, m7 and m10 dependency rules, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, conformance suites on both engines, gate checks, the enterprise number
 	$(MAKE) build
 	$(MAKE) build-all
 	$(MAKE) build-mcponly
@@ -85,6 +85,7 @@ verify:      ## Done gate (CLAUDE.md): build, the m4, m6, m7 and m10 dependency 
 	$(MAKE) test
 	$(MAKE) test-conformance
 	$(MAKE) check-gates
+	$(MAKE) pen-check
 	@echo "verify: OK"
 
 cats-run:    ## One CATS campaign against a throwaway server (needs cats and Java; not part of verify)
@@ -92,7 +93,7 @@ cats-run:    ## One CATS campaign against a throwaway server (needs cats and Jav
 cats-selftest: ## The harness selftest with the fake cats (no Java; block 40 of check-gates-selftest runs it once unmutated and under mutation)
 	bash scripts/cats-harness-selftest.sh
 	bash scripts/cats-precommit-selftest.sh
-pen-check:   ## Refuse the stand-in enterprise number in internal/pki (ADR 0019, Decision 47; red until the assigned number is in; not part of verify until Task 37)
+pen-check:   ## Refuse 0, the documentation number 32473 and a malformed enterprise number in internal/pki (ADR 0019, Decisions 47 and 50; part of verify)
 	bash scripts/pen-gate.sh
 pen-selftest: ## The pen-check gate against six generated files
 	bash scripts/pen-gate-selftest.sh

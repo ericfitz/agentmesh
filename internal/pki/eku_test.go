@@ -35,3 +35,16 @@ func TestExtKeyUsageShape(t *testing.T) {
 		t.Error("ExtKeyUsageAny counted as the agentmesh usage")
 	}
 }
+
+// TestExtKeyUsagePinned pins the identifier to the number IANA assigned to
+// Trojan Unicorn Ventures LLC (ADR 0019 Decision 50), written out here so a
+// change of the constant alone fails. It refuses 0 and the documentation
+// number 32473 (RFC 5612).
+func TestExtKeyUsagePinned(t *testing.T) {
+	if got, want := ExtKeyUsageAgentmesh.String(), "1.3.6.1.4.1.67669.1.1"; got != want {
+		t.Errorf("ExtKeyUsageAgentmesh = %s, want %s", got, want)
+	}
+	if PrivateEnterpriseNumber == 0 || PrivateEnterpriseNumber == 32473 {
+		t.Errorf("PrivateEnterpriseNumber = %d, want the assigned number", PrivateEnterpriseNumber)
+	}
+}

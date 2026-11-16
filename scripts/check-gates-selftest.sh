@@ -1673,12 +1673,37 @@ block_cats_gates_fire() {
 		'lacks "no-500 rule"'
 }
 
+# mutate_pen LABEL N: the enterprise number constant of internal/pki/eku.go set to N; the pen gate
+# must exit 1 and TestExtKeyUsagePinned must fail (the constant line is the one anchor, once).
+mutate_pen() {
+	local label="$1" n="$2" f="$wt/internal/pki/eku.go" from='const PrivateEnterpriseNumber = 67669' content code=0
+	local glog="$tmp/$label.gate.log" tlog="$tmp/$label.test.log"
+	begin
+	if [ "$(grep -cxF -- "$from" "$f")" -ne 1 ]; then
+		problem "$label" "anchor line not exactly once in internal/pki/eku.go: $from"
+	else
+		content="$(cat "$f")"
+		printf '%s\n' "${content//"$from"/"const PrivateEnterpriseNumber = $n"}" >"$tmp/x" && cp "$tmp/x" "$f"
+		if ! grep -qxF -- "const PrivateEnterpriseNumber = $n" "$f"; then
+			problem "$label" "mutation changed nothing (the constant line is not $n)"
+		else
+			bash "$wt/scripts/pen-gate.sh" >"$glog" 2>&1 || code=$?
+			[ "$code" -eq 1 ] || problem "$label" "pen-gate.sh exit $code, want 1: $(tail -n 2 "$glog" | tr '\n' ' ')"
+			(cd "$wt" && go test -count=1 -p 1 -v -run '^TestExtKeyUsagePinned$' ./internal/pki/ >"$tlog" 2>&1) || true
+			grep -qF -- '--- FAIL: TestExtKeyUsagePinned' "$tlog" || problem "$label" "log lacks '--- FAIL: TestExtKeyUsagePinned': $(tail -n 3 "$tlog" | tr '\n' ' ')"
+		fi
+	fi
+	finish "$label"
+	revert
+}
+
 # --- 41. trust-gates-fire --------------------------------------------------------------
 # Docker-free (the Postgres halves are filtered out). One mutation per rule of
 # the certificate hierarchy (ADR 0019 section 8): the import rules of pki,
 # pki/rootca, trust and trusttest, the chain check's clauses, key revocation,
 # the bundle and trust-number rules, the CA's name check, the pin's installation
-# check and the profile's loopback rule, plus the pen gate's own selftest.
+# check and the profile's loopback rule, the pen gate's own selftest, and the enterprise
+# number set to 0 and to 32473 (the pen gate exits 1, TestExtKeyUsagePinned fails).
 # Each anchor is exactly once in its file (mutate_unit_block checks).
 block_trust_gates_fire() {
 	local label=trust-gates-fire m=github.com/ericfitz/agentmesh log="$tmp/b41z.log"
@@ -1738,6 +1763,8 @@ block_trust_gates_fire() {
 	mutate_unit_block profile-loopback-ignored internal/profile/config.go \
 		'if !loopbackHost(u.Hostname()) && !p.InsecureHTTP {' 'if false {' \
 		./internal/profile/ '^TestServerURLRule$' TestServerURLRule
+	mutate_pen pen-zero 0
+	mutate_pen pen-documentation 32473
 }
 
 block_skip_in_wiring

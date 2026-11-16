@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Refuses the stand-in enterprise number (ADR 0019, Decisions 36 and 47): the
-# branch builds with 32473, this gate keeps it from merging. Reads the one line
+# Refuses 0, the documentation number 32473 and a malformed enterprise number
+# (ADR 0019, Decisions 47 and 50): the assigned number is 67669, and this gate
+# keeps a stand-in from merging or releasing. Reads the one line
 # `const PrivateEnterpriseNumber = <digits>` of internal/pki/eku.go.
 #   usage: pen-gate.sh [--file F]
 set -euo pipefail
@@ -38,6 +39,6 @@ if [ "${#digits}" -gt 10 ] || [ "$digits" -ge 2147483648 ]; then
 fi
 n="$digits"
 [ "$n" -ne 0 ] || fail "0 is reserved"
-[ "$n" -ne 32473 ] || fail "32473 is the documentation number (RFC 5612); the assigned number is not in yet (ADR 0019, Decision 36)"
+[ "$n" -ne 32473 ] || fail "32473 is the documentation number (RFC 5612), not the assigned number (ADR 0019, Decision 50)"
 
 echo "pen-gate: ok $n"

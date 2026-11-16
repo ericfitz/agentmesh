@@ -6,10 +6,10 @@ import (
 	"time"
 )
 
-// PrivateEnterpriseNumber is the stand-in enterprise number under which the
-// agentmesh extended key usage is allocated (ADR 0019 Decision 47). It stays
-// the documentation number until the real allocation replaces it.
-const PrivateEnterpriseNumber = 32473
+// PrivateEnterpriseNumber is the enterprise number IANA assigned to Trojan
+// Unicorn Ventures LLC, under which the agentmesh extended key usage is
+// allocated (ADR 0019 Decision 50).
+const PrivateEnterpriseNumber = 67669
 
 // ExtKeyUsageAgentmesh is the extended key usage every intermediate and leaf
 // carries; a certificate without it is not an agentmesh certificate.
