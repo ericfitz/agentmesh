@@ -1683,7 +1683,9 @@ block_cats_gates_fire() {
 block_trust_gates_fire() {
 	local label=trust-gates-fire m=github.com/ericfitz/agentmesh log="$tmp/b41z.log"
 	begin
-	m7_probe "$label" internal/pki/probe_m7.go "$m/internal/oidctest" "deps_violation=$m/internal/pki imports $m/internal/oidctest" pki-leaf
+	# internal/trust imports internal/pki, so a probe in pki must import a package the
+	# trust rule allows (internal/filelock): any other import trips trust-leaf too.
+	m7_probe "$label" internal/pki/probe_m7.go "$m/internal/filelock" "deps_violation=$m/internal/pki imports $m/internal/filelock" pki-leaf
 	m7_probe "$label" internal/pki/rootca/probe_m7.go "$m/internal/oidctest" "deps_violation=$m/internal/pki/rootca imports $m/internal/oidctest" pki-leaf
 	m7_probe "$label" internal/trust/probe_m7.go "$m/internal/oidctest" "deps_violation=$m/internal/trust imports $m/internal/oidctest" trust-leaf
 	deps_probe "$label" probe_m4.go "$m/internal/trusttest" "deps_violation=$m imports $m/internal/trusttest"
