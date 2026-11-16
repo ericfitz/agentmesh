@@ -4,15 +4,20 @@ All settings are in `configuration.md`; admin commands are in `admin-bootstrap.m
 
 ## 1. One host over SQLite
 
+A server needs a certificate authority before it starts: a root certificate it trusts, an intermediate key with a certificate that the root signed, and a name for the installation (see "The certificates" below and `signing-keys.md`, "A first start", which gives the four commands). With those in place:
+
 ```sh
-agentmesh server -listen 127.0.0.1:8420 -sqlite /var/lib/agentmesh/agentmesh.db
+agentmesh server -listen 127.0.0.1:8420 -sqlite /var/lib/agentmesh/agentmesh.db \
+  -set root_certificate_file=/etc/agentmesh/root.pem \
+  -set intermediate_key_file=/etc/agentmesh/intermediate.key \
+  -set installation_name=example-prod
 ```
 
-There is no default port: `listen` is required, and the server exits 2 with `listen is required` without it. On a loopback address (or a `unix:<path>` socket, created mode 0600; on Windows it gets an owner-only ACL) registration defaults to `open` (Decision 20): an agent claims any free name with an unauthenticated `register`. Any other address defaults to `enrollment` (Decision 58, 72); `-registration open|enrollment` overrides either default.
+There is no default port: `listen` is required, and the server exits 2 with `listen is required` without it. The same goes for the trust settings: without `root_certificate_file`, `installation_name` or one of `intermediate_key_file` and `intermediate_key_uri` the server exits 2 and names the missing setting. On a loopback address (or a `unix:<path>` socket, created mode 0600; on Windows it gets an owner-only ACL) registration defaults to `open` (Decision 20): an agent claims any free name with an unauthenticated `register`. Any other address defaults to `enrollment` (Decision 58, 72); `-registration open|enrollment` overrides either default.
 
-On start the server prints `generated signing key <kid>` (first start only) and `agentmesh server listening on ...` with the engine, registration mode, issuer and key id. SIGINT or SIGTERM starts a shutdown that gives in-flight requests up to 60 seconds; a clean shutdown exits 0.
+On start the server prints `agentmesh server listening on ...` with the engine, registration mode, issuer and the thumbprint and expiry of the leaf certificate it just made. SIGINT or SIGTERM starts a shutdown that gives in-flight requests up to 60 seconds; a clean shutdown exits 0.
 
-The SQLite file is created with mode 0600. An existing file readable or writable by group or others is refused: `agentmesh server` and `agentmesh server admin` exit non-zero with an error that names the path and mode; fix it with `chmod 600`. (Local mode, which has no signing key, only warns.) The file runs in WAL mode, so `-wal` and `-shm` files sit next to it.
+The SQLite file is created with mode 0600. An existing file readable or writable by group or others is refused: `agentmesh server` and `agentmesh server admin` exit non-zero with an error that names the path and mode; fix it with `chmod 600`. (Local mode, which has no certificates, only warns.) The file runs in WAL mode, so `-wal` and `-shm` files sit next to it.
 
 Set `issuer` on every server that is not local. When it is unset the issuer is `http://<bound address>`, so a server bound to `0.0.0.0` tells clients `http://0.0.0.0:<port>`, and the server prints a notice saying so. Behind a TLS proxy set it to the public `https` URL (no path, no trailing slash).
 
@@ -26,26 +31,32 @@ docker build --build-arg VERSION=2.0.0 -t agentmesh:2.0.0 .
 `make docker-image` builds with `VERSION=dev`; give a release build its version with `--build-arg VERSION=...` and use the tag as the version (the value is what `agentmesh version` and `server_version` in `GET /v1/discover` report). The image is a static binary on a Chainguard `static` base (built with Chainguard `go`), entrypoint `/agentmesh server`, runs as `nonroot` (uid and gid 65532), declares `VOLUME /data` (owned by 65532) and has no shell.
 
 ```sh
-docker run -d --name agentmesh -p 127.0.0.1:8420:8420 -v agentmesh-data:/data \
+docker run -d --name agentmesh --user "$(id -u):$(id -g)" -p 127.0.0.1:8420:8420 -v "$PWD/data:/data" -v "$PWD/ca:/ca:ro" \
   -e AGENTMESH_SERVER_LISTEN=0.0.0.0:8420 \
   -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db \
   -e AGENTMESH_SERVER_ISSUER=https://agentmesh.example.com \
+  -e AGENTMESH_SERVER_ROOT_CERTIFICATE_FILE=/ca/root.pem \
+  -e AGENTMESH_SERVER_INTERMEDIATE_KEY_FILE=/ca/intermediate.key \
+  -e AGENTMESH_SERVER_INSTALLATION_NAME=example-prod \
   agentmesh:local
 ```
 
-A container listens on `0.0.0.0`, which is not local, so registration defaults to `enrollment`; the `-registration` flag, passed as the container command, is the override (`agentmesh:local -registration open`). A named volume takes the ownership of `/data`; a bind-mounted data directory must be writable by uid 65532 (`chown 65532:65532 <dir>`). The container exits 2 with a message when no store or no `listen` is configured.
+A container listens on `0.0.0.0`, which is not local, so registration defaults to `enrollment`; the `-registration` flag, passed as the container command, is the override (`agentmesh:local -registration open`). The intermediate key file is mode 0600 and the server refuses a key file other accounts can read, so the container's user must be the file's owner: this example runs the container as the user that made `ca/` (`--user`, as `deploy/docker-compose.yml` does with `AGENTMESH_UID` and `AGENTMESH_GID`), and then that user must be able to write `data/`. Without `--user` the container runs as uid 65532: give the key file to it (`chown 65532:65532 ca/intermediate.key`); a named volume takes the ownership of `/data`, and a bind-mounted data directory must be writable by uid 65532 (`chown 65532:65532 <dir>`). The CA files are only read, so they can be mounted read-only (`:ro`, as above). The container exits 2 with a message when no store, no `listen` or no trust setting is configured.
 
 `docker stop` waits 10 seconds by default before killing; pass `--time 60` (compose: `stop_grace_period: 60s`) to leave the full drain.
 
-### The signing keys
+### The certificates
 
-The server signs its bearer tokens with a key set kept in the database (the `signing_keys` rows): one active key that signs and any number of retiring keys that stay published so bearers they signed keep verifying. The first start creates the active key through the Store-row provider and stores it in clear; a second start loads it; two servers starting together on a fresh database end with one key. Each bearer carries the `kid` of the key that signed it, and `/v1/auth/jwks` lists every key of the set. A retiring key's `remove_after` time is set to the longest bearer lifetime (86400 s) plus the issuer's 30 s reload interval and 60 s of leeway after it stopped signing; the `signing key removal` maintenance job deletes a retiring key once that time has passed. Every replica reads the set from the database and reloads it at least every 30 s, so a rotation reaches all of them without a restart. Consequently:
+The server signs its bearer tokens with a leaf certificate: an Ed25519 key that each server process makes in memory at start and renews at W/2 (`leaf_validity_hours`, default 168 hours). The leaf is signed by the installation's intermediate key, which the root certificate vouches for. The database holds only certificates and revocation lists, no private key, so a backup holds none either (`backup.md`). `signing-keys.md` explains the hierarchy, the commands and the failure states; what a deployment needs is:
 
-- read access to the database is equivalent to the administrator flag: anyone who can read it can mint a token for any identity. Protect the database, its backups and its volume like a private key;
-- there is no key file. Three settings control the set (`configuration.md`): `signing_key_uri` (unset keeps the key in the database), `signing_key_rotation_hours` (default 720; 0 turns the scheduled rotation off) and `signing_key_rotation_cooldown_seconds` (default 3600);
-- an external key needs a binary built with the backend's tag: `-tags awskms` for AWS KMS, `-tags gcpkms` for Google Cloud KMS, `-tags azurekms` for Azure Key Vault, `-tags hashivault` for HashiCorp Vault transit or OpenBao (`signing-keys.md`); the Docker image of this repository is built with all four tags (`ARG BUILD_TAGS` in its `Dockerfile`, `awskms,gcpkms,azurekms,hashivault`), so every backend works there without a rebuild; the release archives (the brew, scoop and winget installs) carry none, so build from source with `-tags` for a binary that needs one;
-- the server refuses to start (exit 1, `signing key: ...` naming `agentmesh server admin signing-key rotate`) when the active key's provider is not the configured one, for example a database whose active key is a database row and a `signing_key_uri` that names an external key; the active key is never changed by a start;
-- a replica whose provider differs from the active key's cannot sign: it logs a warning and signs with the newest retiring key it can use, or refuses to mint (`temporarily_unavailable`) when none remains, while verification keeps working.
+- **The root.** `ca init` makes a root, `root.pem` and `root.key`; the root's directory stays offline and only `root.pem` goes to the servers (`root_certificate_file`; every replica needs the same content). With your own CA, see "A root from an outside CA" in `signing-keys.md`.
+- **The intermediate key, once per installation, shared by every replica.** Either a PEM file (`intermediate_key_file`: PKCS#8, mode 0600 or owner-only), delivered to every replica as a mounted secret, or a key in a key service (`intermediate_key_uri`). `server admin ca csr` creates the file when it is missing and prints the signing request; `ca sign` (or your CA) issues the certificate; `server admin ca install` stores it in the database, where every replica finds it. Run the four commands from the first start once, before the first server starts (`signing-keys.md`, "A first start"; `deploy/docker-compose.yml` has the same steps for the compose stack).
+- **The name.** `installation_name` is the intermediate certificate's subject common name; every replica uses the same name, and each installation under one root needs a name of its own.
+- **Renewing the intermediate certificate before it expires.** The root tool's certificates last 365 days. Health is `degraded` once fewer than 30 days remain (`health.md`). Renew with `ca csr`, `ca sign` and `ca install` for the same key; no restart is needed.
+- An external key needs a binary built with the backend's tag: `-tags awskms` for AWS KMS, `-tags gcpkms` for Google Cloud KMS, `-tags azurekms` for Azure Key Vault, `-tags hashivault` for HashiCorp Vault transit or OpenBao (`signing-keys.md`); the Docker image of this repository is built with all four tags (`ARG BUILD_TAGS` in its `Dockerfile`, `awskms,gcpkms,azurekms,hashivault`), so every backend works there without a rebuild; the release archives (the brew, scoop and winget installs) carry none, so build from source with `-tags` for a binary that needs one.
+- The server refuses to start (exit 2, naming `agentmesh server admin ca csr` and `ca install`) when the database holds no intermediate certificate for the configured key that the pinned root signed and that carries this installation's name; when that certificate has expired or its key is revoked; and when the root has expired. It exits 1 when a key service does not answer while the first leaf is signed.
+- Every start issues a fresh leaf, and the previous process's leaf stays valid until it expires or is revoked. Replicas start independently and each has a leaf of its own; a bearer one replica mints is accepted by the others through the leaf's row and the shared intermediate. Each replica reloads the trust material at least every 30 seconds.
+- Forced renewal and revocation (`signing-keys.md`): `agentmesh signing-keys rotate` or `agentmesh server admin signing-key rotate` revokes every unexpired leaf, and `ca revoke` with `ca install-crl` revokes an intermediate.
 
 ## 3. Postgres and two replicas
 
@@ -56,12 +67,13 @@ cp deploy/example.env deploy/.env      # deploy/.env is git-ignored; set POSTGRE
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Observed on a fresh start: the replicas started together, one printed `generated signing key <kid>`, and both reported the same `kid` and `registration enrollment`. `GET /v1/discover` answered on both ports with `"server_version":"dev"`.
+Both replicas start with `registration enrollment`, each printing its own leaf thumbprint, and `GET /v1/discover` answers on both ports.
 
 What replicas must share:
 
-- the database: it holds the data, the signing key and the single-use record of client assertions, so a token endpoint on any replica refuses an assertion another replica accepted;
-- `issuer`: the one setting that must be identical;
+- the database: it holds the data, the intermediate certificates, the leaf certificates and CRLs and the single-use record of client assertions, so a token endpoint on any replica refuses an assertion another replica accepted;
+- `issuer`: identical on every replica;
+- the trust settings: the same root certificate (the same content, not the same path), the same `installation_name` and the same intermediate key (the same file delivered to every replica, or the same key service key). Nothing else is shared: each replica makes its own leaf;
 - `postgres_budget_mib`, `idle_window_hours` and `cleanup_free_percent`, which must be equal on every replica: the replica that holds the maintenance lock runs the budget backstop with its own values, so a replica with a smaller budget would delete what the others keep, and every replica reports the tier from its own `cleanup_free_percent` (`configuration.md`, "Retention and the budget backstop");
 - the Slack bridge settings, when it is used: the files named by `slack_app_token_file` and `slack_bot_token_file` must exist on every replica (any replica may serve a `bridges` call or archive a bridge), and `slack_archive_after_done_hours`, `slack_max_message_chars`, `slack_canvas_enabled` and `slack_canvas_coalesce_seconds` should match (only the lock holder publishes the scope canvas). One replica at a time runs the Socket Mode connection, under the `slack-bridge` lock; if its host vanishes without closing the database connection, Postgres can keep that lock (and a `bridges create` lock) until the server notices the dead connection, so the TCP keepalive settings below bound the wait. See [slack-bridge.md](slack-bridge.md).
 

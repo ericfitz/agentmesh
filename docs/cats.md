@@ -27,7 +27,7 @@ The harness checks these first and names what is missing (exit 2).
 bash scripts/cats-harness.sh run
 ```
 
-`make cats-run` is the same. It builds the binary, starts a server on a free loopback port over a temporary SQLite file, seeds two identities (`cats-admin`, `cats-agent`) and fixtures, mints a bearer for each, runs CATS over every operation except the skipped ones, checks that the seeded fixtures are still alive and that no minted secret leaked into the server log, the CATS log or the report, stops the server and removes the harness directory. It prints two lines:
+`make cats-run` is the same. It builds the binary, makes a throwaway certificate authority in the harness directory (`ca init`, `ca csr`, `ca sign` and `ca install` of the built binary, installation name `cats-installation`: a server cannot start without one, ADR 0019), starts a server on a free loopback port over a temporary SQLite file, seeds two identities (`cats-admin`, `cats-agent`) and fixtures, mints a bearer for each, runs CATS over every operation except the skipped ones, checks that the seeded fixtures are still alive and that no minted secret leaked into the server log, the CATS log or the report, stops the server and removes the harness directory. It prints two lines:
 
 ```
 tests=13799 success=8790 warnings=1450 errors=3559 status=COMPLETED
@@ -136,7 +136,7 @@ Cost: a spec change that is not documentation pays a build, `make generate` and 
 ## The exceptions
 
 - Go's net/http answers before any handler: 501 `text/plain` on an unknown `Transfer-Encoding` (`DummyTransferEncodingHeaders`), 431 on oversized headers (`LargeNumberOfRandomAlphanumericHeaders`), and `text/plain` 400s after a malformed `Content-Length`. They are not problem+json and the 501 is a 5xx that is not the 503. CATS scores them `success`; the acceptance queries exclude them as above. A proxy in front of the server could change them and this server has none (ADR 0018, Open item 1).
-- Skipped paths, fuzzed alone with `run --paths '<path>' --no-skip`: `/v1/admin/reset` (`scope=everything` deletes `cats-agent` and every token), `/v1/admin/signing-keys/rotate` (every rotation revokes the key that signed both bearers) and `/v1/admin/identities/{identity}/reset-credential` (removes the identity's key). Their 401s after the credential is gone are the expected tail of the run; read the findings before the cliff.
+- Skipped paths, fuzzed alone with `run --paths '<path>' --no-skip`: `/v1/admin/reset` (`scope=everything` deletes `cats-agent` and every token), `/v1/admin/signing-keys/rotate` (every rotation revokes the leaf certificate that signed both bearers) and `/v1/admin/identities/{identity}/reset-credential` (removes the identity's key). Their 401s after the credential is gone are the expected tail of the run; read the findings before the cliff.
 - Bridges (`/v1/admin/bridges`, `/v1/admin/bridges/{channel}`; four operations) are not fuzzed: the campaign server has no Slack bridge, every call answers the documented 503 `unavailable`, and the Slack fake is wired from Go only. This narrows "every operation" (ADR 0018, Open item 6).
 - Sacrificial fixtures: decoys for the paths whose fuzzing deletes their anchor (`cats-ordinary-decoy`, a decoy session, memory and task, `cats-scope-decoy`), and the channels `cats-acl` and `cats-sub`. Each `seed` re-creates any decoy that is gone.
 - Missing security response headers (`X-Content-Type-Options`, `Cache-Control`) are a recorded rule, `SECURITY_HEADERS_JSON_API`, not a middleware (Open item 7).

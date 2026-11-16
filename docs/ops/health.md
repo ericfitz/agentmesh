@@ -70,7 +70,7 @@ The administrator flag is the one that gates `GET /v1/admin/status` (see `admin-
 
 ## Examples
 
-Output from a scratch server on loopback (`agentmesh server -listen 127.0.0.1:8431 -sqlite FILE`).
+Output from a scratch server on loopback (`agentmesh server -listen 127.0.0.1:8431 -sqlite FILE`, with the three trust settings of `signing-keys.md`, "A first start").
 
 Anonymous (the probe tier):
 
@@ -101,6 +101,15 @@ $ BEARER=$(jq -r .access_token "$AGENTMESH_DATA_DIR/tokens/P/I.json")
 $ curl -sS -H "Authorization: Bearer $BEARER" http://127.0.0.1:8431/v1/health
 {"embeddings":{"backlog":0,"rejected":0,"state":"off"},"maintenance":{"interval_seconds":60,"jobs":[],"lock":"unknown","owner":"a31950eb95b5c835988bcf17"},"notices":[],"now":1793207928667,"protocol_version":"1.0.0","started_at":1793207928294,"status":"ok","storage":{"budget_bytes":2147483648,"bytes":352256,"disk_bytes":352256,"disk_ratio":1,"evictable":true,"tier":"normal"},"store":{"engine":"sqlite","schema_version":1},"tier":"admin","version":"2.0.0-dev"}
 ```
+
+The `signing` member (administrator tier, server mode), read from a server that has just started, with `last_failure_at` 0 because no renewal has failed:
+
+```
+$ curl -sS -H "Authorization: Bearer $BEARER" http://127.0.0.1:8461/v1/health | jq -c .signing
+{"installation":"example-prod","intermediate":{"days_left":364,"not_after":1826342663000,"not_before":1794806663000,"thumbprint":"6PxZftaT82DOzCV0LwDXP7Da33SNceu3T7qsh1jNPvQ"},"last_failure_at":0,"leaf":{"days_left":6,"not_after":1795411528000,"not_before":1794806668000,"thumbprint":"sDzE-2EaKNvhn5IGj29i2ywog0uUR9Qyj0m8S8CSFXI"},"leaf_crl_number":0,"next_renewal_at":1795109128534,"root_crl_number":0,"trust_number":1794806663307}
+```
+
+`next_renewal_at` is W/2 after the leaf was issued. After a failed renewal the status is `degraded`, `last_failure` carries the message and `last_failure_at` its time; when the intermediate or the root has expired, or the intermediate's key is revoked, `stopped` names why the server no longer signs; with the leaf expired and no renewal the token endpoint answers 503, and the status is `degraded` (`signing-keys.md`).
 
 `agentmesh health [-profile P] [-identity I]` prints the same document, indented, using the profile's own credential. It exits 0 for `ok` and `degraded`, 1 for a `bus.Error` (an unreachable store among them) and 2 for a flag or resolution error.
 
