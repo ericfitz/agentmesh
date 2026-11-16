@@ -198,6 +198,8 @@ addendum restates the item with its test when it lands.
   created at startup when absent, so replicas share it without a volume;
   stored as plaintext PEM, so database read access is equivalent to admin
   and the deployment docs say so. There is no `signing_key_file` setting.
+  Superseded by ADR 0019: no private key is in the database, so database read
+  access is no longer equivalent to the admin flag for that reason.
   Superseded in part by Eric's decisions of 2026-10-27 (issues #6 and #8):
   the singleton row became a key set (item 6 below; ADR 0012 records the
   decisions of 2026-10-27 whole).
@@ -293,7 +295,9 @@ the choice numbers below are its.
    and verifies a bearer by `kid` against the whole set; the JWKS lists every
    key. There is no `signing_key_file` setting. ADR 0012 supersedes the
    singleton of 2026-10-21 and records the rotation and key-provider
-   decisions.
+   decisions. ADR 0019 supersedes this item: the server signs with a leaf
+   certificate under an intermediate and a root, and the database holds no
+   private key.
 7. **One canonical issuer URL.** The `issuer` setting, defaulting to
    `http://<bound address>`. A request whose `Host` differs still
    authenticates: the issuer is a configured string. A `unix:` listener
