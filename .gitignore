@@ -16,3 +16,4 @@ HANDOFF.md
 
 # CA material of the compose example (root.pem, intermediate.key and friends): never committed
 deploy/ca/
+deploy/ca-root/

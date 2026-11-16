@@ -2,17 +2,17 @@
 #
 # The server needs a CA before it starts (ADR 0019): a root, kept offline in a real deployment, and the
 # installation's intermediate certificate in the database. deploy/ca/ (git-ignored, never committed) holds
-# root.pem and intermediate.key, which both replicas mount; the root's own directory (root.key)
-# stays outside deploy/ in a real deployment (this example puts it in deploy/ca/root, which is git-ignored with
-# the rest of deploy/ca/). Once, from the repository root, with the image built (make docker-image) and
+# root.pem and intermediate.key, which both replicas mount at /ca. The root's own directory (root.key) is
+# never mounted into a container: in a real deployment it stays offline; this example puts it in
+# deploy/ca-root/, outside the mounted deploy/ca/ (both are git-ignored). Once, from the repository root, with the image built (make docker-image) and
 # the stack's database running (docker compose -f deploy/docker-compose.yml up -d postgres):
 #
 #   export AGENTMESH_UID=$(id -u) AGENTMESH_GID=$(id -g)   # the containers run as you, so they own the key file
-#   mkdir -p deploy/ca && umask 077
+#   mkdir -p deploy/ca deploy/ca-root && umask 077
 #   RUN="docker compose -f deploy/docker-compose.yml run --rm --no-deps --entrypoint /agentmesh agentmesh-a"
-#   agentmesh ca init -dir deploy/ca/root         # the root tool; then: cp deploy/ca/root/root.pem deploy/ca/root.pem
+#   agentmesh ca init -dir deploy/ca-root         # the root tool; then: cp deploy/ca-root/root.pem deploy/ca/root.pem
 #   $RUN server admin ca csr -out /ca/intermediate.csr   # makes /ca/intermediate.key on first use
-#   agentmesh ca sign -dir deploy/ca/root deploy/ca/intermediate.csr > deploy/ca/intermediate.pem
+#   agentmesh ca sign -dir deploy/ca-root deploy/ca/intermediate.csr > deploy/ca/intermediate.pem
 #   $RUN server admin ca install /ca/intermediate.pem    # stores the certificate in Postgres
 #
 # (`agentmesh` is the binary on the host: `make build`.) Keep the same AGENTMESH_UID and AGENTMESH_GID when you
