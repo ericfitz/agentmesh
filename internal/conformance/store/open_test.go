@@ -360,7 +360,7 @@ func TestRealStepFailureRollsBack(t *testing.T) {
 		if got := scalar[int](t, db, "SELECT schema_version FROM schema_meta"); got != 0 {
 			t.Fatalf("schema_version = %d, want 0", got)
 		}
-		for _, tbl := range []string{"identities", "channels", "messages", "scopes", "bridges", "seq_counter", "leases", "signing_keys"} {
+		for _, tbl := range []string{"identities", "channels", "messages", "scopes", "bridges", "seq_counter", "leases", "trust_material"} {
 			if got := tableCount(t, e, db, tbl); got != 0 {
 				t.Fatalf("table %s left behind after the rolled back step", tbl)
 			}

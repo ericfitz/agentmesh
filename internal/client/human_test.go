@@ -21,6 +21,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/profile"
 	"github.com/ericfitz/agentmesh/internal/server/cmd"
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 func freePort(t *testing.T) int {
@@ -69,7 +70,7 @@ func startHumanServer(t *testing.T, prov *oidctest.Provider) string {
 		t.Fatalf("users add: %d %s%s", code, so.String(), se.String())
 	}
 	go func() {
-		done <- cmd.Run(ctx, []string{"-listen", "127.0.0.1:0", "-sqlite", db, "-set", set}, nil, out, errb)
+		done <- cmd.Run(ctx, append([]string{"-listen", "127.0.0.1:0", "-sqlite", db, "-set", set}, trusttest.SQLiteSets(t, db)...), nil, out, errb)
 	}()
 	t.Cleanup(func() {
 		cancel()

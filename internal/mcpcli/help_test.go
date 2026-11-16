@@ -223,3 +223,21 @@ func TestHasLiteral(t *testing.T) {
 		}
 	}
 }
+
+// TestHelpNamesTrustFlags: the overview lists every trust flag and variable,
+// and the topics that explain registering and a changed root name the flag.
+func TestHelpNamesTrustFlags(t *testing.T) {
+	over, _ := Help("")
+	for _, w := range []string{"-accept-new-root", "-insecure-http", "-root-thumbprint", "-installation",
+		"AGENTMESH_INSECURE_HTTP", "AGENTMESH_ROOT_THUMBPRINT", "AGENTMESH_INSTALLATION"} {
+		if !strings.Contains(over, w) {
+			t.Errorf("the overview does not name %s", w)
+		}
+	}
+	for _, topic := range []string{"register", "verify", "troubleshoot"} {
+		text, _ := Help(topic)
+		if !strings.Contains(text, "-accept-new-root") {
+			t.Errorf("help %s does not name -accept-new-root", topic)
+		}
+	}
+}

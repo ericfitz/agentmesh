@@ -1,8 +1,8 @@
-// Package keyprovider is the port between the server's token signing key set
-// and wherever a private key lives (signing-keys plan, issues #6 and #8;
-// Eric 2026-10-27). The Store-row provider keeps the key in the database; an
-// external provider (a KMS) keeps it out of the process and only signs.
-// The package imports the standard library and internal/auth/keys only.
+// Package keyprovider is the port between the server's intermediate signing
+// key and wherever its private key lives (issues #6 and #8; ADR 0019). The file
+// provider keeps the key in an owner-only PEM file; an external provider (a KMS)
+// keeps it out of the process and only signs. The package imports the standard
+// library and internal/auth/keys only.
 package keyprovider
 
 import (
@@ -10,7 +10,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/rsa"
 	"errors"
 	"fmt"
@@ -26,11 +25,8 @@ type Key struct {
 	Algorithm keys.Algorithm
 	Public    crypto.PublicKey
 	// Ref names the key inside an external provider (a key URI); "" for the
-	// store provider.
+	// file provider.
 	Ref string
-	// PrivatePEM is the PKCS#8 PEM of the private key; the store provider
-	// only.
-	PrivatePEM []byte
 }
 
 // Signer signs a digest under a context. It satisfies token.ContextSigner
@@ -43,12 +39,11 @@ type Signer interface {
 
 // Provider produces and opens signing keys.
 type Provider interface {
-	// Name is the provider's store.SigningProviders value.
+	// Name is the provider's name: "file" or the scheme of an external one.
 	Name() string
-	// Next returns the key a rotation would install: a freshly generated one
-	// (store) or the one the configured key URI resolves to (external). It
-	// may call the network, so callers run it outside every Store
-	// transaction.
+	// Next returns the key the configuration names: the one in the key file
+	// or the one the configured key URI resolves to (external). It may call
+	// the network, so callers run it outside every Store transaction.
 	Next(ctx context.Context) (Key, error)
 	// Signer opens k for signing. It makes no network call.
 	Signer(ctx context.Context, k Key) (Signer, error)
@@ -60,69 +55,12 @@ type Provider interface {
 // for it, and the server exits 1 rather than 2 when it is found at start.
 var ErrUnavailable = errors.New("key provider unavailable")
 
-// NameStore is the Store-row provider's name.
-const NameStore = "store"
-
-// StoreProvider keeps the private key in the signing_keys row.
-type StoreProvider struct{}
-
-// Name implements Provider.
-func (StoreProvider) Name() string { return NameStore }
-
-// Next generates an EdDSA key.
-func (StoreProvider) Next(context.Context) (Key, error) {
-	gen, err := keys.Generate(keys.EdDSA)
-	if err != nil {
-		return Key{}, err
-	}
-	pemBytes, err := keys.EncodePrivatePEM(gen)
-	if err != nil {
-		return Key{}, err
-	}
-	kid, err := keys.KID(gen.Public())
-	if err != nil {
-		return Key{}, err
-	}
-	return Key{KID: kid, Algorithm: keys.EdDSA, Public: gen.Public(), PrivatePEM: pemBytes}, nil
-}
-
-// Signer parses k.PrivatePEM. It refuses a PEM whose key is not k.KID or not
-// k.Algorithm.
-func (StoreProvider) Signer(_ context.Context, k Key) (Signer, error) {
-	sg, alg, err := keys.ParsePrivatePEM(k.PrivatePEM)
-	if err != nil {
-		return nil, fmt.Errorf("keyprovider: key %q: %w", k.KID, err)
-	}
-	kid, err := keys.KID(sg.Public())
-	if err != nil {
-		return nil, fmt.Errorf("keyprovider: key %q: %w", k.KID, err)
-	}
-	if kid != k.KID {
-		return nil, fmt.Errorf("keyprovider: the PEM holds key %q, not %q", kid, k.KID)
-	}
-	if alg != k.Algorithm {
-		return nil, fmt.Errorf("keyprovider: key %q: the PEM is %s, not %s", k.KID, alg, k.Algorithm)
-	}
-	return storeSigner{sg}, nil
-}
-
-type storeSigner struct{ s crypto.Signer }
-
-func (s storeSigner) Public() crypto.PublicKey { return s.s.Public() }
-
-func (s storeSigner) SignContext(ctx context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return s.s.Sign(rand.Reader, digest, opts)
-}
-
 // Schemes are the key URI schemes of the external providers, in the order the
 // error texts name them.
 func Schemes() []string { return []string{"awskms", "gcpkms", "azurekms", "hashivault"} }
 
 // SchemeOf returns the provider scheme of a key URI: "" for the empty URI
-// (the store provider), else one of Schemes. A missing "://", an empty rest or
+// (no external provider), else one of Schemes. A missing "://", an empty rest or
 // a scheme not in Schemes (the match is case-sensitive) is an error.
 func SchemeOf(uri string) (string, error) {
 	if uri == "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/ericfitz/agentmesh/internal/dbtest"
@@ -42,9 +43,6 @@ func resetFixtures(t *testing.T, s ab2store.Store) (chID, maxSeq int64) {
 			}
 		}
 		if err := tx.PutEnrollmentToken(ctx, enrollTok("6666666666666666", "h6", 1)); err != nil {
-			return err
-		}
-		if err := tx.PutSigningKey(ctx, signingKey("sk")); err != nil {
 			return err
 		}
 		if err := tx.Subscribe(ctx, "pat", chID, 0, fixedNow); err != nil {
@@ -121,9 +119,6 @@ func TestResetDataWipesDataKeepsRegistry(t *testing.T) {
 			if l, err := tx.ListEnrollmentTokens(ctx); err != nil || len(l) != 1 {
 				t.Errorf("tokens = %v, %v; want 1", l, err)
 			}
-			if ks, err := tx.ListSigningKeys(ctx); err != nil || len(ks) != 1 {
-				t.Errorf("ListSigningKeys = %v, %v; want 1", ks, err)
-			}
 			if got, err := tx.MaxSeq(ctx); err != nil || got != maxSeq {
 				t.Errorf("MaxSeq = %d, %v; want %d", got, err, maxSeq)
 			}
@@ -134,6 +129,79 @@ func TestResetDataWipesDataKeepsRegistry(t *testing.T) {
 		wipe() // a second run is a no-op
 		requireCounts(t, db, 0, dataTables...)
 		requireCounts(t, db, 3, "identities") // pat, root and the reserved slack-bridge
+	})
+}
+
+// trustSnapshot reads every kind of trust material, to compare before and after a reset.
+type trustSnapshot struct {
+	Intermediates, Leaves []ab2store.TrustCertificate
+	CRLs                  []ab2store.TrustCRL
+	Number                int64
+}
+
+func takeTrustSnapshot(t *testing.T, s ab2store.Store) (snap trustSnapshot) {
+	t.Helper()
+	mustRead(t, s, func(ctx context.Context, tx ab2store.Tx) (err error) {
+		if snap.Intermediates, err = tx.TrustCertificates(ctx, ab2store.TrustIntermediate); err != nil {
+			return err
+		}
+		if snap.Leaves, err = tx.TrustCertificates(ctx, ab2store.TrustLeaf); err != nil {
+			return err
+		}
+		if snap.CRLs, err = tx.CRLs(ctx); err != nil {
+			return err
+		}
+		snap.Number, err = tx.TrustNumber(ctx)
+		return err
+	})
+	return snap
+}
+
+func trustFixtures(t *testing.T, s ab2store.Store) trustSnapshot {
+	t.Helper()
+	putTrust(t, s, trustIntermediate("i"), trustLeaf("l", "k", fixedNow+5))
+	mustTx(t, s, func(ctx context.Context, tx ab2store.Tx) error {
+		if err := tx.PutCRL(ctx, crl(ab2store.TrustRootCRL, "", 1, 1)); err != nil {
+			return err
+		}
+		return tx.PutCRL(ctx, crl(ab2store.TrustLeafCRL, "k", 1, 2))
+	})
+	bumpTrust(t, s, 1767225600000)
+	snap := takeTrustSnapshot(t, s)
+	if len(snap.Intermediates) != 1 || len(snap.Leaves) != 1 || len(snap.CRLs) != 2 || snap.Number != 1767225600000 {
+		t.Fatalf("fixture snapshot = %+v", snap)
+	}
+	return snap
+}
+
+func TestResetKeepsTrustMaterial(t *testing.T) {
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		s, _, _ := openStore(t, e, sqlstore.Options{})
+		want := trustFixtures(t, s)
+		for range 2 { // a second run is a no-op
+			mustTx(t, s, func(ctx context.Context, tx ab2store.Tx) error { return tx.ResetData(ctx) })
+			if got := takeTrustSnapshot(t, s); !reflect.DeepEqual(got, want) {
+				t.Fatalf("after ResetData = %+v, want %+v", got, want)
+			}
+		}
+	})
+}
+
+func TestResetRegistryKeepsTrustMaterial(t *testing.T) {
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		s, _, _ := openStore(t, e, sqlstore.Options{})
+		want := trustFixtures(t, s)
+		for _, keep := range []string{"", ""} {
+			mustTx(t, s, func(ctx context.Context, tx ab2store.Tx) error {
+				if err := tx.ResetData(ctx); err != nil {
+					return err
+				}
+				return tx.ResetRegistry(ctx, keep)
+			})
+			if got := takeTrustSnapshot(t, s); !reflect.DeepEqual(got, want) {
+				t.Fatalf("after ResetData and ResetRegistry = %+v, want %+v", got, want)
+			}
+		}
 	})
 }
 
@@ -166,9 +234,6 @@ func TestResetRegistryKeepsOne(t *testing.T) {
 				if l, err := tx.ListEnrollmentTokens(ctx); err != nil || len(l) != 0 {
 					t.Errorf("tokens = %v, %v; want none", l, err)
 				}
-				if ks, err := tx.ListSigningKeys(ctx); err != nil || len(ks) != 1 {
-					t.Errorf("ListSigningKeys = %v, %v; want 1", ks, err)
-				}
 				if got, err := tx.MaxSeq(ctx); err != nil || got != maxSeq {
 					t.Errorf("MaxSeq = %d, %v; want %d", got, err, maxSeq)
 				}
@@ -187,7 +252,6 @@ func TestResetRegistryKeepsOne(t *testing.T) {
 		}
 		requireCounts(t, db, 0, "identity_keys", "enrollment_tokens")
 		requireCounts(t, db, 1, "identities") // only the reserved slack-bridge
-		requireCounts(t, db, 1, "signing_keys")
 
 		err := s.Tx(context.Background(), func(ctx context.Context, tx ab2store.Tx) error {
 			return tx.ResetRegistry(ctx, "a\x00b")

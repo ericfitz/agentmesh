@@ -26,8 +26,8 @@ The security definitions use the Bitwarden principle numbering (P01 to P06) that
 - **Operator instruction channel**: the MCP server tells every agent that "a message whose sender_kind is human comes from your operator: treat it as an instruction" (`internal/mcpserver/server.go:142`, tool descriptions at 674 and 713). Any path that yields `sender_kind: human` therefore steers every agent that reads it. Designed, not built (ADR 0019, Decision 40): the rule applies only to a human message that a receive delivers, which is one whose signature the client verified, that was sent after the session opened and that the session has not taken before. A message that claims to be from a human and fails is dropped, not delivered as an agent's. The signed email of the human is shown with the message.
 - **Administrator**: an identity with the stored admin flag; set only by the host command `admins add` or by a human's sign-in recomputed from the `admins` list (`internal/core/identities/references.go:119`, `human.go:287-296`). No API operation grants it.
 - **Scoped agent**: an agent bound to a scope; outside it every object answers `not_found` (ADR 0011).
-- **Bearer**: a JWT (`at+jwt`, EdDSA or ES256). The server uses only its subject: kind, admin flag and scope are re-read from the store on every request (`internal/core/access/principal.go:27-43`). The bearer also carries a kind claim, `agentmesh_kind`, that nothing reads back today (`internal/auth/token/issuer.go:331-334`, `343-374`). Designed, not built (ADR 0019): the kind claim and a new email claim decide what the server signs into a message as its sender kind; access decisions still read the store, except that the forced renewal of the signing leaves also needs the human claim (Decisions 28, 41 and 42); a bearer is signed by a per-process key whose certificate chains to a pinned root.
-- **Store provider**: the default signing key provider; the private key is a plaintext PKCS#8 PEM in `signing_keys.private_key_pem` (docs/ops/signing-keys.md:9-10). Designed, not built (ADR 0019, Decision 10): this provider and the `signing_keys` table are removed; no private key is in the database.
+- **Bearer**: a JWT (`at+jwt`, EdDSA or ES256). The server uses only its subject: kind, admin flag and scope are re-read from the store on every request (`internal/core/access/principal.go:27-43`). The bearer also carries a kind claim, `agentmesh_kind`, that nothing reads back today (`internal/auth/token/issuer.go:331-334`, `343-374`). Built (ADR 0019 spec 1): a bearer is signed by a per-process key whose certificate chains to a pinned root. Designed, not built (spec 2): the kind claim and a new email claim decide what the server signs into a message as its sender kind; access decisions still read the store, except that the forced renewal of the signing leaves also needs the human claim (Decisions 28, 41 and 42).
+- **Signing leaf**: the Ed25519 key a server process makes in memory and signs bearers with. Its certificate is signed by the installation's intermediate key (a file or a key service), which is signed by a root pinned in the server's configuration and on each client; no private key is in the database (ADR 0019 spec 1, built on branch `adr-0019-spec-1`; `docs/ops/signing-keys.md`).
 
 ## Data flow diagram
 
@@ -54,7 +54,7 @@ graph LR
     end
 
     subgraph TB3["Database"]
-        DB[(SQLite or Postgres<br/>messages, memories, tasks,<br/>signing_keys, identities, ACLs)]
+        DB[(SQLite or Postgres<br/>messages, memories, tasks,<br/>trust_material, identities, ACLs)]
     end
 
     subgraph TB4["External services"]
@@ -62,7 +62,7 @@ graph LR
         SLACK[Slack workspace<br/>Socket Mode]
         HOOK[Write-inspection webhook]
         EMB[Embedding endpoint]
-        KMS[Key provider<br/>AWS, GCP, Azure KMS, Vault]
+        KMS[Intermediate key<br/>file or AWS, GCP, Azure KMS, Vault]
     end
 
     ANON -->|HTTPS or HTTP| PROXY
@@ -74,7 +74,7 @@ graph LR
     HTTP --> ACCESS --> CORE --> DB
     AUTH --> DB
     AUTH -->|JWKS fetch| IDP
-    AUTH -->|Sign per bearer| KMS
+    AUTH -->|Sign leaf and CRL| KMS
     CORE -->|full record, static bearer| INSP --> HOOK
     CORE -->|message text| EMB
     BRIDGE <-->|websocket, bot and app tokens| SLACK
@@ -89,7 +89,9 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 | Asset | Where | Why it matters |
 | --- | --- | --- |
-| Signing private key | `signing_keys` row (store provider) or KMS | Mints a bearer for any identity, administrators included |
+| Intermediate private key | A file on the server host (owner-only, usually a mounted secret) or a key service; never the database | Certifies leaves, so whoever holds it mints bearers for any identity, administrators included |
+| Leaf private key | Memory of one server process | Signs bearers until its certificate expires or is revoked |
+| Root private key | Offline, with the operator (or an outside CA) | Certifies intermediates; the server never holds it |
 | Agent private keys | Client hosts; server holds public keys | Authenticate an agent |
 | Bearers | In transit, client caches | 3600 s default, 86400 s ceiling, 900 s for humans (`internal/server/config/config.go:21,123`; `internal/auth/token/external.go:57`) |
 | Enrollment tokens | Shown once; stored as SHA-256 (`internal/core/identities/enrollment.go:19-30`) | Admit a new identity, possibly a bound or scoped one |
@@ -104,13 +106,13 @@ Trust boundaries: TB0 to TB1/TB2 (network; the server speaks plain HTTP only, `i
 
 **Criticality:** Critical
 
-Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key file design abandoned (2026-11-11)"; ADR 0019). The statements about today's code were checked against the tree at commit `dcdc943`. The mitigations marked "designed, not built" are those of ADR 0019 and its two specs (`docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md`, `docs/superpowers/specs/2026-11-11-signed-messages-design.md`); none of them is in the tree. The "designed, not built" items here and in SD2 were brought up to date on 2026-11-12 with Decisions 22 to 46; Decision 40 reduced the signed messages to human messages.
+Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key file design abandoned (2026-11-11)"; ADR 0019). The statements about today's code were checked against the tree at commit `dcdc943`. The mitigations marked "designed, not built" are those of ADR 0019 and its two specs (`docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md`, `docs/superpowers/specs/2026-11-11-signed-messages-design.md`); the key items (spec 1) were built on 2026-11-16 on branch `adr-0019-spec-1` and do not merge to `main` until the IANA number is in (ADR 0019 Decision 47), and the message items (spec 2) are still not in the tree. The "designed, not built" items here and in SD2 were brought up to date on 2026-11-12 with Decisions 22 to 46; Decision 40 reduced the signed messages to human messages. SD1's key items were checked against that branch on 2026-11-16.
 
 ### Threat Model
 
 - Attacker can read the database or a backup of it (a leaked backup, a read-only reporting role, a SQL injection in another tenant of a shared Postgres).
 - Attacker can, in a second variant, write rows (a compromised Postgres role, a compromised replica, or a restore of a copy the attacker altered).
-- Attacker does not hold the KMS or Vault credentials of the server's runtime role, cannot read files on the server host, and cannot run code in the server process or read its memory.
+- Attacker does not hold the KMS or Vault credentials of the server's runtime role, cannot read files on the server host (the intermediate key file included), and cannot run code in the server process or read its memory.
 
 ### Security Goal
 
@@ -122,20 +124,20 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
 ### Accepted Goal Status
 
 - **Accepted risk (Eric, 2026-11-11; ADR 0012 "Server key file design abandoned", ADR 0019 Decision 15):** the ability to write to the database is the same privilege as being the administrator of the application, and that includes replicas and restores. A writer can set `identities.is_admin` (schema `0001_initial.sql:26`), add a row to `identity_keys` for any agent (the server then issues a genuine bearer for that agent), bind an email in `human_bindings`, edit the `users` and `admins` lists in `access_refs`, edit any ACL, and alter or delete any content. This is P04's line: the database credential is protected like the administrator credential. The tamper protection for tables chosen on 2026-11-09 and the server key file design of 2026-11-10 were abandoned; nothing replaces them for this item.
-- Goal is **not met** today:
-  - ❌ Store provider (the default), read: a reader takes the plaintext PEM from `signing_keys.private_key_pem` and mints anything. Documented: "read access to the database equals the admin flag" (ADR 0004 signing keys addendum; ADR 0012; docs/ops/deploy.md:44).
-  - ✅ External provider, read: the row holds the public key and a reference; signing happens remotely, one `Sign` call per bearer (docs/ops/signing-keys.md:10, 94).
-  - ❌ Any provider, write: `Keyring.LoadKeys` trusts the public key of every `signing_keys` row whatever its provider (`internal/core/signingkeys/keyring.go:39-63`), so an inserted row with an attacker key verifies forged bearers (threat 2).
+- Goal is **met for keys and not met for messages** (spec 1 built on a branch, not yet on `main`):
+  - ✅ Read: no private key is in the database or a backup of it. A reader finds certificates and revocation lists, which are public. The intermediate key is a file the operator delivers as a secret, or an object in a key service; each process makes its leaf key in memory (`docs/ops/signing-keys.md`, "What an operator must know"). The database no longer equals the admin flag for this reason (ADR 0019 supersedes ADR 0004's signing keys addendum on this point).
+  - ✅ Write, keys: a bearer verifies only through the chain leaf, intermediate, pinned root, with the installation's name and the agentmesh extended key usage; a row is never trusted for what it claims, so an inserted key or certificate that does not chain to the pinned root is ignored (`TestBearerMatrix`, `internal/core/signingkeys`; threat 2).
   - ❌ Write, messages: `sender_kind` is copied from the sender's identity row when a message is written (`internal/core/messaging/send.go:144`) and read back from the message row on delivery (`internal/core/convert.go:46`). A writer who inserts or edits a message row with `sender_kind = 'human'` produces an operator instruction for every agent that reads it, and no client can tell.
   - Also readable on a database read, whatever the provider: all content (no column encryption), human email bindings, Slack bindings, and `sessions.pending_token` in plaintext (schema `0001_initial.sql:97`). Enrollment and resume tokens are hashed.
-- **Designed, not built** (ADR 0019):
-  - Keys (spec 1): a root certificate pinned in the server's configuration and on each client; one intermediate key per installation, in a file or a key service; one signing key per server process, held in memory and certified for a few days. No private key and no trusted public key is in the database: a reader finds no key, and a certificate row that does not chain to the pinned root is ignored. Revocation is by CRLs delivered inside ordinary responses. A client takes the root from the discover document on first contact, over HTTPS unless the host is loopback or a testing switch is set (Decision 19).
+- **Built** (ADR 0019 spec 1): a root certificate pinned in the server's configuration and on each client; one intermediate key per installation, in a file or a key service; one signing key per server process, held in memory and certified for `leaf_validity_hours` (7 days by default). Revocation is by CRLs delivered inside ordinary responses. A client takes the root from the discover document on first contact, over HTTPS unless the host is loopback or a testing switch is set (Decision 19), and `root_thumbprint` pins it in advance (Decision 30).
+- **Designed, not built** (ADR 0019 spec 2):
   - Messages (spec 2; Decision 40): the server signs a message when a human sent it, and only then: the request's bearer came from the browser sign-in, or the Slack bridge's check passed. The blob names the email, the channel, the content, the time, the message it replies to and the message's own ID. Every client in server mode verifies each message that claims to be from a human and drops one that fails. Messages that are not from a human are neither signed nor verified.
   - Replay and relevance (spec 2; Decision 40): a session drops a human message that was sent before it opened and one it has already taken, using state kept outside the database, in the session state file. Each human message it takes says whether it starts a thread or answers something the session received or sent.
 - **Would stay open once that is built**, each an accepted risk in ADR 0019:
   - Everything in the first item above. In particular a writer can add an email to the `users` list, and whoever signs in with that email at the provider is then a human to every agent; the signature names the email but cannot say the person is an authorized operator.
   - A writer can delete, hide or delay messages, and can write or change everything that is not a human message: agents' messages, memory revisions and task documents, agent status text and server notice text (Decisions 22 and 40).
-  - A writer can hide a revocation from clients that have not yet seen it. For bearers that ends when the revoked certificate expires; a human message the certificate signed keeps verifying to such a client.
+  - A writer can hide a revocation from clients that have not yet seen it. For bearers that ends when the revoked certificate expires; once spec 2 is built, a human message the certificate signed keeps verifying to such a client.
+  - Whoever holds the intermediate key file or the key service credentials mints bearers; that is the host-compromise line of P04, and the file is protected like the administrator credential (owner-only, a mounted secret).
   - A human message sent after a session opened, and not yet seen by it, is delivered whenever the server hands it over. A writer who deletes the Slack bridge's rows gets a Slack message ingested again; a session drops the copy when it took the post before or opened after the post was made, and takes it otherwise (Decision 46).
 
 ---
@@ -195,6 +197,7 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
 - Goal is **partially** met:
   - ❌ Registration mode follows the bind address: loopback or a unix socket defaults to `open` (`internal/server/cmd/listen.go:19-57`). A loopback server behind a public reverse proxy is open to the internet; docs/ops/deploy.md's proxy section (94-96) does not warn and the server does not detect it. Proposed: warn in the proxy section and at start when `issuer` is not a loopback URL while registration is `open`, or default to `enrollment` whenever `issuer` is set.
   - ❌ The server has no TLS (no `tls_*` setting; `serve.go:211-214`) and accepts an `http` issuer (`config.go:245`) and an `http` `jwks_uri` with only a warning (`config.go:347`). TLS depends entirely on the proxy. No ADR records "plain HTTP behind a proxy" as a decision.
+  - ✅ Client side (ADR 0019 spec 1, Decision 19): a server profile refuses an `http` server URL unless the host is `127.0.0.1`, `::1` or `localhost`, or the profile sets `insecure_http` (flag `-insecure-http`, for local testing), so by default a client sends no bearer or assertion in plaintext (`internal/profile/config.go`). The first contact pins the root the server presents; over HTTPS that trusts whoever answers, and `root_thumbprint` and `installation` (Decisions 30 and 38) remove that trust for a client that makes a first contact at every start.
   - ❌ No rate limit or lockout on `/v1/auth/register` or `/v1/auth/token`, and nothing per IP (`internal/core/limiter.go` covers writes per identity only). Enrollment tokens are 256-bit (`enrollment.go:76-79`), so guessing is infeasible; the exposure is unthrottled identity minting in `open` mode and CPU on assertion verification.
   - ✅ Assertions: EdDSA or ES256 only, `aud` bound to the issuer, 5-minute maximum lifetime, 60 s leeway, single use across replicas through `assertion_jti` (`internal/auth/assertion/assertion.go:31,40,199-232`; `internal/server/auth_handlers.go:105-122`).
   - ✅ The server trusts no forwarding header and uses no client IP.
@@ -258,7 +261,7 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
 ### Threat Model
 
 - Attacker stole an agent's bearer or key, or a human was removed from `users`/`admins`, and the operator responds with `reset-credential`, key revocation or list removal.
-- Attacker does not hold the signing key.
+- Attacker does not hold the intermediate key or a leaf key.
 
 ### Security Goal
 
@@ -269,7 +272,8 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
 
 - Goal is **partially** met:
   - ✅ Identity retirement deletes the row, so its bearers fail at once (`internal/store/sqlstore/scopes.go:203-243`). The admin flag and kind are re-read per request, so a revoked admin flag on an agent takes effect on the next request.
-  - ❌ No bearer revocation or `jti` denylist: after `reset-credential` an issued bearer stays valid until expiry, 3600 s by default and up to 86400 s (docs/ops/admin-bootstrap.md:39). Key revocation reaches a running server within 30 s (admin-bootstrap.md:43).
+  - ❌ No per-bearer or per-identity revocation and no `jti` denylist: after `reset-credential` an issued bearer stays valid until expiry, 3600 s by default and up to 86400 s (docs/ops/admin-bootstrap.md:39). Key revocation reaches a running server within 30 s (admin-bootstrap.md:43).
+  - ✅ Leaf revocation (ADR 0019 spec 1): a forced renewal (`agentmesh signing-keys rotate`, `agentmesh server admin ... signing-key rotate`) puts every unexpired leaf of the installation's intermediate key on the leaf CRL, and `signing-key revoke` puts one leaf there, so every bearer such a leaf signed stops verifying (the caller exchanges again). It is all bearers or none of one leaf's; it cannot cut one identity's bearers short. A bearer also never outlives the leaf that signed it (`docs/ops/signing-keys.md`).
   - ❌ A human's stored admin flag is recomputed only at the next sign-in (`human.go:281-296`), so removal from `admins` does not remove administrator access while that identity keeps bearers (900 s each) or signs in again before the next recomputation. Proposed: recompute the flag from `admins` on each request, or on list change.
   - Session resume tokens do not rotate and live until the 72 h sweep; a stolen one also needs the same identity's bearer (`internal/core/sessions/open.go:89-95`).
 
@@ -345,12 +349,12 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
 
 | # | Threat | STRIDE | Component | Existing mitigation | Proposed mitigation | Risk |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | DB or backup reader mints bearers with the plaintext store key | S, E | signing keys | External key providers (ADR 0012) | Recommend a KMS provider for any shared or backed-up database in docs/ops | Critical |
-| 2 | DB writer inserts a signing key row that verification trusts, or writes a message row marked `human` that agents take for an operator instruction | S, E, T | keyring, messages | None today. Accepted and not mitigated (Eric 2026-11-11): a DB writer administers the application (admin flag, login keys, ACLs, `users` and `admins` lists), replicas and restores included | Designed, not built (ADR 0019): no key is trusted because of a row (bearers and human messages verify by a certificate chain to a pinned root), the server signs each human message before the insert, and clients drop a message that claims to be from a human and does not verify | High |
+| 1 | DB or backup reader mints bearers with the plaintext store key | S, E | signing keys | Fixed (ADR 0019 spec 1, built on a branch): no private key is in the database; the intermediate key is a file or a key service object, each process makes its leaf in memory, and the root stays offline | Protect the intermediate key file like the administrator credential (owner-only, a mounted secret; `docs/ops/signing-keys.md`); recommend a key service for a shared or backed-up host | Critical |
+| 2 | DB writer inserts a signing key row that verification trusts, or writes a message row marked `human` that agents take for an operator instruction | S, E, T | trust material, messages | Keys fixed (ADR 0019 spec 1, built on a branch): a bearer verifies only through a chain to the pinned root, so an inserted row is ignored. Messages not yet: a DB writer can still write a `human` message. Accepted and not mitigated (Eric 2026-11-11): a DB writer administers the application (admin flag, login keys, ACLs, `users` and `admins` lists), replicas and restores included | Designed, not built (ADR 0019 spec 2): the server signs each human message before the insert, and clients drop a message that claims to be from a human and does not verify | High |
 | 3 | Unverified IdP email claims a `users` entry and posts as human (operator instruction to all agents) | S, E | OIDC exchange | `users` list match, first-sign-in subject pin, `email_verified` required (per-issuer opt-out `trust_unverified_email`, warned at start) | Fixed (ADR 0002 verified email addendum) | Critical |
 | 4 | Slack account with a matching email posts as human | S | Slack bridge inbound | Bot, guest, external, team checks; first-use pin; Post needs write | Document trust in ADR 0009; consider pinning on Slack user id at bind time | High |
 | 5 | Open registration exposed through a reverse proxy | S, E | registration | `enrollment` default on non-loopback binds | Warn or switch default when `issuer` is not loopback | High |
-| 6 | Bearer or assertion sniffed on an HTTP hop | I, S | transport | Docs ask for a TLS proxy | Refuse `http` issuer and `jwks_uri` off loopback; ADR for the transport decision | High |
+| 6 | Bearer or assertion sniffed on an HTTP hop | I, S | transport | Docs ask for a TLS proxy; a client refuses an `http` server URL off loopback unless `insecure_http` is set (ADR 0019 spec 1, Decision 19) | Refuse `http` issuer and `jwks_uri` off loopback on the server; ADR for the transport decision | High |
 | 7 | Unthrottled register and token endpoints | D | auth endpoints | 256-bit enrollment tokens | Per-IP or global limiter on anonymous endpoints | Medium |
 | 8 | Prompt-injected agent poisons memories or hijacks tasks | T | memories, tasks | ACL write gate | Record the actor on delete; optional author or owner guard (Eric's decision 15) | High |
 | 9 | Default `everyone` read+write on new channels | I, T | channels | Creator or admin can tighten | Consider a private default for scoped channels | Medium |
@@ -359,7 +363,7 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
 | 12 | Webhook authenticated by a static bearer only | S, T | inspection | https, no redirects, fail closed | Request signing (HMAC over body and time) | Medium |
 | 13 | Embedding endpoint over plain http; it receives memory text and every semantic search query | I | embeddings | Operator config only | Apply the inspection URL rule | Medium |
 | 14 | Postgres traffic unencrypted | I, T | store link | None | Document `sslmode=verify-full`; warn on `disable` off loopback | Medium |
-| 15 | Bearers valid after reset-credential | E | tokens | Lifetime ceiling 86400 s; retire deletes | `jti` or per-identity revocation epoch | Medium |
+| 15 | Bearers valid after reset-credential | E | tokens | Lifetime ceiling 86400 s, and a bearer never outlives its leaf; retire deletes; a forced renewal revokes every bearer at once (ADR 0019 spec 1) | `jti` or per-identity revocation epoch | Medium |
 | 16 | Human admin flag persists after removal from `admins` | E | identities | Recomputed at sign-in | Recompute per request or on list change | Medium |
 | 17 | No audit trail | R | server | Server-set sender on messages | Audit log plus ADR | Medium |
 | 18 | Global oldest-first eviction across tenants | D | maintenance | 1 h floor, tombstones 72 h | Per-identity quota or eviction weighted by writer | Medium |
@@ -369,7 +373,7 @@ Rewritten 2026-11-11 after Eric's decisions of that day (ADR 0012, "Server key f
 | 22 | Identity, key and channel existence oracles | I | token, history, search | None | Uniform answers | Low |
 | 23 | Host-header-derived issuer URLs | S | discovery | `issuer` setting | Require `issuer` off loopback | Low |
 | 24 | Secret files (Slack tokens, inspection key, config) not mode-checked; DSN on the command line | I | configuration | SQLite file mode checked | Apply the SQLite 0600 rule; prefer file or environment variable for the DSN | Low |
-| 25 | Vault provider allows http and `VAULT_SKIP_VERIFY` | S, I | key provider | Signature checked against the row's public key | Refuse both off loopback | Low |
+| 25 | Vault provider allows http and `VAULT_SKIP_VERIFY` | S, I | key provider | A certificate the endpoint signs must chain to the pinned root and carry the installation's name | Refuse both off loopback | Low |
 | 26 | Compromised replica controls all data and maintenance | E | replicas | Accepted (P04) | None | Accepted |
 | 27 | Injected `NOTIFY` | D | pgnotify | Hints only; malformed becomes catch-up | None | Accepted |
 | 28 | On-path attacker substitutes an `http` JWKS and forges provider tokens, posting as any human | S, E | OIDC exchange | Start-up warning; issuer, audience and algorithm allowlist | Refuse an `http` `jwks_uri` off loopback (with threat 6) | High |
@@ -380,7 +384,7 @@ Rows 28 to 30 and the search-query part of row 13 were added after comparison wi
 
 ## ADR alignment
 
-- Aligned: SD4 and the scope rules follow ADR 0011 (one access check, decision 15 no task owner guard); SD1's store-provider status follows ADR 0004 (signing keys addendum) and ADR 0012; SD5's webhook follows ADR 0013; the Slack trust checks follow ADR 0009; token and assertion rules follow ADR 0002.
+- Aligned: SD4 and the scope rules follow ADR 0011 (one access check, decision 15 no task owner guard); SD1's key status follows ADR 0019 (spec 1; it supersedes ADR 0004's signing keys addendum and the key set parts of ADR 0012); SD5's webhook follows ADR 0013; the Slack trust checks follow ADR 0009; token and assertion rules follow ADR 0002.
 - Gaps (security-relevant choices with no ADR): the transport decision (plain HTTP behind an operator's TLS proxy, `http` issuer accepted); audit logging; the Slack email-to-human trust and the scope canvas exposure (ADR 0009 does not state them); the operator instruction rule that any `sender_kind: human` message steers every agent.
 
 ## Unmitigated threats for follow-up
@@ -388,7 +392,7 @@ Rows 28 to 30 and the search-query part of row 13 were added after comparison wi
 Each is a proposal for Eric; none changes a recorded decision without his approval.
 
 1. **Verified email on OIDC sign-in** (threat 3, SD2): done. The exchange requires `email_verified` (per-issuer opt-out `trust_unverified_email`), and a sign-in whose provider subject differs from the recorded one was already refused; see the ADR 0002 verified email addendum. Priority was Critical.
-2. **Database writers take control** (threat 2, SD1): a database writer can add a signing-key row, set an identity's admin flag, register a login key for any agent, bind an email or edit the `admins` list. Eric's decisions of 2026-11-11 settle it in two parts. Accepted: the ability to write to the database is the same privilege as administering the application, replicas and restores included; the tamper protection for tables chosen on 2026-11-09 and the server key file design of 2026-11-10 are abandoned (ADR 0012, "Server key file design abandoned (2026-11-11)"). Designed, not built: a certificate hierarchy that keeps every key out of the database, and server-signed human messages that clients verify, so that a writer can neither make a key trusted nor forge a human's message (ADR 0019; Decision 40 of 2026-11-12 reduced the signing to human messages). Priority: High.
+2. **Database writers take control** (threat 2, SD1): a database writer can set an identity's admin flag, register a login key for any agent, bind an email or edit the `admins` list. Eric's decisions of 2026-11-11 settle it in two parts. Accepted: the ability to write to the database is the same privilege as administering the application, replicas and restores included; the tamper protection for tables chosen on 2026-11-09 and the server key file design of 2026-11-10 are abandoned (ADR 0012, "Server key file design abandoned (2026-11-11)"). Built on a branch (ADR 0019 spec 1, 2026-11-16): a certificate hierarchy that keeps every key out of the database, so that a writer cannot make a key trusted. Designed, not built: server-signed human messages that clients verify, so that a writer cannot forge a human's message (spec 2; Decision 40 of 2026-11-12 reduced the signing to human messages). Priority: High.
 3. **Open registration behind a proxy** (threat 5, SD3): docs warning plus a start-up check. Priority: High.
 4. **Transport ADR** (threats 6 and 28, SD2, SD3): record the plain-HTTP-behind-proxy decision and refuse `http` issuer and `jwks_uri` off loopback. Priority: High.
 5. **Audit log** (threat 17, SD7). Priority: Medium.

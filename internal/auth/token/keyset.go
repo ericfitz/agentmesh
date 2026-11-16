@@ -1,9 +1,13 @@
 package token
 
 import (
+	"bytes"
 	"context"
 	"crypto"
-	"crypto/rand"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -35,13 +39,39 @@ var ErrSignerUnavailable = errors.New("token: signing key unavailable")
 // Key is one published public key of the issuer.
 type Key struct {
 	// KID is the RFC 7638 thumbprint of Public (keys.KID).
+	// With a Chain, KID is the base64url SHA-256 of Chain[0] (the x5t#S256 value).
 	KID       string
 	Algorithm keys.Algorithm
 	Public    crypto.PublicKey
+	// Chain is the certificate chain of the leaf key, DER, the leaf first, then the intermediate. It
+	// is required: validate refuses a key without one.
+	Chain [][]byte
+	// NotBefore and NotAfter are the period in which the chain is valid (pki.Verified); zero: unbounded.
+	NotBefore, NotAfter time.Time
 }
 
-// ContextSigner signs a digest under a context. Like crypto.Signer, it returns
-// DER for ES256 and the raw signature for EdDSA.
+// zero reports whether k is the zero Key (an Active a verify-only set leaves unset).
+func (k Key) zero() bool {
+	return k.KID == "" && k.Algorithm == "" && k.Public == nil && k.Chain == nil && k.NotBefore.IsZero() && k.NotAfter.IsZero()
+}
+
+// validAt reports whether now, with Leeway, is inside the key's certificate
+// period (zero bounds are open).
+func (k Key) validAt(now time.Time) bool {
+	if !k.NotBefore.IsZero() && now.Add(Leeway).Before(k.NotBefore) {
+		return false
+	}
+	return k.NotAfter.IsZero() || !now.Add(-Leeway).After(k.NotAfter)
+}
+
+// thumbprintS256 is the base64url SHA-256 of a DER certificate.
+func thumbprintS256(der []byte) string {
+	sum := sha256.Sum256(der)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// ContextSigner signs a message under a context. Like crypto.Signer for an
+// Ed25519 key, it returns the raw signature.
 type ContextSigner interface {
 	Public() crypto.PublicKey
 	SignContext(ctx context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error)
@@ -53,7 +83,9 @@ type KeySet struct {
 	// usable retiring key here when no active key is usable).
 	Active Key
 	// Signer is nil when no key is usable: Mint then fails with
-	// ErrSignerUnavailable while Verify and JWKS keep working.
+	// ErrSignerUnavailable while Verify and JWKS keep working. A set with a nil
+	// Signer may have a zero Active, and then no keys at all (a process that can
+	// sign nothing).
 	Signer ContextSigner
 	// Keys is every published key, Active included, in the order JWKS lists them.
 	Keys []Key
@@ -64,45 +96,12 @@ type KeySource interface {
 	LoadKeys(ctx context.Context) (KeySet, error)
 }
 
-type staticKeys struct{ s crypto.Signer }
-
-// StaticKeys is a KeySource of one active key that never changes.
-func StaticKeys(s crypto.Signer) KeySource { return staticKeys{s} }
-
-func (k staticKeys) LoadKeys(context.Context) (KeySet, error) {
-	if k.s == nil {
-		return KeySet{}, errors.New("token: signing key is required")
-	}
-	key, err := keyOf(k.s.Public())
-	if err != nil {
-		return KeySet{}, err
-	}
-	return KeySet{Active: key, Signer: cryptoSigner{k.s}, Keys: []Key{key}}, nil
-}
-
-type cryptoSigner struct{ crypto.Signer }
-
-func (c cryptoSigner) SignContext(_ context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return c.Sign(rand.Reader, digest, opts)
-}
-
-func keyOf(pub crypto.PublicKey) (Key, error) {
-	alg, err := keys.AlgorithmOf(pub)
-	if err != nil {
-		return Key{}, err
-	}
-	kid, err := keys.KID(pub)
-	if err != nil {
-		return Key{}, err
-	}
-	return Key{KID: kid, Algorithm: alg, Public: pub}, nil
-}
-
-// validate admits a key set: every key's kid is the thumbprint of its public
-// key and its algorithm the key's, kids are distinct, Active is one of Keys,
-// and a non-nil Signer holds Active's key.
+// validate admits a key set: every key has a certificate chain, its kid is the
+// thumbprint of its leaf certificate and its algorithm the key's (EdDSA),
+// kids are distinct, and a non-nil Signer holds Active's key, which is one of
+// Keys. A set with a nil Signer may have a zero Active and no keys.
 func (s KeySet) validate() error {
-	if len(s.Keys) == 0 {
+	if len(s.Keys) == 0 && (s.Signer != nil || !s.Active.zero()) {
 		return errors.New("token: key set has no keys")
 	}
 	seen := map[string]bool{}
@@ -115,6 +114,9 @@ func (s KeySet) validate() error {
 		}
 		seen[k.KID] = true
 	}
+	if s.Signer == nil && s.Active.zero() {
+		return nil
+	}
 	if err := checkKey(s.Active); err != nil {
 		return fmt.Errorf("active key: %w", err)
 	}
@@ -122,12 +124,9 @@ func (s KeySet) validate() error {
 		return fmt.Errorf("token: active kid %q is not in the key set", s.Active.KID)
 	}
 	if s.Signer != nil {
-		kid, err := keys.KID(s.Signer.Public())
-		if err != nil {
-			return fmt.Errorf("token: signer key: %w", err)
-		}
-		if kid != s.Active.KID {
-			return fmt.Errorf("token: signer holds key %q, not the active %q", kid, s.Active.KID)
+		// The thumbprint is the certificate's, so the signer is compared by key.
+		if p, ok := s.Signer.Public().(ed25519.PublicKey); !ok || !p.Equal(s.Active.Public) {
+			return fmt.Errorf("token: signer does not hold the active key %q", s.Active.KID)
 		}
 	}
 	return nil
@@ -141,12 +140,38 @@ func checkKey(k Key) error {
 	if alg != k.Algorithm {
 		return fmt.Errorf("token: key %q: algorithm %q, but the key is %q", k.KID, k.Algorithm, alg)
 	}
-	kid, err := keys.KID(k.Public)
-	if err != nil {
-		return fmt.Errorf("token: key %q: %w", k.KID, err)
+	if len(k.Chain) == 0 {
+		return fmt.Errorf("token: key %q has no certificate chain", k.KID)
 	}
-	if kid != k.KID {
-		return fmt.Errorf("token: key %q is not its thumbprint %q", k.KID, kid)
+	return checkCertKey(k)
+}
+
+// checkCertKey checks a key with a chain: an Ed25519 leaf declared EdDSA whose
+// certificate holds Public, with the leaf's thumbprint as KID. (The chain
+// itself is checked by pki.VerifyChain, not here.)
+func checkCertKey(k Key) error {
+	if k.Algorithm != keys.EdDSA {
+		return fmt.Errorf("token: key %q: a certificate key is EdDSA, not %q", k.KID, k.Algorithm)
+	}
+	cert, err := x509.ParseCertificate(k.Chain[0])
+	if err != nil {
+		return fmt.Errorf("token: key %q: leaf certificate: %w", k.KID, err)
+	}
+	certPub, ok := cert.PublicKey.(ed25519.PublicKey)
+	if !ok {
+		return fmt.Errorf("token: key %q: the leaf certificate key is not Ed25519", k.KID)
+	}
+	pub, ok := k.Public.(ed25519.PublicKey)
+	if !ok || !bytes.Equal(pub, certPub) {
+		return fmt.Errorf("token: key %q: the key is not the leaf certificate's", k.KID)
+	}
+	for n, der := range k.Chain[1:] {
+		if _, err := x509.ParseCertificate(der); err != nil {
+			return fmt.Errorf("token: key %q: certificate %d of the chain: %w", k.KID, n+1, err)
+		}
+	}
+	if want := thumbprintS256(k.Chain[0]); k.KID != want {
+		return fmt.Errorf("token: key %q is not its certificate thumbprint %q", k.KID, want)
 	}
 	return nil
 }

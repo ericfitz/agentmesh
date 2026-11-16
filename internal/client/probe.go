@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,6 +10,8 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/gen"
+	"github.com/ericfitz/agentmesh/internal/profile"
+	"github.com/ericfitz/agentmesh/internal/trust"
 )
 
 // ServerInfo is what GET /v1/discover says about a server.
@@ -37,6 +40,47 @@ func DiscoverServer(ctx context.Context, hc *http.Client, server string) (Server
 		return ServerInfo{}, fmt.Errorf("discover %s: the answer names no protocol version, so it is not an agentmesh server", server)
 	}
 	return ServerInfo{ServerVersion: r.JSON200.ServerVersion, ProtocolVersion: r.JSON200.ProtocolVersion}, nil
+}
+
+// EnsureServerTrust is the trust step of Open for the server profile that
+// SelectProfile chooses for o (an undefined profile with o.Server is the
+// in-memory one): it pins the root on first contact and applies the bundle, or
+// refuses with a *ResolveError (exit 2) naming both roots when the root,
+// installation or server differs from the pinned one and o.AcceptNewRoot is
+// false. `agentmesh-mcponly check` runs it as part of its reach step. hc nil: a
+// client with no Timeout.
+func EnsureServerTrust(ctx context.Context, o Options, hc *http.Client) error {
+	sel, err := SelectProfile(o)
+	if err != nil {
+		return err
+	}
+	p := sel.Profile
+	if !sel.Defined {
+		if o.Server == "" {
+			return resolveErr(fmt.Errorf("profile %q is not defined in %s", sel.Name, sel.Config.Path))
+		}
+		p = profile.Profile{Name: sel.Name, Mode: profile.ModeServer, Server: strings.TrimSuffix(o.Server, "/"), InsecureHTTP: o.InsecureHTTP, RootThumbprint: o.RootThumbprint, Installation: o.Installation}
+	}
+	if p.Mode != profile.ModeServer {
+		return NoLocalModeError(p.Name)
+	}
+	plain, err := unauthenticated(hc, p.Server)
+	if err != nil {
+		return err
+	}
+	dataDir, err := profile.DataDir(o.Environ)
+	if err != nil {
+		return resolveErr(err)
+	}
+	_, err = ensureTrust(ctx, o, Resolved{Profile: p, ConfigDir: sel.ConfigDir, DataDir: dataDir}, plain)
+	return err
+}
+
+// IsRootMismatch reports whether err is the refusal of a changed root,
+// installation name or server URL, which -accept-new-root replaces.
+func IsRootMismatch(err error) bool {
+	var me *trust.MismatchError
+	return errors.As(err, &me) && (me.What == "root" || me.What == "installation" || me.What == "server")
 }
 
 // ProbeHealth is the health document at the probe tier: GET /v1/health with no

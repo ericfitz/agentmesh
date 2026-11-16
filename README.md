@@ -57,7 +57,7 @@ An agent that only needs to reach a server can use the smaller `agentmesh-mcponl
 
 ## Administrator commands
 
-An administrator's client also has `agentmesh scopes create [-key K] NAME | list | get NAME | done -retire with_bridge|normal [-key K] NAME`, `agentmesh identities create [-scope S] NAME` (prints a one-time enrollment token for the new agent), `agentmesh channels create [-scope S] ...` and `agentmesh bridges create [-slack-name N] CHANNEL | list | get CHANNEL | remove CHANNEL` (Slack bridge; `forbidden` where none is configured) and `agentmesh signing-keys list | rotate [-revoke-previous] [-key K]` (the server's token signing key set; `unavailable` on a local profile). The walk-through is in `docs/ops/admin-bootstrap.md`.
+An administrator's client also has `agentmesh scopes create [-key K] NAME | list | get NAME | done -retire with_bridge|normal [-key K] NAME`, `agentmesh identities create [-scope S] NAME` (prints a one-time enrollment token for the new agent), `agentmesh channels create [-scope S] ...` and `agentmesh bridges create [-slack-name N] CHANNEL | list | get CHANNEL | remove CHANNEL` (Slack bridge; `forbidden` where none is configured) and `agentmesh signing-keys list | rotate [-key K]` (the server's signing leaves; a rotation always revokes the previous leaf; `unavailable` on a local profile). The walk-through is in `docs/ops/admin-bootstrap.md`.
 
 ## Terminal UI
 
@@ -72,7 +72,7 @@ macOS: `brew install ericfitz/tap/agentmesh`. Linux: `curl -fsSL https://github.
 Requirements: Go 1.27, Docker, golangci-lint v2.14.0, vacuum 0.36.2 (`go install github.com/daveshanley/vacuum@v0.36.2`). `make verify` needs Docker even when `AGENTMESH_TEST_POSTGRES_DSN` is set: the variable only replaces testcontainers as the suites' Postgres.
 
 - `make verify`: the done gate (build, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, both conformance suites on SQLite and Postgres, gate checks).
-- With the default key provider the server's token signing key is stored in clear in the database (the `signing_keys` rows), so read access to the database is equivalent to the admin flag. A key held by an external provider (`signing_key_uri`) never leaves the key service; the database holds only its public half.
+- The database holds no private key. The server signs bearers with a leaf certificate that each process makes in memory, under an intermediate key that lives in a file or a key service and a root that stays outside the server (`docs/ops/signing-keys.md`), so read access to the database does not let anyone mint a token. Write access to it is still equivalent to the admin flag.
 - The Postgres database must use a UTF-8 ctype (text-search normalization relies on `[[:alnum:]]` matching non-ASCII letters).
 - `make generate`: regenerate `internal/gen` from `api/openapi.yaml`.
 - `make check-gates`: the negative halves of the gate (unreachable Postgres, no Docker and no variable, and others), runnable alone.

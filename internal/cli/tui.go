@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"sync"
 
 	"github.com/ericfitz/agentmesh/internal/client"
 	"github.com/ericfitz/agentmesh/internal/profile"
@@ -59,10 +60,13 @@ func RunTUI(ctx context.Context, args []string, environ []string, stdin io.Reade
 		o.FallbackIdentity = osUserName()
 	}
 	o.HumanIdentity = true
+	notice, screenUp := gatedNotice(stderr)
+	o.Notice = notice
 	conn, code := open(ctx, o, stderr)
 	if conn == nil {
 		return code
 	}
+	screenUp() // trust notices after this point go to trust.log only
 	defer func() { _ = conn.Close() }()
 	if conn.Human != nil {
 		// The screen belongs to the TUI from here on: a sign-in that a 401
@@ -136,4 +140,23 @@ func tuiSettings(s profile.TUISettings) tui.Settings {
 		out.Themes = append(out.Themes, tui.ColorTheme(t))
 	}
 	return out
+}
+
+// gatedNotice is a trust Notice that writes to stderr until up is called; the
+// TUI owns the screen from then on, and the lines that follow (a refused CRL)
+// reach trust.log only.
+func gatedNotice(stderr io.Writer) (notice func(line string), up func()) {
+	var mu sync.Mutex
+	on := false
+	return func(line string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if !on {
+				_, _ = fmt.Fprintf(stderr, "agentmesh: %s\n", line)
+			}
+		}, func() {
+			mu.Lock()
+			on = true
+			mu.Unlock()
+		}
 }

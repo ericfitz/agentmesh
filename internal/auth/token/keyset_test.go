@@ -45,23 +45,6 @@ func (f *fakeSource) count() int {
 	return f.loads
 }
 
-// ksKey makes a generated key and its Key record.
-func ksKey(t *testing.T, alg keys.Algorithm) (crypto.Signer, Key) {
-	t.Helper()
-	s := genKey(t, alg)
-	k, err := keyOf(s.Public())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s, k
-}
-
-// setOf is a valid set: active signs, the others are retiring; Keys is
-// active first.
-func setOf(active crypto.Signer, activeKey Key, retiring ...Key) KeySet {
-	return KeySet{Active: activeKey, Signer: cryptoSigner{active}, Keys: append([]Key{activeKey}, retiring...)}
-}
-
 func ksIssuer(t *testing.T, src KeySource, clk *clock) *Issuer {
 	t.Helper()
 	i, err := NewIssuer(context.Background(), issURL, src, time.Hour, clk.Now)
@@ -89,8 +72,8 @@ func headerKID(t *testing.T, raw string) string {
 
 func TestIssuerVerifiesEveryKey(t *testing.T) {
 	clk := &clock{t: t0}
-	s1, k1 := ksKey(t, keys.EdDSA)
-	s2, k2 := ksKey(t, keys.ES256)
+	s1, k1 := ksKey(t)
+	s2, k2 := ksKey(t)
 	src := &fakeSource{}
 	src.put(setOf(s1, k1), nil)
 	i := ksIssuer(t, src, clk)
@@ -118,7 +101,7 @@ func TestIssuerVerifiesEveryKey(t *testing.T) {
 	if len(set.Keys) != 2 || set.Keys[0].KeyID != k2.KID || set.Keys[1].KeyID != k1.KID {
 		t.Errorf("jwks kids %v, want [%s %s]", kidsOf(set), k2.KID, k1.KID)
 	}
-	if i.KID() != k2.KID || i.Algorithm() != keys.ES256 {
+	if i.KID() != k2.KID || i.Algorithm() != keys.EdDSA {
 		t.Errorf("KID %q Algorithm %q", i.KID(), i.Algorithm())
 	}
 }
@@ -133,8 +116,8 @@ func kidsOf(set jose.JSONWebKeySet) []string {
 
 func TestIssuerReloadsOnUnknownKID(t *testing.T) {
 	clk := &clock{t: t0}
-	s1, k1 := ksKey(t, keys.EdDSA)
-	s3, k3 := ksKey(t, keys.EdDSA)
+	s1, k1 := ksKey(t)
+	s3, k3 := ksKey(t)
 	src := &fakeSource{}
 	src.put(setOf(s1, k1), nil)
 	i := ksIssuer(t, src, clk)
@@ -151,11 +134,11 @@ func TestIssuerReloadsOnUnknownKID(t *testing.T) {
 
 func TestIssuerUnknownKIDRateLimited(t *testing.T) {
 	clk := &clock{t: t0}
-	s1, k1 := ksKey(t, keys.EdDSA)
+	s1, k1 := ksKey(t)
 	src := &fakeSource{}
 	src.put(setOf(s1, k1), nil)
 	i := ksIssuer(t, src, clk)
-	other, _ := ksKey(t, keys.EdDSA)
+	other, _ := ksKey(t)
 	ctx := context.Background()
 	before := src.count()
 	for n := 0; n < 100; n++ {
@@ -197,8 +180,8 @@ func TestIssuerPeriodicReload(t *testing.T) {
 	for _, op := range []string{"mint", "verify", "jwks"} {
 		t.Run(op, func(t *testing.T) {
 			clk := &clock{t: t0}
-			s1, k1 := ksKey(t, keys.EdDSA)
-			s2, k2 := ksKey(t, keys.EdDSA)
+			s1, k1 := ksKey(t)
+			s2, k2 := ksKey(t)
 			src := &fakeSource{}
 			src.put(setOf(s1, k1), nil)
 			i := ksIssuer(t, src, clk)
@@ -240,7 +223,7 @@ func TestIssuerPeriodicReload(t *testing.T) {
 
 func TestIssuerReloadFailureKeepsSet(t *testing.T) {
 	clk := &clock{t: t0}
-	s1, k1 := ksKey(t, keys.EdDSA)
+	s1, k1 := ksKey(t)
 	src := &fakeSource{}
 	src.put(setOf(s1, k1), nil)
 	i := ksIssuer(t, src, clk)
@@ -264,8 +247,8 @@ func TestIssuerReloadFailureKeepsSet(t *testing.T) {
 
 func TestIssuerInvalidate(t *testing.T) {
 	clk := &clock{t: t0}
-	s1, k1 := ksKey(t, keys.EdDSA)
-	s2, k2 := ksKey(t, keys.EdDSA)
+	s1, k1 := ksKey(t)
+	s2, k2 := ksKey(t)
 	src := &fakeSource{}
 	src.put(setOf(s1, k1), nil)
 	i := ksIssuer(t, src, clk)
@@ -291,15 +274,15 @@ func TestIssuerInvalidate(t *testing.T) {
 // TestIssuerRejectsBadKeySet: an invalid set is refused at NewIssuer and, on a
 // later reload, leaves the cached set in place.
 func TestIssuerRejectsBadKeySet(t *testing.T) {
-	s1, k1 := ksKey(t, keys.EdDSA)
-	_, k2 := ksKey(t, keys.EdDSA)
-	s3, k3 := ksKey(t, keys.ES256)
+	s1, k1 := ksKey(t)
+	_, k2 := ksKey(t)
+	s3, k3 := ksKey(t)
 	wrongAlg := k1
 	wrongAlg.Algorithm = keys.ES256
 	badKID := k1
 	badKID.KID = "not-the-thumbprint"
 	cases := map[string]KeySet{
-		"empty":                  {},
+		"empty with a signer":    {Signer: cryptoSigner{s1}},
 		"active not in keys":     {Active: k1, Signer: cryptoSigner{s1}, Keys: []Key{k2}},
 		"kid not the thumbprint": {Active: badKID, Signer: cryptoSigner{s1}, Keys: []Key{badKID}},
 		"algorithm disagrees":    {Active: wrongAlg, Signer: cryptoSigner{s1}, Keys: []Key{wrongAlg}},
@@ -348,7 +331,7 @@ func (r *recordingSigner) SignContext(ctx context.Context, _ []byte, _ crypto.Si
 
 func TestMintSignerFailureIs503(t *testing.T) {
 	clk := &clock{t: t0}
-	s1, k1 := ksKey(t, keys.EdDSA)
+	s1, k1 := ksKey(t)
 	in := MintInput{Identity: "alice", Kind: KindAgent}
 	for name, signer := range map[string]ContextSigner{
 		"no signer":   nil,
@@ -372,7 +355,7 @@ func TestMintSignerFailureIs503(t *testing.T) {
 // open note: signing-keys 7
 func TestMintSignTimeout(t *testing.T) {
 	clk := &clock{t: t0}
-	s1, k1 := ksKey(t, keys.EdDSA)
+	s1, k1 := ksKey(t)
 	rs := &recordingSigner{pub: s1.Public(), err: errors.New("kms down")}
 	src := &fakeSource{}
 	src.put(KeySet{Active: k1, Signer: rs, Keys: []Key{k1}}, nil)
@@ -404,26 +387,6 @@ func TestMintSignTimeout(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Mint did not return after its context ended")
-	}
-}
-
-// TestMintES256DER: a context signer that returns DER for ES256 (the
-// crypto.Signer contract) yields a JWS the public key verifies.
-func TestMintES256DER(t *testing.T) {
-	clk := &clock{t: t0}
-	s, _ := ksKey(t, keys.ES256)
-	i := ksIssuer(t, StaticKeys(s), clk)
-	raw, _, err := i.Mint(context.Background(), MintInput{Identity: "alice", Kind: KindAgent})
-	if err != nil {
-		t.Fatal(err)
-	}
-	tok, err := jwt.ParseSigned(raw, []jose.SignatureAlgorithm{jose.ES256})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var c jwt.Claims
-	if err := tok.Claims(s.Public(), &c); err != nil || c.Subject != "alice" {
-		t.Fatalf("claims: %+v %v", c, err)
 	}
 }
 
@@ -459,8 +422,8 @@ func TestIssuerInvalidateDuringLoad(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			clk := &clock{t: t0}
-			s1, k1 := ksKey(t, keys.EdDSA)
-			s2, k2 := ksKey(t, keys.EdDSA)
+			s1, k1 := ksKey(t)
+			s2, k2 := ksKey(t)
 			base := &fakeSource{}
 			base.put(setOf(s1, k1), nil)
 			src := &gatedSource{fakeSource: base, entered: make(chan struct{})}

@@ -85,6 +85,40 @@ func TestPgnotifyHintOnWatchRegistration(t *testing.T) {
 	expectNoSeqHint(t, hints, 300*time.Millisecond)
 }
 
+// TestPgnotifyHintOnTrustBump: spec 4.9, the trust transaction notifies so
+// waiting sessions on every replica look again. A rolled-back bump sends nothing.
+func TestPgnotifyHintOnTrustBump(t *testing.T) {
+	h, n, _ := harnessOverDSN(t, postgresEngine(t))
+	hints, cancel := n.Subscribe()
+	defer cancel()
+	drain(hints, 300*time.Millisecond)
+	sib := h.sibling(harnessOptions{})
+
+	errRollBack := errors.New("roll back")
+	err := sib.raw.Tx(context.Background(), func(ctx context.Context, tx ab2store.Tx) error {
+		if _, err := tx.BumpTrustNumber(ctx, sib.core.NowMs()); err != nil {
+			return err
+		}
+		return errRollBack
+	})
+	if !errors.Is(err, errRollBack) {
+		t.Fatalf("tx = %v, want the rollback error", err)
+	}
+	if got, ok := nextHint(hints, 500*time.Millisecond); ok {
+		t.Fatalf("a rolled-back bump sent hint %v", got)
+	}
+
+	sib.tx(func(ctx context.Context, tx ab2store.Tx) error {
+		_, err := tx.BumpTrustNumber(ctx, sib.core.NowMs())
+		return err
+	})
+	got, ok := nextHint(hints, time.Second)
+	if !ok || got != (notify.Hint{}) {
+		t.Fatalf("got %v, %v; want the control hint {0 0}", got, ok)
+	}
+	expectNoSeqHint(t, hints, 300*time.Millisecond)
+}
+
 func TestPgnotifyNoHintFromAnotherSchema(t *testing.T) {
 	e := postgresEngine(t)
 	h1, n1, _ := harnessOverDSN(t, e)

@@ -367,11 +367,16 @@ case_server_argv() {
   cmd=$(ps -o command= -p "$(cat "$D/server.pid")")
   for pair in 'send_messages_per_second=10000' 'send_kib_per_second=65536' \
     'token_lifetime_seconds=86400' 'session_lease_seconds=86400' \
-    'watch_max_seconds=1' 'maintenance_interval_seconds=3600' \
-    'signing_key_rotation_cooldown_seconds=1'; do
+    'watch_max_seconds=1' 'maintenance_interval_seconds=3600'; do
     case "$cmd" in *"-set $pair"*) ;; *) fail "server argv lacks '-set $pair'" ;; esac
   done
   case "$cmd" in *'-listen 127.0.0.1:'*) ;; *) fail "server argv lacks '-listen 127.0.0.1:'" ;; esac
+  # The server's CA (ADR 0019 section 7): up made the root and the signed intermediate, and the server got the settings.
+  [ -s "$D/ca/root.pem" ] || fail "up made no $D/ca/root.pem"
+  [ -s "$D/intermediate.pem" ] || fail "up made no $D/intermediate.pem"
+  case "$cmd" in *"-set root_certificate_file=$D/ca/root.pem"*) ;; *) fail "server argv lacks '-set root_certificate_file=$D/ca/root.pem'" ;; esac
+  case "$cmd" in *"-set intermediate_key_file=$D/intermediate.key"*) ;; *) fail "server argv lacks '-set intermediate_key_file=$D/intermediate.key'" ;; esac
+  case "$cmd" in *'-set installation_name='?*) ;; *) fail "server argv lacks '-set installation_name=NAME'" ;; esac
 }
 
 case_leftovers_cleaned() {
@@ -395,10 +400,11 @@ case_down_removes_dir() {
   local pid
   pid=$(cat "$d/server.pid")
   alive "$pid" || fail "the server of $d is not alive before down"
+  [ -f "$d/ca/root.pem" ] && [ -f "$d/ca/root.key" ] || fail "$d holds no CA before down"
   h dn1 down --dir "$d"
   expect_rc 0 "down" dn1
   wait_for 10 sh -c "! kill -0 $pid 2>/dev/null" || fail "the server (pid $pid) is alive after down"
-  [ ! -e "$d" ] || fail "$d exists after down"
+  [ ! -e "$d" ] || fail "$d exists after down (the CA with it)"
   h dn2 down --dir "$d"
   expect_rc 0 "second down" dn2
 }

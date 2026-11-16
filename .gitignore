@@ -13,3 +13,7 @@ HANDOFF.md
 
 # Brainstorm visual companion sessions
 /.superpowers/
+
+# CA material of the compose example (root.pem, intermediate.key and friends): never committed
+deploy/ca/
+deploy/ca-root/

@@ -47,9 +47,10 @@ type Config struct {
 	Registration identities.Mode
 	Issuer       *token.Issuer     // nil: local mode, the token endpoint answers 503
 	External     []*token.External // configured external issuers (Decision 57)
-	// SigningKeys runs the signing key rotation and removal maintenance jobs;
-	// nil: they are off.
-	SigningKeys *signingkeys.Service
+	// SigningKeys is the leaf manager (ADR 0019 section 4.6): Serve runs its
+	// renewal loop and serves the signing key operations through it; nil: the
+	// loop is off and those operations answer unavailable.
+	SigningKeys *signingkeys.Manager
 	Embedder    core.Embedder // nil: text search only; embed.Install when set
 	// Inspector judges content writes before they commit; nil: no inspection.
 	Inspector core.Inspector
@@ -120,11 +121,28 @@ func Serve(ctx context.Context, c Config) error {
 	if c.Cfg != nil {
 		cfg = *c.Cfg
 	}
-	cr, err := core.New(c.Store, cfg, core.Options{Now: c.Now, Notifier: c.Notifier, Embedder: c.Embedder, Inspector: c.Inspector, Logger: c.Logger})
+	copts := core.Options{Now: c.Now, Notifier: c.Notifier, Embedder: c.Embedder, Inspector: c.Inspector, Logger: c.Logger}
+	if c.SigningKeys != nil { // never a typed nil in the interface
+		copts.Trust = c.SigningKeys
+	}
+	cr, err := core.New(c.Store, cfg, copts)
 	if err != nil {
 		return err
 	}
 	embed.Install(cr)
+	if c.SigningKeys != nil {
+		// A change of this process's trust material reloads its issuer and tells
+		// the serving core's watchers (a doorbell hint, sequence number 0). The
+		// callback runs under the manager's locks: it only invalidates and
+		// publishes, both idempotent and non-blocking.
+		iss := c.Issuer
+		c.SigningKeys.SetOnChange(func() {
+			if iss != nil {
+				iss.Invalidate()
+			}
+			cr.Publish(notify.Hint{})
+		})
+	}
 	if err := (channels.Service{Core: cr}).EnsureGeneral(ctx); err != nil {
 		return fmt.Errorf("server: creating the general channel: %w", err)
 	}
@@ -149,7 +167,6 @@ func Serve(ctx context.Context, c Config) error {
 	var wg sync.WaitGroup
 	defer func() { stopMaint(); wg.Wait() }()
 	m := maintenance.New(cr)
-	m.SigningKeys = c.SigningKeys
 	if br != nil {
 		m.Archiver = br
 		// The runner competes for the slack-bridge lock beside maintenance and
@@ -161,6 +178,15 @@ func Serve(ctx context.Context, c Config) error {
 			if err := br.Run(mctx); err != nil {
 				cr.Log.Error("slack bridge", "err", err)
 			}
+		}()
+	}
+	if c.SigningKeys != nil {
+		t := c.SigningKeys.Trust()
+		m.Trust = &t
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.SigningKeys.Run(mctx, cr.Notifier())
 		}()
 	}
 	wg.Add(1)

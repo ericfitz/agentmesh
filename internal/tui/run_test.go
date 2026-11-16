@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/auth/token"
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
@@ -20,6 +19,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/gen"
 	"github.com/ericfitz/agentmesh/internal/server"
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 // countingHandler counts the long polls (requests whose path ends in /watch)
@@ -177,14 +177,13 @@ func TestBothModes(t *testing.T) {
 		{"server", func(t *testing.T, c *core.Core) (bus.Bus, *countingHandler) {
 			srv := httptest.NewUnstartedServer(nil)
 			url := "http://" + srv.Listener.Addr().String()
-			key, err := keys.Generate(keys.EdDSA)
+			// The fixture is made on the real clock the issuer runs on.
+			mgr := trusttest.New(t, time.Time{}).Manager(t, c)
+			iss, err := token.NewIssuer(context.Background(), url, mgr, time.Hour, time.Now)
 			if err != nil {
 				t.Fatal(err)
 			}
-			iss, err := token.NewIssuer(context.Background(), url, token.StaticKeys(key), time.Hour, time.Now)
-			if err != nil {
-				t.Fatal(err)
-			}
+			mgr.SetOnChange(iss.Invalidate)
 			h := &countingHandler{Handler: server.New(c, server.Options{Auth: server.Bearer{Verifier: token.Verifier{Own: iss}}, Issuer: iss})}
 			srv.Config.Handler = h
 			srv.Start()

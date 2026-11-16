@@ -79,7 +79,8 @@ func (a *api) OpenidConfiguration(ctx context.Context, _ gen.OpenidConfiguration
 }
 
 // Discover answers GET /v1/discover, computed from the embedded document
-// (Decision 65 by construction).
+// (Decision 65 by construction) and, in server mode, the in-memory trust
+// bundle with the root and the installation name (ADR 0019 section 4.9).
 func (a *api) Discover(ctx context.Context, _ gen.DiscoverRequestObject) (gen.DiscoverResponseObject, error) {
 	base := baseURLFrom(ctx)
 	if a.opts.Issuer != nil {
@@ -113,7 +114,13 @@ func (a *api) Discover(ctx context.Context, _ gen.DiscoverRequestObject) (gen.Di
 			issuers = append(issuers, e.Issuer)
 		}
 	}
+	var trust *gen.TrustBundle
+	if ts := a.core.Trust(); ts != nil {
+		b := ts.Bundle() // the in-memory snapshot: discover never touches the Store
+		trust = trustToGen(&b)
+	}
 	return gen.Discover200JSONResponse{
+		Trust:               trust,
 		ApiVersions:         []string{"v1"},
 		AuthMethods:         methods,
 		AuthorizationServer: &asURL,

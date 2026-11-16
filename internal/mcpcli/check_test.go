@@ -1,10 +1,13 @@
 package mcpcli
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
@@ -55,7 +58,7 @@ func TestCheckSteps(t *testing.T) {
 	// No identity: reach and health pass, then the next step is printed.
 	code, out, errs := run([]string{"check", "-server", base}, environ)
 	got := lines(out)
-	if code != 0 || errs != "" || len(got) != 3 ||
+	if code != 0 || noPin(errs) != "" || len(got) != 3 ||
 		!strings.HasPrefix(got[0], "ok   reach: "+base+" (server ") || !strings.Contains(got[0], ", protocol "+version.Protocol+")") ||
 		!strings.HasPrefix(got[1], "ok   health: ") || !strings.HasSuffix(got[1], " (probe tier)") ||
 		got[2] != "next: agentmesh-mcponly register -server "+base+" -identity NAME" {
@@ -88,7 +91,7 @@ func TestCheckSteps(t *testing.T) {
 	got = lines(out)
 	if code != 1 || len(got) != 5 || !strings.HasPrefix(got[4], "FAIL token: unauthenticated:") ||
 		!strings.HasSuffix(got[4], "fix: agentmesh-mcponly register -server "+base+" -identity nobody (if nobody already holds another key, an administrator runs agentmesh server admin reset-credential nobody first)") ||
-		strings.TrimSpace(errs) != "agentmesh-mcponly: check: token failed" {
+		strings.TrimSpace(noPin(errs)) != "agentmesh-mcponly: check: token failed" {
 		t.Errorf("unregistered key: code %d, stdout %q, stderr %q", code, out, errs)
 	}
 	if !strings.HasPrefix(got[3], "ok   credential: "+key) {
@@ -100,7 +103,7 @@ func TestCheckSteps(t *testing.T) {
 	got = lines(out)
 	if code != 1 || len(got) != 1 || !strings.HasPrefix(got[0], "FAIL reach: ") ||
 		!strings.HasSuffix(got[0], "fix: check the URL and that the server is running, then agentmesh-mcponly check -server http://127.0.0.1:1") ||
-		strings.TrimSpace(errs) != "agentmesh-mcponly: check: reach failed" {
+		strings.TrimSpace(noPin(errs)) != "agentmesh-mcponly: check: reach failed" {
 		t.Errorf("closed port: code %d, stdout %q, stderr %q", code, out, errs)
 	}
 }
@@ -199,7 +202,7 @@ func TestCheckIdentityGuard(t *testing.T) {
 	got := lines(out)
 	if code != 1 || len(got) != 3 || !strings.HasPrefix(got[2], "FAIL identity: ") ||
 		!strings.Contains(got[2], "is the OS login name") || !strings.Contains(got[2], "fix: ") ||
-		strings.TrimSpace(errs) != "agentmesh-mcponly: check: identity failed" {
+		strings.TrimSpace(noPin(errs)) != "agentmesh-mcponly: check: identity failed" {
 		t.Errorf("code %d, stdout %q, stderr %q", code, out, errs)
 	}
 	// Another login name passes the step.
@@ -244,5 +247,38 @@ func TestOwnerOnlyFixWindowsText(t *testing.T) {
 	got := fileacl.WindowsFix(`C:\k`)
 	if !strings.Contains(got, "${env:USERNAME}") || !strings.Contains(got, "%USERNAME%") {
 		t.Errorf("WindowsFix = %q", got)
+	}
+}
+
+// The server URL rule holds before any request: no connection is made.
+func TestCheckRefusesCleartextBeforeAnyRequest(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ln.Close() }()
+	var conns atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conns.Add(1)
+			_ = c.Close()
+		}
+	}()
+	environ, _ := testEnviron(t)
+	// 127.0.0.2 is not one of the three loopback names, so the rule refuses it
+	// at once; without the rule check would dial it (and hang until its timeout).
+	port := ln.Addr().(*net.TCPAddr).Port
+	for _, host := range []string{"http://elsewhere:1", fmt.Sprintf("http://127.0.0.2:%d", port)} {
+		code, out, errs := run([]string{"check", "-server", host}, environ)
+		if code != 2 || out != "" || !strings.Contains(errs, "-insecure-http") {
+			t.Errorf("%s: code %d, stdout %q, stderr %q", host, code, out, errs)
+		}
+	}
+	if n := conns.Load(); n != 0 {
+		t.Errorf("%d connections were made", n)
 	}
 }

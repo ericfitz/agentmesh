@@ -2,70 +2,53 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
-	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
-	"github.com/ericfitz/agentmesh/internal/keyprovider"
+	"github.com/ericfitz/agentmesh/internal/pki"
 )
 
-// countingProvider counts Next calls, so a test can tell that a replayed
-// rotation never reached the provider.
-type countingProvider struct {
-	keyprovider.StoreProvider
-	next atomic.Int32
-}
-
-func (p *countingProvider) Next(ctx context.Context) (keyprovider.Key, error) {
-	p.next.Add(1)
-	return p.StoreProvider.Next(ctx)
-}
-
 // keysEnv is an env with an issuer, an administrator "root", a non-administrator
-// "pat" and a signing key service whose active key is two hours old (older than
-// the one hour default cooldown), so the first rotation is allowed.
-func keysEnv(t *testing.T) (*env, *countingProvider) {
+// "pat" and a leaf manager over a trust fixture made at the fake clock's start
+// (a fixture made later would hold certificates that are not valid yet).
+func keysEnv(t *testing.T) *env {
 	t.Helper()
 	e := newEnv(t, envOptions{issuer: true, auth: InProcess{}})
 	e.identity("root", true)
 	e.identity("pat", false)
-	p := &countingProvider{}
-	svc := signingkeys.Service{Core: e.core, Provider: p, Settings: signingkeys.DefaultSettings()}
-	e.opts.SigningKeys = svc
-	if _, _, err := svc.EnsureActive(context.Background()); err != nil {
-		t.Fatalf("EnsureActive: %v", err)
-	}
-	e.clock.Advance(2 * time.Hour)
-	p.next.Store(0)
-	return e, p
+	e.opts.SigningKeys = e.mgr
+	return e
 }
 
 type wireKey struct {
-	KID         string `json:"kid"`
-	State       string `json:"state"`
-	Provider    string `json:"provider"`
-	ProviderRef string `json:"provider_ref"`
-	Algorithm   string `json:"algorithm"`
-	CreatedAt   int64  `json:"created_at"`
-	RetiredAt   int64  `json:"retired_at"`
-	RemoveAfter int64  `json:"remove_after"`
+	Thumbprint       string `json:"thumbprint"`
+	Serial           string `json:"serial"`
+	IssuerThumbprint string `json:"issuer_thumbprint"`
+	NotBefore        int64  `json:"not_before"`
+	NotAfter         int64  `json:"not_after"`
+	State            string `json:"state"`
+}
+
+type wireRevoked struct {
+	Thumbprint    string `json:"thumbprint"`
+	HumanMessages int64  `json:"human_messages"`
 }
 
 type wireRotation struct {
-	Active   wireKey  `json:"active"`
-	Previous *wireKey `json:"previous"`
-	Revoked  bool     `json:"revoked"`
+	Current     wireKey       `json:"current"`
+	Revoked     []wireRevoked `json:"revoked"`
+	TrustNumber int64         `json:"trust_number"`
 }
 
-func (e *env) rotate(identity, query, idemKey string) (int, string) {
+func (e *env) rotate(identity, idemKey string) (int, string) {
 	e.t.Helper()
-	req, err := http.NewRequest(http.MethodPost, "http://inproc/v1/admin/signing-keys/rotate"+query, nil)
+	req, err := http.NewRequest(http.MethodPost, "http://inproc/v1/admin/signing-keys/rotate", nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -92,14 +75,20 @@ func (e *env) listKeys(identity string) (int, string, []wireKey) {
 }
 
 func TestListSigningKeysAdmin(t *testing.T) {
-	e, _ := keysEnv(t)
+	e := keysEnv(t)
 	st, body, ks := e.listKeys("root")
 	if st != 200 || len(ks) != 1 {
 		t.Fatalf("list: %d %s", st, body)
 	}
 	k := ks[0]
-	if k.State != "active" || k.Provider != "store" || k.Algorithm != "EdDSA" || k.KID == "" || k.RetiredAt != 0 || k.RemoveAfter != 0 || k.CreatedAt != fixedNowMs {
-		t.Fatalf("active key = %+v", k)
+	if k.State != "current" || k.Thumbprint == "" || k.NotBefore != fixedNowMs-60_000 || k.NotAfter != fixedNowMs+int64(168*time.Hour/time.Millisecond) || k.Serial == "" || k.IssuerThumbprint == "" {
+		t.Fatalf("current key = %+v", k)
+	}
+	var doc struct {
+		TrustNumber int64 `json:"trust_number"`
+	}
+	if err := json.Unmarshal([]byte(body), &doc); err != nil || doc.TrustNumber <= 0 {
+		t.Fatalf("the list has no trust_number: %s", body)
 	}
 	if strings.Contains(strings.ToLower(body), "private") || strings.Contains(body, "BEGIN") {
 		t.Fatalf("the body names a private key: %s", body)
@@ -107,128 +96,97 @@ func TestListSigningKeysAdmin(t *testing.T) {
 }
 
 func TestSigningKeysForbiddenForAgent(t *testing.T) {
-	e, p := keysEnv(t)
+	e := keysEnv(t)
 	st, body, _ := e.send("pat", http.MethodGet, "/v1/admin/signing-keys")
 	if st != 403 || !strings.Contains(body, `"code":"forbidden"`) {
 		t.Fatalf("list as agent: %d %s", st, body)
 	}
-	st, body = e.rotate("pat", "", "")
+	st, body = e.rotate("pat", "")
 	if st != 403 || !strings.Contains(body, `"code":"forbidden"`) {
 		t.Fatalf("rotate as agent: %d %s", st, body)
-	}
-	if n := p.next.Load(); n != 0 {
-		t.Fatalf("a refused rotation called Provider.Next %d times", n)
 	}
 	if _, _, ks := e.listKeys("root"); len(ks) != 1 {
 		t.Fatalf("a refused rotation changed the set: %+v", ks)
 	}
 }
 
+// Rotate always revokes (Ruling 6): the previous leaf is revoked, reported as
+// the one revoked leaf, and no cooldown refuses a second rotation.
 func TestRotateSigningKeyAPI(t *testing.T) {
-	e, _ := keysEnv(t)
+	e := keysEnv(t)
 	_, _, before := e.listKeys("root")
-	st, body := e.rotate("root", "", "")
-	if st != 200 {
-		t.Fatalf("rotate: %d %s", st, body)
-	}
-	var r wireRotation
-	if err := json.Unmarshal([]byte(body), &r); err != nil {
-		t.Fatal(err)
-	}
-	if r.Revoked || r.Active.State != "active" || r.Active.KID == before[0].KID || r.Previous == nil || r.Previous.KID != before[0].KID || r.Previous.State != "retiring" {
-		t.Fatalf("rotation = %s", body)
-	}
-	if r.Previous.RetiredAt != e.core.NowMs() || r.Previous.RemoveAfter != signingkeys.RemoveAfter(e.core.NowMs()) {
-		t.Fatalf("previous retirement times = %+v", r.Previous)
-	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 || ks[0].State != "active" || ks[0].KID != r.Active.KID || ks[1].State != "retiring" {
-		t.Fatalf("set after rotate = %+v", ks)
-	}
-
-	// A second rotation inside the cooldown is a conflict that says so.
-	st, body = e.rotate("root", "", "")
-	if st != 409 || !strings.Contains(body, `"code":"conflict"`) || !strings.Contains(body, "cooldown") {
-		t.Fatalf("second rotate: %d %s", st, body)
-	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 {
-		t.Fatalf("a refused rotation changed the set: %+v", ks)
-	}
-
-	// revoke_previous skips the cooldown and deletes the key it replaces.
-	st, body = e.rotate("root", "?revoke_previous=true", "")
-	if st != 200 {
-		t.Fatalf("revoking rotate: %d %s", st, body)
-	}
-	var rv wireRotation
-	if err := json.Unmarshal([]byte(body), &rv); err != nil {
-		t.Fatal(err)
-	}
-	if !rv.Revoked || rv.Previous == nil || rv.Previous.KID != r.Active.KID {
-		t.Fatalf("revoking rotation = %s", body)
-	}
-	_, _, ks := e.listKeys("root")
-	if len(ks) != 2 || ks[0].KID != rv.Active.KID || ks[1].KID != r.Previous.KID {
-		t.Fatalf("set after revoke = %+v", ks)
-	}
-
-	// The query parameter is a boolean.
-	if st, body = e.rotate("root", "?revoke_previous=maybe", ""); st != 400 {
-		t.Fatalf("revoke_previous=maybe: %d %s", st, body)
+	for i := 0; i < 2; i++ {
+		st, body := e.rotate("root", "")
+		if st != 200 {
+			t.Fatalf("rotate %d: %d %s", i, st, body)
+		}
+		var r wireRotation
+		if err := json.Unmarshal([]byte(body), &r); err != nil {
+			t.Fatal(err)
+		}
+		if r.Current.State != "current" || r.Current.Thumbprint == before[0].Thumbprint || len(r.Revoked) != 1 ||
+			r.Revoked[0].Thumbprint != before[0].Thumbprint || r.Revoked[0].HumanMessages != 0 {
+			t.Fatalf("rotation %d = %s", i, body)
+		}
+		if r.TrustNumber <= 0 {
+			t.Fatalf("the rotation has no trust_number: %s", body)
+		}
+		_, _, ks := e.listKeys("root")
+		// The revoked leaves stay listed until they expire: one more each time.
+		states := map[string]string{}
+		for _, k := range ks {
+			states[k.Thumbprint] = k.State
+		}
+		if len(ks) != i+2 || ks[0].State != "current" || ks[0].Thumbprint != r.Current.Thumbprint || states[before[0].Thumbprint] != "revoked" {
+			t.Fatalf("set after rotate %d = %+v", i, ks)
+		}
+		before = ks
 	}
 }
 
-// A set with no key yet answers the first rotation without a previous member.
-func TestRotateSigningKeyFirstKey(t *testing.T) {
-	e := newEnv(t, envOptions{issuer: true, auth: InProcess{}})
-	e.identity("root", true)
-	e.opts.SigningKeys = signingkeys.Service{Core: e.core, Provider: keyprovider.StoreProvider{}, Settings: signingkeys.DefaultSettings()}
-	st, body := e.rotate("root", "", "")
-	if st != 200 || strings.Contains(body, `"previous"`) || !strings.Contains(body, `"revoked":false`) {
-		t.Fatalf("first rotate: %d %s", st, body)
-	}
-}
-
+// A replay of the same Idempotency-Key returns the first answer and issues no
+// further leaf.
 func TestRotateSigningKeyIdempotent(t *testing.T) {
-	e, p := keysEnv(t)
-	st, first := e.rotate("root", "", "k1")
+	e := keysEnv(t)
+	st, first := e.rotate("root", "k1")
 	if st != 200 {
 		t.Fatalf("first: %d %s", st, first)
 	}
-	if n := p.next.Load(); n != 1 {
-		t.Fatalf("Next calls after the first = %d", n)
-	}
-	st, second := e.rotate("root", "", "k1")
+	_, _, afterFirst := e.listKeys("root")
+	st, second := e.rotate("root", "k1")
 	if st != 200 || second != first {
 		t.Fatalf("replay: %d %s\nwant %s", st, second, first)
 	}
-	if n := p.next.Load(); n != 1 {
-		t.Fatalf("a replay called Provider.Next (%d calls)", n)
+	var r wireRotation
+	if err := json.Unmarshal([]byte(first), &r); err != nil {
+		t.Fatal(err)
 	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 {
-		t.Fatalf("a replay rotated again: %+v", ks)
+	_, _, ks := e.listKeys("root")
+	if len(ks) != len(afterFirst) || ks[0].Thumbprint != r.Current.Thumbprint {
+		t.Fatalf("a replay rotated again: %+v, was %+v", ks, afterFirst)
 	}
-	// The same key with another payload is a conflict, again without Next.
-	st, body := e.rotate("root", "?revoke_previous=true", "k1")
-	if st != 409 || !strings.Contains(body, "different payload") {
-		t.Fatalf("changed payload: %d %s", st, body)
+}
+
+// The one 409 of rotateSigningKey: an Idempotency-Key the administrator already
+// used for another write (the receipt holds another payload). The rotation
+// issues no leaf.
+func TestRotateSigningKeyKeyUsedElsewhereConflicts(t *testing.T) {
+	e := keysEnv(t)
+	req, err := http.NewRequest(http.MethodPost, "http://inproc/v1/admin/scopes", strings.NewReader(`{"name":"job1"}`))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if n := p.next.Load(); n != 1 {
-		t.Fatalf("a payload conflict called Provider.Next (%d calls)", n)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", "shared")
+	if resp := e.raw("root", req); resp.StatusCode != 200 {
+		t.Fatalf("create scope: %d", resp.StatusCode)
 	}
-	if _, _, ks := e.listKeys("root"); len(ks) != 2 {
-		t.Fatalf("a payload conflict changed the set: %+v", ks)
+	_, _, before := e.listKeys("root")
+	if st, body := e.rotate("root", "shared"); st != 409 || !strings.Contains(body, `"code":"conflict"`) {
+		t.Fatalf("rotate with a key used for another write: %d %s", st, body)
 	}
-	// A refused rotation stores no receipt: the retry with the same key runs.
-	e2, _ := keysEnv(t)
-	if st, body = e2.rotate("root", "", ""); st != 200 {
-		t.Fatalf("setup: %d %s", st, body)
-	}
-	if st, _ = e2.rotate("root", "", "k2"); st != 409 {
-		t.Fatalf("inside the cooldown: %d", st)
-	}
-	e2.clock.Advance(2 * time.Hour)
-	if st, body = e2.rotate("root", "", "k2"); st != 200 {
-		t.Fatalf("retry after a refusal: %d %s", st, body)
+	if _, _, after := e.listKeys("root"); len(after) != len(before) {
+		t.Fatalf("the refused rotation issued a leaf: %+v, was %+v", after, before)
 	}
 }
 
@@ -247,5 +205,97 @@ func TestSigningKeysUnconfigured(t *testing.T) {
 			!strings.Contains(body, `"retryable":false`) || !strings.Contains(body, bus.SigningKeysNotConfigured) {
 			t.Errorf("%s %s: %d %s %s", c.method, c.path, st, ct, body)
 		}
+	}
+}
+
+// TestJWKSServesChains: the key set has one key per verified, unrevoked leaf, each
+// with kid equal to x5t#S256 and an x5c of two certificates (the leaf, then its
+// intermediate); a leaf a rotation revoked is absent.
+func TestJWKSServesChains(t *testing.T) {
+	e := keysEnv(t)
+	e.fx.Leaf(t, e.core, e.clock.Now(), 24*time.Hour) // another replica's leaf
+	if err := e.mgr.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	type jwk struct {
+		Kid string   `json:"kid"`
+		X5t string   `json:"x5t#S256"`
+		X5c []string `json:"x5c"`
+	}
+	get := func() []jwk {
+		t.Helper()
+		st, body, _ := e.send("", http.MethodGet, "/v1/auth/jwks")
+		if st != 200 {
+			t.Fatalf("jwks: %d %s", st, body)
+		}
+		var set struct {
+			Keys []jwk `json:"keys"`
+		}
+		if err := json.Unmarshal([]byte(body), &set); err != nil {
+			t.Fatal(err)
+		}
+		return set.Keys
+	}
+	check := func(ks []jwk, n int) {
+		t.Helper()
+		if len(ks) != n {
+			t.Fatalf("%d keys, want %d: %+v", len(ks), n, ks)
+		}
+		for _, k := range ks {
+			if k.Kid == "" || k.Kid != k.X5t || len(k.X5c) != 2 {
+				t.Errorf("key %+v: kid must equal x5t#S256 and x5c hold two certificates", k)
+			}
+			leaf, err := base64.StdEncoding.DecodeString(k.X5c[0])
+			if err != nil || pki.Thumbprint(leaf) != k.Kid {
+				t.Errorf("x5c[0] does not hash to the kid %s: %v", k.Kid, err)
+			}
+			inter, err := base64.StdEncoding.DecodeString(k.X5c[1])
+			if err != nil || pki.Thumbprint(inter) != pki.Thumbprint(e.fx.Intermediate.Raw) {
+				t.Errorf("x5c[1] is not the intermediate: %v", err)
+			}
+		}
+	}
+	before := get()
+	check(before, 2)
+	if st, body := e.rotate("root", ""); st != 200 {
+		t.Fatalf("rotate: %d %s", st, body)
+	}
+	after := get()
+	check(after, 1)
+	for _, k := range before {
+		if k.Kid == after[0].Kid {
+			t.Errorf("the rotated key set still holds a revoked leaf %s", k.Kid)
+		}
+	}
+}
+
+// TestJWKSOmitsExpiredLeaf: a leaf whose period (with the token leeway) has passed
+// on the injected clock is absent from the key set, though its row is stored.
+func TestJWKSOmitsExpiredLeaf(t *testing.T) {
+	e := keysEnv(t)
+	count := func() int {
+		t.Helper()
+		st, body, _ := e.send("", http.MethodGet, "/v1/auth/jwks")
+		if st != 200 {
+			t.Fatalf("jwks: %d %s", st, body)
+		}
+		var set struct {
+			Keys []json.RawMessage `json:"keys"`
+		}
+		if err := json.Unmarshal([]byte(body), &set); err != nil {
+			t.Fatal(err)
+		}
+		return len(set.Keys)
+	}
+	e.fx.Leaf(t, e.core, e.clock.Now(), time.Hour) // a short-lived leaf from another replica
+	if err := e.mgr.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(); n != 2 {
+		t.Fatalf("%d keys before expiry, want 2", n)
+	}
+	e.clock.Advance(2 * time.Hour) // the short leaf has expired; the manager's 168-hour leaf has not
+	if n := count(); n != 1 {
+		t.Fatalf("%d keys after the short leaf expired, want 1", n)
 	}
 }

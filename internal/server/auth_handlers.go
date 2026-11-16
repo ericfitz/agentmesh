@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"time"
 
@@ -121,7 +122,7 @@ func (a *api) clientCredentials(ctx context.Context, iss *token.Issuer, b *gen.T
 		a.logCause(err)
 		return oauthFromBus(err, false)
 	}
-	raw, _, err := iss.Mint(ctx, token.MintInput{Identity: p.Identity, Kind: token.KindAgent})
+	raw, exp, err := iss.Mint(ctx, token.MintInput{Identity: p.Identity, Kind: token.KindAgent})
 	if errors.Is(err, token.ErrSignerUnavailable) {
 		// The client sees the fixed text; the operator finds the cause here.
 		a.log.Warn("token grant failed: signing key unavailable", "identity", clip(p.Identity), "error", err.Error())
@@ -133,7 +134,7 @@ func (a *api) clientCredentials(ctx context.Context, iss *token.Issuer, b *gen.T
 	return noStoreToken{gen.Token200JSONResponse{
 		AccessToken: raw,
 		TokenType:   "Bearer",
-		ExpiresIn:   int64(iss.Lifetime().Seconds()),
+		ExpiresIn:   expiresIn(exp, a.core.Now()),
 	}}
 }
 
@@ -174,6 +175,9 @@ func (a *api) Register(ctx context.Context, req gen.RegisterRequestObject) (gen.
 	if err := keys.CheckJWKStrings(req.Body.PublicKeyJwk); err != nil {
 		return nil, core.E(bus.CodeValidation, "public_key_jwk: %s", err)
 	}
+	if err := keys.CheckJWKCertificateMembers(req.Body.PublicKeyJwk); err != nil {
+		return nil, core.E(bus.CodeValidation, "public_key_jwk: %s", err)
+	}
 	raw, err := json.Marshal(req.Body.PublicKeyJwk)
 	if err != nil {
 		return nil, core.E(bus.CodeValidation, "public_key_jwk: %s", err)
@@ -200,4 +204,11 @@ func (a *api) Register(ctx context.Context, req gen.RegisterRequestObject) (gen.
 		Algorithm: gen.RegistrationAlgorithm(res.Algorithm),
 		Created:   res.Created,
 	}, nil
+}
+
+// expiresIn is the expires_in of a token answer: the whole seconds from now to
+// exp, rounded (the issuer's clock reads a few microseconds before the
+// handler's, so truncation would answer 3599) and never negative.
+func expiresIn(exp, now time.Time) int64 {
+	return max(0, int64(math.Round(exp.Sub(now).Seconds())))
 }

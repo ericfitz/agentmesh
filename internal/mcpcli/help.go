@@ -110,6 +110,21 @@ Flags of serve, register, check and config:
                     store (default: AGENTMESH_CREDENTIAL)
   -profile NAME     the profile (default: AGENTMESH_PROFILE, then
                     .local/agentmesh.json, then default)
+  -insecure-http    accept an http server URL for a host other than 127.0.0.1,
+                    ::1 and localhost, for local testing only (default:
+                    AGENTMESH_INSECURE_HTTP=1; any other value is exit 2)
+  -root-thumbprint T  pin the trust root: 43 base64url characters, the SHA-256
+                    of the root certificate (default:
+                    AGENTMESH_ROOT_THUMBPRINT)
+  -installation NAME  the installation name the server must carry (default:
+                    AGENTMESH_INSTALLATION)
+A server URL must use https; http is accepted for 127.0.0.1, ::1 and localhost.
+The first contact with a server pins its root; the command says which root on
+standard error. A later change of root or installation name stops the command
+with exit code 2 until you replace the pin with the flag below.
+Flags of register and check only:
+  -accept-new-root  trust the server's new root or installation name and
+                    replace the pinned one; prints the old and the new root
 Flags of register only:
   -enrollment-token T       the token (default: AGENTMESH_ENROLLMENT_TOKEN)
   -enrollment-token-file F  a file holding the token
@@ -179,6 +194,13 @@ is never printed.
 
   $ agentmesh-mcponly register -server https://agentbus.example.com -identity my-agent -enrollment-token-file ./enrollment-token
     > registered my-agent at https://agentbus.example.com (created)
+
+register pins the server's trust root first, before it sends anything, and
+says so on standard error: "pinned root THUMBPRINT, installation NAME, for
+profile P (URL)". If the server's root or installation name later differs from
+the pinned one, register stops with exit 2 and names both; confirm the new
+thumbprint with the server's operator, then run register again with
+-accept-new-root to replace the pin.
 
 Running it again is safe. It registers the same key and says so; a token is
 not needed for a key the server already has.
@@ -270,7 +292,9 @@ Next: agentmesh-mcponly help verify.
 const helpVerify = `agentmesh-mcponly help verify: the six steps of check
 
 check runs six steps, prints one line for each and stops at the first FAIL:
-  reach       the server answers its discovery document
+  reach       the server answers its discovery document, and its trust root and
+              installation name are the pinned ones (a changed root is a FAIL
+              whose fix names -accept-new-root)
   health      the server's health endpoint answers
   identity    an identity is chosen (-identity, AGENTMESH_IDENTITY, the profile's
               identity or the profile's only credential)
@@ -283,7 +307,9 @@ An ok line is "ok   STEP: DETAIL". A failure is
 failed" on standard error, and exit 1. With no identity, check stops after
 health, prints the register command to run next and exits 0.
 
-check creates no session and changes no configuration. The token step always
+check creates no session and writes no configuration file, but it pins the
+server's root on first contact, and with -accept-new-root replaces the pin, as
+every command does. The token step always
 asks the server for a new bearer, so it proves the key works now, and it caches
 that bearer in the data directory as serve does.
 
@@ -349,6 +375,12 @@ after you fix the URL or start the server.
     > FAIL reach: <detail>; fix: check the URL and that the server is running, then agentmesh-mcponly check -server http://127.0.0.1:1
     > agentmesh-mcponly: check: reach failed
     (exit 1)
+
+The server's root or installation name changed (exit 2 from register, FAIL
+reach from check). The command names the pinned and the new root and pins
+nothing. Confirm the new thumbprint with the server's operator; if the change
+is expected, run the same register or check again with -accept-new-root, which
+replaces the pin and prints the old and the new root.
 
 has no local mode (exit 2). No server is known, so the command fell back to
 the built-in local profile, which this binary cannot open. Pass -server URL,

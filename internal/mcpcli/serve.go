@@ -16,6 +16,7 @@ func serveOptions(args, environ []string, stderr io.Writer) (mcpserver.Options, 
 	fs := newFlagSet("serve", stderr)
 	o := client.Options{Environ: environ}
 	commonFlags(fs, &o)
+	o.Notice = stderrNotice(stderr)
 	if err := fs.Parse(args); err != nil {
 		return mcpserver.Options{}, parseExit(err)
 	}
@@ -23,7 +24,10 @@ func serveOptions(args, environ []string, stderr io.Writer) (mcpserver.Options, 
 		_, _ = fmt.Fprintf(stderr, "%s serve: unexpected argument %q\n", Binary, fs.Arg(0))
 		return mcpserver.Options{}, 2
 	}
-	applyEnv(&o, environ)
+	if err := applyEnv(&o, environ); err != nil {
+		_, _ = fmt.Fprintf(stderr, "%s serve: %v\n", Binary, err)
+		return mcpserver.Options{}, 2
+	}
 	return mcpserver.Options{Client: o, Edition: mcpserver.EditionMCPOnly}, -1
 }
 

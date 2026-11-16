@@ -26,6 +26,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/profile"
 	"github.com/ericfitz/agentmesh/internal/server/cmd"
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 var listeningRE = regexp.MustCompile(`listening on (\S+) `)
@@ -42,7 +43,7 @@ func startServer(t *testing.T) string {
 	// refuses to delete an open file).
 	db := filepath.Join(t.TempDir(), "srv.sqlite")
 	go func() {
-		done <- cmd.Run(ctx, []string{"-listen", "127.0.0.1:0", "-sqlite", db}, nil, out, errb)
+		done <- cmd.Run(ctx, append([]string{"-listen", "127.0.0.1:0", "-sqlite", db}, trusttest.SQLiteSets(t, db)...), nil, out, errb)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -272,7 +273,9 @@ func TestServerOpenNeverExchangesBeforeFirstCall(t *testing.T) {
 	e.Save(t, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: "http://127.0.0.1:1"})
 	saveCredential(t, e, "lab", "pat")
 	rt := &countingRT{}
-	c, err := Open(context.Background(), Options{Environ: e.Environ, Cwd: t.TempDir(), Profile: "lab", HTTP: &http.Client{Transport: rt}})
+	// NoDiscover: Open's one call is the discover of the trust step
+	// (TestFirstContactPinsAndSaysSo); this test is about the token exchange.
+	c, err := Open(context.Background(), Options{Environ: e.Environ, Cwd: t.TempDir(), Profile: "lab", NoDiscover: true, HTTP: &http.Client{Transport: rt}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +315,7 @@ func TestServerTokenEndpoint401IsNotRetried(t *testing.T) {
 	e := testkit.NewProfileEnv(t)
 	e.Save(t, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: srv.URL})
 	saveCredential(t, e, "lab", "pat")
-	c, err := Open(context.Background(), Options{Environ: e.Environ, Cwd: t.TempDir(), Profile: "lab"})
+	c, err := Open(context.Background(), Options{Environ: e.Environ, Cwd: t.TempDir(), Profile: "lab", NoDiscover: true})
 	if err != nil {
 		t.Fatal(err)
 	}

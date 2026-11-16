@@ -925,7 +925,7 @@ workflows:
         outputs:
           identity: $response.body#/identity
       - stepId: list-signing-keys
-        description: The token signing key set, the active key first.
+        description: The signing leaves, the current one first.
         operationId: listSigningKeys
         parameters:
           - name: Authorization
@@ -933,7 +933,7 @@ workflows:
             value: "Bearer {$inputs.admin_bearer}"
         successCriteria:
           - condition: $statusCode == 200
-          - condition: $response.body#/keys/0/state == "active"
+          - condition: $response.body#/keys/0/state == "current"
       - stepId: admin-status
         description: The administrator's status document.
         operationId: adminStatus
@@ -1483,25 +1483,28 @@ workflows:
 
   # J10: Signing key rotation.
   - workflowId: signing-key-rotation
-    summary: List the signing key set, rotate it, list again and see the retiring key
+    summary: List the signing keys, rotate, exchange again and list the new key
     description: >-
-      An administrator lists the token signing key set (one active key),
-      rotates it (the previous key is retiring, so every bearer it signed stays
-      valid until the key is removed) and lists the key set again: the new
-      active key first, then the retiring one. The server that runs this
-      document sets signing_key_rotation_cooldown_seconds to 1, so the first
-      rotation is allowed seconds after the server started.
+      An administrator lists the server's unexpired signing leaves (one, the
+      current leaf), rotates (the rotation always revokes: the previous leaf is
+      reported in revoked and the bearer it signed stops verifying), exchanges a
+      new client assertion for a bearer signed by the new leaf, and lists again
+      with that bearer: the new current leaf first. No cooldown applies to this
+      operation.
     dependsOn: [register-and-login]
     inputs:
       type: object
-      required: [admin_bearer]
+      required: [admin_bearer, exchange_assertion]
       properties:
         admin_bearer:
           type: string
           description: The administrator's bearer.
+        exchange_assertion:
+          type: string
+          description: A signed client assertion for the administrator that the server has not seen (an assertion is single-use), audience the server's issuer URL; the exchange after the rotation presents it.
     steps:
       - stepId: list-signing-keys
-        description: The key set before the rotation, the active key first.
+        description: The leaves before the rotation, the current one first.
         operationId: listSigningKeys
         parameters:
           - name: Authorization
@@ -1509,11 +1512,11 @@ workflows:
             value: "Bearer {$inputs.admin_bearer}"
         successCriteria:
           - condition: $statusCode == 200
-          - condition: $response.body#/keys/0/state == "active"
+          - condition: $response.body#/keys/0/state == "current"
         outputs:
-          kid: $response.body#/keys/0/kid
+          thumbprint: $response.body#/keys/0/thumbprint
       - stepId: rotate
-        description: Rotate; the previous active key retires.
+        description: Rotate; the previous leaf is revoked.
         operationId: rotateSigningKey
         parameters:
           - name: Authorization
@@ -1521,22 +1524,34 @@ workflows:
             value: "Bearer {$inputs.admin_bearer}"
         successCriteria:
           - condition: $statusCode == 200
-          - condition: $response.body#/revoked == false
-          - condition: $response.body#/active/state == "active"
-          - condition: $response.body#/previous/state == "retiring"
+          - condition: $response.body#/current/state == "current"
+          - condition: $response.body#/revoked/0/human_messages == 0
         outputs:
-          kid: $response.body#/active/kid
+          thumbprint: $response.body#/current/thumbprint
+          revoked_thumbprint: $response.body#/revoked/0/thumbprint
+      - stepId: exchange
+        description: The rotation revoked the leaf that signed the administrator's bearer, so the administrator exchanges again.
+        operationId: token
+        requestBody:
+          contentType: application/x-www-form-urlencoded
+          payload:
+            grant_type: client_credentials
+            client_assertion_type: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+            client_assertion: $inputs.exchange_assertion
+        successCriteria:
+          - condition: $statusCode == 200
+        outputs:
+          access_token: $response.body#/access_token
       - stepId: list-again
-        description: The key set after the rotation, the active key first and the retiring key after it.
+        description: The leaves after the rotation, with the new bearer, the new current leaf first.
         operationId: listSigningKeys
         parameters:
           - name: Authorization
             in: header
-            value: "Bearer {$inputs.admin_bearer}"
+            value: "Bearer {$steps.exchange.outputs.access_token}"
         successCriteria:
           - condition: $statusCode == 200
-          - condition: $response.body#/keys/0/state == "active"
-          - condition: $response.body#/keys/1/state == "retiring"
+          - condition: $response.body#/keys/0/state == "current"
     outputs:
-      previous_kid: $steps.list-signing-keys.outputs.kid
-      active_kid: $steps.rotate.outputs.kid
+      previous_thumbprint: $steps.list-signing-keys.outputs.thumbprint
+      current_thumbprint: $steps.rotate.outputs.thumbprint

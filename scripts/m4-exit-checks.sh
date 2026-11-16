@@ -20,6 +20,9 @@
 #       must not import internal/respcheck or internal/arazzotest (test-only
 #       response validation, issue #33, and the test-only Arazzo runner, issue
 #       #32): neither binary links either
+#   . ./cmd/agentmesh-mcponly
+#       must not import internal/trusttest (test support for the certificate
+#       hierarchy, ADR 0019)
 # Prints deps_ok=1 when nothing matched; otherwise one
 # deps_violation=<package> imports <forbidden> line per hit and exits 1.
 set -euo pipefail
@@ -75,6 +78,8 @@ import_check() {
 	check_deps . internal/arazzotest
 	check_deps ./cmd/agentmesh-mcponly internal/respcheck
 	check_deps ./cmd/agentmesh-mcponly internal/arazzotest
+	check_deps . internal/trusttest
+	check_deps ./cmd/agentmesh-mcponly internal/trusttest
 	if [ "$violations" -ne 0 ]; then
 		return 1
 	fi

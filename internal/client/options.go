@@ -65,6 +65,24 @@ type Options struct {
 	// is a private key file that signs instead of the profile's credential
 	// store. open note: mcp-only-client 3, 4
 	Server, Credential string
+	// InsecureHTTP, RootThumbprint and Installation are the -insecure-http,
+	// -root-thumbprint and -installation flags (spec 4.10). They fill the
+	// in-memory profile of an undefined -server and must agree with a defined
+	// profile; false and empty mean unset.
+	InsecureHTTP   bool
+	RootThumbprint string
+	Installation   string
+	// AcceptNewRoot is -accept-new-root: a server whose root or installation
+	// name differs from the pinned one replaces the pin instead of stopping the
+	// command (spec 4.10).
+	AcceptNewRoot bool
+	// NoDiscover makes Open skip the discover call (the Stop hook: its budget
+	// is 500 ms). With a pin the layer is still on the Bus (its Open, Receive
+	// and Watch send the held trust number); with none there is no layer.
+	NoDiscover bool
+	// Notice receives one line per trust event (first contact, replacement,
+	// insecure_http, an unreachable discover, a refused CRL); nil is silent.
+	Notice func(line string)
 	// RegisterCommand is the command the missing-credential error tells the
 	// operator to run; empty: "agentmesh register" (the full binary's).
 	RegisterCommand string
@@ -137,7 +155,7 @@ func Resolve(o Options) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, resolveErr(err)
 	}
-	if r.Profile, err = resolveProfile(cfg, name, o.Server); err != nil {
+	if r.Profile, err = resolveProfile(cfg, name, o); err != nil {
 		return Resolved{}, err
 	}
 	if cfg.Hooks != nil {
@@ -173,11 +191,15 @@ func Resolve(o Options) (Resolved, error) {
 // undefined name (the built-in default included) is an in-memory server
 // profile, a defined server profile must name the same server, and a defined
 // local profile is refused.
-func resolveProfile(cfg profile.Config, name, server string) (profile.Profile, error) {
+func resolveProfile(cfg profile.Config, name string, o Options) (profile.Profile, error) {
+	server := o.Server
 	if server == "" {
 		p, err := cfg.Resolve(name)
 		if err != nil {
 			return profile.Profile{}, resolveErr(err)
+		}
+		if err := CheckTrustOptions(o, p); err != nil {
+			return profile.Profile{}, err
 		}
 		return p, nil
 	}
@@ -185,7 +207,7 @@ func resolveProfile(cfg profile.Config, name, server string) (profile.Profile, e
 	p, defined := cfg.Profiles[name]
 	switch {
 	case !defined:
-		p = profile.Profile{Name: name, Mode: profile.ModeServer, Server: want}
+		p = profile.Profile{Name: name, Mode: profile.ModeServer, Server: want, InsecureHTTP: o.InsecureHTTP, RootThumbprint: o.RootThumbprint, Installation: o.Installation}
 		if err := p.Validate(); err != nil {
 			return profile.Profile{}, resolveErr(fmt.Errorf("profile %q: %w", name, err))
 		}
@@ -194,7 +216,29 @@ func resolveProfile(cfg profile.Config, name, server string) (profile.Profile, e
 	case serverDisagrees(p, server):
 		return profile.Profile{}, serverDisagreesError(p, server)
 	}
+	if err := CheckTrustOptions(o, p); err != nil {
+		return profile.Profile{}, err
+	}
 	return p, nil
+}
+
+// CheckTrustOptions refuses a trust option that disagrees with the defined
+// profile p (Plan ruling 29): another root_thumbprint or installation, or
+// -insecure-http on a profile without insecure_http. An unset option agrees
+// with anything. Resolve, RegisterIdentity and the mcpcli target step share it.
+func CheckTrustOptions(o Options, p profile.Profile) error {
+	if p.Mode == profile.ModeLocal && (o.InsecureHTTP || o.RootThumbprint != "" || o.Installation != "") {
+		return resolveErr(fmt.Errorf("-insecure-http, -root-thumbprint and -installation apply to server profiles; profile %q is local", p.Name))
+	}
+	switch {
+	case o.RootThumbprint != "" && o.RootThumbprint != p.RootThumbprint:
+		return resolveErr(fmt.Errorf("profile %q has root_thumbprint %q; -root-thumbprint %s disagrees", p.Name, p.RootThumbprint, o.RootThumbprint))
+	case o.Installation != "" && o.Installation != p.Installation:
+		return resolveErr(fmt.Errorf("profile %q has installation %q; -installation %s disagrees", p.Name, p.Installation, o.Installation))
+	case o.InsecureHTTP && !p.InsecureHTTP:
+		return resolveErr(fmt.Errorf("profile %q does not set insecure_http; -insecure-http disagrees", p.Name))
+	}
+	return nil
 }
 
 // serverDisagrees reports whether the -server flag names another server than

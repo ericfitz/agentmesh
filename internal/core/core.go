@@ -34,6 +34,9 @@ type Options struct {
 	// Inspector inspects every content write before it commits; nil: no
 	// inspection (write inspection, issue #5).
 	Inspector Inspector
+	// Trust is the verified in-memory trust material (server mode); nil in
+	// local mode, where session open and receive attach no trust.
+	Trust TrustSource
 }
 
 // Core is the rule engine over a Store. Safe for concurrent use.
@@ -57,6 +60,7 @@ type Core struct {
 	started  time.Time
 
 	inspector Inspector
+	trust     TrustSource
 	// inspectMu guards the inspection notice state (inspect.go).
 	inspectMu    sync.Mutex
 	inspectState inspectState
@@ -90,7 +94,7 @@ func New(s store.Store, cfg Config, opts Options) (*Core, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Core{Store: s, Cfg: cfg, Owner: owner, now: opts.Now, notifier: opts.Notifier, embedder: opts.Embedder, Log: opts.Logger, inspector: opts.Inspector}
+	c := &Core{Store: s, Cfg: cfg, Owner: owner, now: opts.Now, notifier: opts.Notifier, embedder: opts.Embedder, Log: opts.Logger, inspector: opts.Inspector, trust: opts.Trust}
 	if c.now == nil {
 		c.now = time.Now
 	}

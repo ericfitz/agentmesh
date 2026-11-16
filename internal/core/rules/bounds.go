@@ -31,6 +31,10 @@ const (
 	// MaxSearchCursorLen is the digits of math.MaxInt64: a search cursor is a
 	// decimal offset.
 	MaxSearchCursorLen = 19
+	// MaxTrustNumber is the largest trust number a request carries (ADR 0019
+	// section 4.11): a time in Unix milliseconds stays below it for more than
+	// two hundred thousand years.
+	MaxTrustNumber = 1 << 53
 	// SearchCursorPattern is the shape of a search cursor for api/openapi.yaml.
 	SearchCursorPattern = "^[0-9]+$"
 )
@@ -93,6 +97,15 @@ func NonNegative(field string, v int64) error {
 func AtLeastOne(field string, v int64) error {
 	if v < 1 {
 		return bus.Errorf(bus.CodeValidation, false, "%s must be at least 1", field)
+	}
+	return nil
+}
+
+// CheckTrustNumber refuses a trust number below 0 or above MaxTrustNumber; nil
+// (the client holds none) passes.
+func CheckTrustNumber(field string, v *int64) error {
+	if v != nil && (*v < 0 || *v > MaxTrustNumber) {
+		return bus.Errorf(bus.CodeValidation, false, "%s must be from 0 to %d", field, int64(MaxTrustNumber))
 	}
 	return nil
 }

@@ -5,29 +5,47 @@ package bus
 // signing keys: local mode, or a server built without a key service.
 const SigningKeysNotConfigured = "this server has no signing keys (local mode)"
 
-// SigningKey is one key of the server's token signing key set: public facts
-// only, never a private key. State is "active" or "retiring"; Provider is one
-// of store, awskms, gcpkms, azurekms or hashivault; ProviderRef is the key URI
-// inside an external provider ("" for the store provider); Algorithm is EdDSA
-// or ES256. CreatedAt, RetiredAt and RemoveAfter are Unix milliseconds, the
-// last two 0 while the key is active.
+// The states of a SigningKey (ADR 0019 section 4.11).
+const (
+	SigningKeyCurrent  = "current"  // the answering process's current leaf
+	SigningKeyPrevious = "previous" // its previous leaf
+	SigningKeyOther    = "other"    // another process's leaf
+	SigningKeyRevoked  = "revoked"
+)
+
+// SigningKey is one leaf certificate that signs bearers: public facts only,
+// never a private key. Thumbprint is the certificate thumbprint (the kid),
+// Serial its serial number in hex and IssuerThumbprint the thumbprint of the
+// intermediate that issued it; the last two are empty while the old key set
+// answers (until Task 23). State is one of the four constants above.
+// NotBefore and NotAfter are Unix milliseconds.
 type SigningKey struct {
-	KID, State, Provider, ProviderRef, Algorithm string
-	CreatedAt, RetiredAt, RemoveAfter            int64
+	Thumbprint, Serial, IssuerThumbprint, State string
+	NotBefore, NotAfter                         int64
 }
 
-// RotateSigningKeyInput selects the kind of rotation. RevokePrevious deletes
-// the previous active key instead of retiring it and skips the rotation
-// cooldown.
-type RotateSigningKeyInput struct {
-	RevokePrevious bool
-	IdempotencyKey string
+// SigningKeyList is the unexpired leaves, the current one first, and the
+// trust number (0 until the trust material is wired).
+type SigningKeyList struct {
+	Keys        []SigningKey
+	TrustNumber int64
 }
 
-// SigningKeyRotation reports a rotation: the new active key, the key that was
-// active before (as it was; the zero SigningKey when the set had none) and
-// whether that key was deleted.
+// RotateSigningKeyInput is the rotation's idempotency key; a rotation always
+// revokes the previous leaf (ADR 0019 Ruling 6).
+type RotateSigningKeyInput struct{ IdempotencyKey string }
+
+// RevokedLeaf is one leaf a rotation revoked. HumanMessages counts the human
+// messages it signed; always 0 until spec 2.
+type RevokedLeaf struct {
+	Thumbprint    string
+	HumanMessages int64
+}
+
+// SigningKeyRotation reports a rotation: the new current leaf, the leaves it
+// revoked (empty when the set had none) and the trust number.
 type SigningKeyRotation struct {
-	Active, Previous SigningKey
-	Revoked          bool
+	Current     SigningKey
+	Revoked     []RevokedLeaf
+	TrustNumber int64
 }

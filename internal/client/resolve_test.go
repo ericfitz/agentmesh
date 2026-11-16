@@ -246,7 +246,7 @@ func TestResolveHumanIdentityServerRepo(t *testing.T) {
 
 // open note: mcp-only-client 3
 func TestResolveServerFlag(t *testing.T) {
-	lab := profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: "http://h:1"}
+	lab := profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: "https://h:1"}
 	loc := profile.Profile{Name: "loc", Mode: profile.ModeLocal}
 	cases := []struct {
 		name      string
@@ -257,11 +257,11 @@ func TestResolveServerFlag(t *testing.T) {
 		wantSrv   string
 		wantInErr string
 	}{
-		{"undefined name", nil, "lab", "http://h:1/", "lab", "http://h:1", ""},
-		{"undefined default", nil, "", "http://h:1/", "default", "http://h:1", ""},
-		{"defined, same server", []profile.Profile{lab}, "lab", "http://h:1/", "lab", "http://h:1", ""},
-		{"defined, other server", []profile.Profile{lab}, "lab", "http://h:2", "", "", "disagrees"},
-		{"defined local", []profile.Profile{loc}, "loc", "http://h:1", "", "", "-server applies to server profiles"},
+		{"undefined name", nil, "lab", "https://h:1/", "lab", "https://h:1", ""},
+		{"undefined default", nil, "", "https://h:1/", "default", "https://h:1", ""},
+		{"defined, same server", []profile.Profile{lab}, "lab", "https://h:1/", "lab", "https://h:1", ""},
+		{"defined, other server", []profile.Profile{lab}, "lab", "https://h:2", "", "", "disagrees"},
+		{"defined local", []profile.Profile{loc}, "loc", "https://h:1", "", "", "-server applies to server profiles"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -294,9 +294,9 @@ func TestResolveServerFlag(t *testing.T) {
 
 // open note: mcp-only-client 4
 func TestResolveCredentialFlag(t *testing.T) {
-	proc := profile.Profile{Name: "proc", Mode: profile.ModeServer, Server: "http://h:1", CredentialProcess: []string{"x"}}
+	proc := profile.Profile{Name: "proc", Mode: profile.ModeServer, Server: "https://h:1", CredentialProcess: []string{"x"}}
 	loc := profile.Profile{Name: "loc", Mode: profile.ModeLocal}
-	oidc := profile.Profile{Name: "oidc", Mode: profile.ModeServer, Server: "http://h:1", OIDC: &profile.OIDC{Issuer: "https://i", ClientID: "c", RedirectPort: 8123, Scopes: []string{"openid"}}}
+	oidc := profile.Profile{Name: "oidc", Mode: profile.ModeServer, Server: "https://h:1", OIDC: &profile.OIDC{Issuer: "https://i", ClientID: "c", RedirectPort: 8123, Scopes: []string{"openid"}}}
 	cases := []struct {
 		name  string
 		p     profile.Profile
@@ -324,7 +324,7 @@ func TestResolveCredentialFlag(t *testing.T) {
 	}
 	t.Run("server profile resolves without a credential directory read", func(t *testing.T) {
 		e := testkit.NewProfileEnv(t)
-		r, err := Resolve(Options{Environ: e.Environ, Cwd: t.TempDir(), Profile: "lab", Server: "http://h:1", Identity: "pat", Credential: "/k.pem"})
+		r, err := Resolve(Options{Environ: e.Environ, Cwd: t.TempDir(), Profile: "lab", Server: "https://h:1", Identity: "pat", Credential: "/k.pem"})
 		if err != nil || r.Identity != "pat" {
 			t.Fatalf("%+v, %v", r, err)
 		}
@@ -348,4 +348,55 @@ func TestResolveCarriesHooks(t *testing.T) {
 	if err != nil || r.Hooks.StaleMinutes() != 30 {
 		t.Fatalf("absent: %d, %v", r.Hooks.StaleMinutes(), err)
 	}
+}
+
+const testThumb = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+func TestInMemoryProfileTrustOptions(t *testing.T) {
+	resolve := func(t *testing.T, saved []profile.Profile, o Options) (Resolved, error) {
+		t.Helper()
+		e := testkit.NewProfileEnv(t)
+		if saved != nil {
+			e.Save(t, saved...)
+		}
+		o.Environ, o.Cwd, o.Profile, o.Identity = e.Environ, t.TempDir(), "lab", "pat"
+		return Resolve(o)
+	}
+	refused := func(t *testing.T, err error, want string) {
+		t.Helper()
+		var re *ResolveError
+		if !errors.As(err, &re) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("err %v (%T), want a ResolveError containing %q", err, err, want)
+		}
+	}
+	_, err := resolve(t, nil, Options{Server: "http://h:1"})
+	refused(t, err, "insecure_http")
+	r, err := resolve(t, nil, Options{Server: "http://h:1", InsecureHTTP: true, RootThumbprint: testThumb, Installation: "prod"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := r.Profile; !p.InsecureHTTP || p.RootThumbprint != testThumb || p.Installation != "prod" {
+		t.Fatalf("profile %+v", p)
+	}
+	if _, err = resolve(t, nil, Options{Server: "https://h:1", RootThumbprint: "short"}); err == nil {
+		t.Fatal("a malformed thumbprint resolved")
+	}
+
+	pinned := profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: "https://h:1", RootThumbprint: testThumb, Installation: "prod"}
+	other := strings.Repeat("B", 43)
+	_, err = resolve(t, []profile.Profile{pinned}, Options{Server: "https://h:1", RootThumbprint: other})
+	refused(t, err, "disagrees")
+	_, err = resolve(t, []profile.Profile{pinned}, Options{Server: "https://h:1", Installation: "dev"})
+	refused(t, err, "disagrees")
+	_, err = resolve(t, []profile.Profile{pinned}, Options{Server: "https://h:1", InsecureHTTP: true})
+	refused(t, err, "disagrees")
+	// Without -server the options are checked against the defined profile too.
+	_, err = resolve(t, []profile.Profile{pinned}, Options{Installation: "dev"})
+	refused(t, err, "disagrees")
+	if _, err = resolve(t, []profile.Profile{pinned}, Options{Server: "https://h:1", RootThumbprint: testThumb, Installation: "prod"}); err != nil {
+		t.Fatalf("agreeing options: %v", err)
+	}
+	loc := profile.Profile{Name: "lab", Mode: profile.ModeLocal}
+	_, err = resolve(t, []profile.Profile{loc}, Options{Installation: "prod"})
+	refused(t, err, "apply to server profiles")
 }

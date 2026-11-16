@@ -212,5 +212,61 @@ func FromGenHealth(g gen.Health) (ab2bus.Health, error) {
 		}
 		out.Maintenance = hm
 	}
+	if sg := g.Signing; sg != nil {
+		hs := FromGenHealthSigning(*sg)
+		out.Signing = &hs
+	}
 	return out, nil
+}
+
+// FromGenTrustBundle converts a wire trust bundle: root_crl, root and
+// installation are absent, so nil and "", where the server sends none.
+func FromGenTrustBundle(g gen.TrustBundle) ab2bus.TrustBundle {
+	return ab2bus.TrustBundle{
+		TrustNumber:   g.TrustNumber,
+		Intermediates: g.Intermediates,
+		RootCRL:       deref(g.RootCrl),
+		LeafCRLs:      g.LeafCrls,
+		Root:          deref(g.Root),
+		Installation:  deref(g.Installation),
+	}
+}
+
+// fromGenTrust is nil for an absent bundle.
+func fromGenTrust(g *gen.TrustBundle) *ab2bus.TrustBundle {
+	if g == nil {
+		return nil
+	}
+	b := FromGenTrustBundle(*g)
+	return &b
+}
+
+// FromGenHealthCertificate converts a wire certificate of the signing section.
+func FromGenHealthCertificate(g gen.HealthCertificate) ab2bus.HealthCertificate {
+	return ab2bus.HealthCertificate{Thumbprint: g.Thumbprint, NotBefore: g.NotBefore, NotAfter: g.NotAfter, DaysLeft: g.DaysLeft}
+}
+
+func fromGenHealthCertificatePtr(g *gen.HealthCertificate) *ab2bus.HealthCertificate {
+	if g == nil {
+		return nil
+	}
+	c := FromGenHealthCertificate(*g)
+	return &c
+}
+
+// FromGenHealthSigning converts the wire signing section: the certificates
+// stay nil when absent, last_failure and stopped "".
+func FromGenHealthSigning(g gen.HealthSigning) ab2bus.HealthSigning {
+	return ab2bus.HealthSigning{
+		Installation:  g.Installation,
+		Intermediate:  fromGenHealthCertificatePtr(g.Intermediate),
+		Leaf:          fromGenHealthCertificatePtr(g.Leaf),
+		NextRenewalAt: g.NextRenewalAt,
+		TrustNumber:   g.TrustNumber,
+		RootCRLNumber: g.RootCrlNumber,
+		LeafCRLNumber: g.LeafCrlNumber,
+		LastFailureAt: g.LastFailureAt,
+		LastFailure:   deref(g.LastFailure),
+		Stopped:       deref(g.Stopped),
+	}
 }

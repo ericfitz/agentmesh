@@ -12,7 +12,8 @@ import (
 )
 
 // RunRegister is `agentmesh register [-profile P] [-identity I] [-server URL]
-// [-enrollment-token T] [-algorithm EdDSA|ES256]` (Milestone 6 choice 14;
+// [-enrollment-token T] [-insecure-http] [-root-thumbprint T] [-installation NAME]
+// [-accept-new-root] [-algorithm EdDSA|ES256]` (Milestone 6 choice 14;
 // Decision (Eric, 2026-10-21), item 6): generate a key, write it to the
 // pending file (credential.Store.PendingPath), register its public half and,
 // once the server answered 201, save that key as the credential and remove the
@@ -30,6 +31,10 @@ func RunRegister(ctx context.Context, args []string, environ []string, stdin io.
 	var server, token, algName string
 	fs.StringVar(&server, "server", "", "server URL; creates the profile when it is not defined")
 	fs.StringVar(&token, "enrollment-token", "", "enrollment token, for a server in enrollment mode")
+	fs.BoolVar(&o.InsecureHTTP, "insecure-http", false, "accept an http server URL for a host other than 127.0.0.1, ::1 and localhost, for local testing only; recorded as insecure_http in a new profile")
+	fs.StringVar(&o.RootThumbprint, "root-thumbprint", "", "pin the trust root: 43 base64url characters, the SHA-256 of the root certificate; recorded in a new profile")
+	fs.StringVar(&o.Installation, "installation", "", "the installation name the server must carry; recorded in a new profile")
+	acceptNewRootFlag(fs, &o)
 	fs.StringVar(&algName, "algorithm", string(keys.EdDSA), "key algorithm: EdDSA or ES256")
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
@@ -46,6 +51,7 @@ func RunRegister(ctx context.Context, args []string, environ []string, stdin io.
 		}
 	})
 	o.Server = server
+	o.Notice = func(line string) { _, _ = fmt.Fprintf(stderr, "agentmesh: %s\n", line) }
 	out, err := client.RegisterIdentity(ctx, client.RegisterRequest{Options: o, EnrollmentToken: token, Algorithm: alg, AlgorithmExplicit: algExplicit})
 	if err != nil {
 		var re *client.ResolveError

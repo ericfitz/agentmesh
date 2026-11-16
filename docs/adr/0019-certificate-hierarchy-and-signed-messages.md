@@ -1,6 +1,6 @@
 # ADR 0019: Certificate hierarchy and signed messages
 
-Status: Accepted (Eric, human-made): Decisions 1 to 21 of 2026-11-11 and Decisions 22 to 49 of 2026-11-12 below. Decision 40 reduces spec 2 to human messages and supersedes Decisions 3, 8, 14, 17, 20, 21 and 29; their entries stay in the list, marked. The plan rulings are not Eric's decisions; he may overrule any of them. Open question 29 is settled (Decision 36), but the number it needs from IANA is pending, and spec 1 does not land on `main` until it arrives (Decision 47: it is built on a branch with a refused stand-in). No open question remains: Eric answered the four that the rewrite of spec 2 raised (Open questions 55 to 58) with Decisions 43 to 46. Eric approved both specs on 2026-11-11; he approved spec 1's text folding in Decisions 22 to 39 on 2026-11-12 (Decision 49); the spec 2 text that folds in Decisions 22 to 46, its rewrite included, has not been approved by him yet. Designed, not built.
+Status: Accepted (Eric, human-made): Decisions 1 to 21 of 2026-11-11 and Decisions 22 to 49 of 2026-11-12 below. Decision 40 reduces spec 2 to human messages and supersedes Decisions 3, 8, 14, 17, 20, 21 and 29; their entries stay in the list, marked. The plan rulings are not Eric's decisions; he may overrule any of them. Open question 29 is settled (Decision 36), and the number it needed from IANA has arrived (Decision 50: 67669), replacing the refused stand-in of Decision 47. No open question remains: Eric answered the four that the rewrite of spec 2 raised (Open questions 55 to 58) with Decisions 43 to 46. Eric approved both specs on 2026-11-11; he approved spec 1's text folding in Decisions 22 to 39 on 2026-11-12 (Decision 49); the spec 2 text that folds in Decisions 22 to 46, its rewrite included, has not been approved by him yet. Spec 1 is built (2026-11-16; plan `docs/superpowers/plans/2026-11-12-adr-0019-spec-1-certificate-hierarchy.md`, branch `adr-0019-spec-1`; the IANA number is in (Decision 50), so the branch waits only for Eric's merge); spec 2 is designed, not built.
 
 The design is in two specs: `docs/superpowers/specs/2026-11-11-certificate-hierarchy-design.md` (spec 1, the hierarchy, shippable alone) and `docs/superpowers/specs/2026-11-11-signed-messages-design.md` (spec 2, signed human messages, which depends on spec 1).
 
@@ -93,6 +93,10 @@ Decisions 47 to 49 are his answers to the open questions of the spec 1 plan (`do
 47. **Spec 1 is built on a branch with a stand-in enterprise number.** (Plan open question 1, option A; this changes Decision 36 and Ruling 42 on one point.) The work proceeds now on the branch `adr-0019-spec-1`, never on `main`. The constant holds 32473, the number RFC 5612 reserves for documentation, and the gate `make pen-check` refuses it, so the branch cannot merge until the assigned number replaces it (plan Task 37) and is recorded in this ADR. What Decision 36 and Ruling 42 protect stands: nothing of spec 1 lands on `main`, and no release carries a stand-in. Not taken: holding all execution until IANA assigns the number (B).
 48. **With a key service, a process signs with the newest valid installed intermediate.** (Plan open question 3, option A; this makes Plan ruling 12 his.) A process picks the newest valid stored intermediate whose pinned key reference has the configured URI's scheme. Ruling 9 stands: the key version is pinned at `ca install`, so a new version made inside the key service, by hand or by its own rotation schedule, changes nothing until the operator runs `ca csr` and `ca install` again; leaves rotate automatically at W/2 whatever holds the intermediate key. Not taken: resolving the URI at every start and matching by public key (B), and recording the URI's printable name beside the reference (C).
 49. **Spec 1's text is approved.** (Plan open question 4.) Eric approved the text of spec 1's third and fourth revisions, which carries out Decisions 22 to 39. The plan rulings in spec 1 sections 12 and 13 stay rulings he may overrule. Spec 2's rewrite is not covered.
+
+## The assigned enterprise number (Eric, 2026-11-13, human-made)
+
+50. **The Private Enterprise Number is 67669.** IANA assigned the number 67669 to Trojan Unicorn Ventures LLC on 2026-11-13 (registry: https://www.iana.org/assignments/enterprise-numbers/). The agentmesh extended key usage of Decision 36 is therefore `1.3.6.1.4.1.67669.1.1`. This is the record Ruling 42 and plan Task 37 wait for: the stand-in 32473 of Decision 47 is replaced by 67669, and the branch `adr-0019-spec-1` may merge once Task 37 has landed and the rest of spec 1 is done.
 
 ## Plan rulings Eric approved with the design sections (2026-11-11)
 
@@ -212,6 +216,42 @@ Eric has not decided these. Each is a proposal he may overrule.
 - Ruling 53 (spec 2, for Decisions 24 and 46): rewritten for Decision 46. The Slack time is the Slack timestamp cut to milliseconds; the Slack ID is the signed channel id with the Slack timestamp; a seen entry says which kind of ID it holds and a lookup stays within that kind, so a Slack ID and a sequence-number ID never meet; Decision 24's check of a `ts` ahead of the client's clock stays as written, as a drop with the reason `postdated`; `human_stale_hours` goes.
 - Ruling 54 (spec 2, for Decision 40): the signed origin of Decisions 2 and 18 stays in the payload and on the screen, although Decision 40's list does not name it.
 
+### Plan rulings of the spec 1 plan
+
+The spec 1 plan (`docs/superpowers/plans/2026-11-12-adr-0019-spec-1-certificate-hierarchy.md`) made these rulings. They are not Eric's decisions and he may overrule any of them. Rulings 1 and 12 of that plan are left out because Eric made them his: Decisions 47 and 48, recorded above. The numbers are the plan's.
+
+- Ruling 2: the chain is verified once per reload cycle and its validity period is cached; `pki.VerifyChain` is `CheckChain` followed by `Verified.ValidAt`.
+- Ruling 3: `internal/auth/token` does not import `internal/pki`; a `token.Key` carries the DER chain and its validity period.
+- Ruling 4: the subject key identifier is the first 20 bytes of the SHA-256 of the key's `SubjectPublicKeyInfo`; maps keyed by issuer key use its lowercase hexadecimal form.
+- Ruling 5: the root tool's lock is the file `DIR/lock` (`O_CREATE|O_EXCL`), waited for up to 10 seconds, because the root tool imports the standard library only.
+- Ruling 6: the root tool's `state.json` has the version, the CRL number and the list of issued certificates.
+- Ruling 7: the `trust_material` types and indexes: a CRL row is keyed by kind and issuer key, a certificate row by kind and thumbprint.
+- Ruling 8: `ResetData` keeps `trust_material`, as it kept `signing_keys`.
+- Ruling 9: the server-mode SQLite file mode check stays, and its message says the file is the server's database.
+- Ruling 10: required trust settings are checked at the start (`Config.RequireTrust`), not in `Validate`.
+- Ruling 11: `keyprovider.FileProvider` reads through a function it is given, and the owner-only check lives in `internal/server/cmd`.
+- Ruling 13: the manager is driven by `Step`; `Run` loops over it with a real timer.
+- Ruling 14: a transitional adapter let the two signing key operations take their final wire shape while the old key set still answered (removed since).
+- Ruling 15: in-band answers come from one in-memory snapshot (`TrustSource.Bundle`), never the Store.
+- Ruling 16: the wire shape of the health document's `signing` section.
+- Ruling 17: the Bus type names, with `bus.RevokedLeaf` as one `revoked` entry.
+- Ruling 18: hooks do not call discover (`client.Options.NoDiscover`); the client layer reads the held trust number from the trust store at each call.
+- Ruling 19: the first-contact line, the `insecure_http` line and a refused CRL go to `Options.Notice` and `trust.log`, never to standard output.
+- Ruling 20: the files of the client's trust store, with `state.json`, `revoked.json` and `.lock`.
+- Ruling 21: the output of the host commands, one line per item with stable words first.
+- Ruling 22: `make verify` gains `scripts/m7-exit-checks.sh --deps-only`.
+- Ruling 23: `TestAuthEndToEnd` keeps its 12 leaf names; the bearer matrix is `TestBearerMatrix`.
+- Ruling 24: a forced renewal revokes the leaf that signed the caller's own bearer, so the caller exchanges again.
+- Ruling 25: containers bootstrap with the shipped tool; the compose file mounts the root certificate and the key file.
+- Ruling 26: `internal/trusttest` is one non-test fixture package kept out of both binaries; the tests of `signingkeys` are an external test package.
+- Ruling 27: `TrustCertificateByThumbprint` takes the kind.
+- Ruling 28: leaves a forced renewal does not cover are named in a log line and as `not-covered` on standard error, not in the wire answer.
+- Ruling 29: a flag that disagrees with a defined profile is exit 2.
+- Ruling 30: one function takes the `trust` lock; its lease is four times `SignTimeout`, and a forced renewal renews it before its transaction.
+- Ruling 31: the two certificate members of a JWK are request fields with bounds, and register refuses a key that carries either.
+- Ruling 32: `pki.CheckRoot` is what "one CA certificate" means for `root_certificate_file`.
+- Ruling 33: the manager has two mutexes, and only `Step` and `RotateSigningKey` issue a leaf; `Reload` never does.
+
 ## Consequences
 
 1. No private key and no trusted public key is in the database. Reading the database or a backup no longer yields a signing key, and inserting a key row no longer yields a trusted key. Threat 2 is closed for bearers once spec 1 is built.
@@ -225,7 +265,7 @@ Eric has not decided these. Each is a proposal he may overrule.
 9. A client profile that points at an `http` server on another host stops working until its URL is `https` or the override switch is set (Decision 19). Today any `http` URL is accepted (`internal/profile/config.go:132-153`).
 10. The discover document grows by the trust bundle, a few kilobytes, and is fetched once by every client process that opens a server profile.
 11. The server never reads its own signed messages back. The two places that did are gone with Decisions 17 and 20 (Decision 40).
-12. Every server has an installation name, in its configuration and in its intermediate certificate, and an outside CA's procedure has to issue the name and the extended key usage (Decision 23). The usage's identifier is `1.3.6.1.4.1.<PEN>.1.1`, and the number is pending at IANA; spec 1 cannot ship without it (Decision 36).
+12. Every server has an installation name, in its configuration and in its intermediate certificate, and an outside CA's procedure has to issue the name and the extended key usage (Decision 23). The usage's identifier is `1.3.6.1.4.1.67669.1.1` (Decisions 36 and 50).
 13. A root renewal is an action on every client, a same-key renewal included (Decision 34).
 14. A client keeps one more file, the revocations it has seen, and makes one more discover call when a human message fails for want of trust (Decisions 27 and 33).
 15. A session's state file records what the session has taken: its open time, the human messages it has seen, and what it received or sent. A human message from before a session opened is not delivered to it, and a human message is delivered to a session once (Decision 40). For a Slack post both go by its Slack timestamp: one made before a session opened is not delivered to it as human, a catch-up included, and one ingested twice is taken once (Decision 46).
@@ -270,7 +310,7 @@ None. Everything raised so far is settled:
 
 - The first draft's Open questions 1 to 27: by Decisions 16 to 20 or as the plan rulings listed above.
 - The second draft's Open question 28: by Decision 21 (now superseded).
-- Open question 29, the identifier of the extended key usage: by Decision 36. What is outstanding there is not a question: IANA has not assigned the number yet, and spec 1 does not ship until it has.
+- Open question 29, the identifier of the extended key usage: by Decision 36. Nothing is outstanding there: IANA assigned the number (Decision 50: 67669) and plan Task 37 put it in the constant.
 - Open questions 55 to 58, which the rewrite of spec 2 raised: by Decisions 43 to 46.
 
 ## Alternatives not taken

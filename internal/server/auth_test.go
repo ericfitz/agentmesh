@@ -4,10 +4,17 @@ import (
 	"bytes"
 	"context"
 	"crypto"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -345,10 +352,8 @@ func TestBearerRefusals(t *testing.T) {
 	e.mustRegister("pat", key)
 
 	// A second issuer with the same URL and another key.
-	other, err := token.NewIssuer(context.Background(), "http://inproc", token.StaticKeys(genKey(t, keys.EdDSA)), time.Hour, e.clock.Now)
-	if err != nil {
-		t.Fatal(err)
-	}
+	otherEnv := newEnv(t, envOptions{issuer: true}) // another root: another key, same URL
+	other := otherEnv.issuer
 	forged, _, err := other.Mint(context.Background(), token.MintInput{Identity: "pat", Kind: token.KindAgent})
 	if err != nil {
 		t.Fatal(err)
@@ -639,7 +644,7 @@ func TestTokenReplayInsideLeeway(t *testing.T) {
 // twice.
 func TestTokenReplayIsShared(t *testing.T) {
 	e1 := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
-	e2 := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen, dbPath: e1.dbPath})
+	e2 := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen, dbPath: e1.dbPath, fixture: e1.fx})
 	pat := genKey(t, keys.EdDSA)
 	e1.mustRegister("pat", pat)
 	a := e1.assertionFor("pat", pat, "http://inproc/v1/auth/token", 0)
@@ -884,25 +889,25 @@ func TestTokenRepeatedAndEmptyParams(t *testing.T) {
 
 // failingKeys is a KeySource whose signer errs (or, with none set, is absent).
 type failingKeys struct {
-	key    crypto.Signer
+	src    token.KeySource
 	noSign bool
 }
 
-type errSigner struct{ crypto.Signer }
+type errSigner struct{ token.ContextSigner }
 
 func (errSigner) SignContext(context.Context, []byte, crypto.SignerOpts) ([]byte, error) {
 	return nil, errors.New("kms down")
 }
 
 func (f failingKeys) LoadKeys(ctx context.Context) (token.KeySet, error) {
-	set, err := token.StaticKeys(f.key).LoadKeys(ctx)
+	set, err := f.src.LoadKeys(ctx)
 	if err != nil {
 		return set, err
 	}
 	if f.noSign {
 		set.Signer = nil
 	} else {
-		set.Signer = errSigner{f.key}
+		set.Signer = errSigner{set.Signer}
 	}
 	return set, nil
 }
@@ -920,7 +925,7 @@ func TestSignerUnavailableIs503(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			break_ := func(e *env) {
 				broken, err := token.NewIssuer(context.Background(), "http://inproc",
-					failingKeys{key: genKey(t, keys.EdDSA), noSign: noSign}, time.Hour, e.clock.Now)
+					failingKeys{src: e.mgr, noSign: noSign}, time.Hour, e.clock.Now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -953,7 +958,7 @@ func TestSignerUnavailableIsLogged(t *testing.T) {
 	break_ := func(e *env, lg *testkit.LockedBuffer) {
 		e.opts.Logger = slog.New(slog.NewTextHandler(lg, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		broken, err := token.NewIssuer(context.Background(), "http://inproc",
-			failingKeys{key: genKey(t, keys.EdDSA)}, time.Hour, e.clock.Now)
+			failingKeys{src: e.mgr}, time.Hour, e.clock.Now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1051,6 +1056,37 @@ func TestRegisterRefusesWideJWK(t *testing.T) {
 	}
 }
 
+// TestRegisterRefusesCertificateMembers: the server sends x5c and x5t#S256 in
+// its own key set, but a key submitted at register carries neither: each, and
+// both, answer 400 validation naming public_key_jwk (an input the server does
+// not take is refused, not ignored).
+func TestRegisterRefusesCertificateMembers(t *testing.T) {
+	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
+	key := genKey(t, keys.EdDSA)
+	post := func(name string, mutate func(map[string]any)) *http.Response {
+		jwk := jwkJSON(t, key)
+		mutate(jwk)
+		b, _ := json.Marshal(map[string]any{"identity": name, "public_key_jwk": jwk})
+		return e.do("POST", "/v1/auth/register", "application/json", "", string(b))
+	}
+	x5c := func(j map[string]any) { j["x5c"] = []string{"cGxhY2Vob2xkZXI"} }
+	x5t := func(j map[string]any) { j["x5t#S256"] = jwkJSON(t, key)["kid"] }
+	wantAuthProblem(t, post("withx5c", x5c), 400, "validation", "public_key_jwk")
+	wantAuthProblem(t, post("withx5t", x5t), 400, "validation", "public_key_jwk")
+	wantAuthProblem(t, post("withboth", func(j map[string]any) { x5c(j); x5t(j) }), 400, "validation", "public_key_jwk")
+	if resp := post("bare", func(map[string]any) {}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("a bare key: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	for _, m := range []map[string]any{{"x5c": nil}, {"x5t#S256": nil}} {
+		if err := keys.CheckJWKCertificateMembers(m); err == nil {
+			t.Errorf("CheckJWKCertificateMembers accepted %v", m)
+		}
+	}
+	if err := keys.CheckJWKCertificateMembers(map[string]any{"kty": "OKP"}); err != nil {
+		t.Errorf("CheckJWKCertificateMembers refused a bare key: %v", err)
+	}
+}
+
 // A store outage behind an ordinary operation is a 503 problem+json whose
 // detail is one fixed sentence: never the driver's text ("sql: database is
 // closed", or pgx's connect error naming the user, database and host).
@@ -1091,5 +1127,75 @@ func TestStoreOutageDetailIsFixed(t *testing.T) {
 	// The driver's text is in the server log, not the response.
 	if !strings.Contains(logs.String(), "sql: database is closed") {
 		t.Fatalf("log lacks the cause: %q", logs.String())
+	}
+}
+
+// leafKeySource is a KeySource of one certificate key whose leaf ends at notAfter.
+type leafKeySource struct{ set token.KeySet }
+
+func (s leafKeySource) LoadKeys(context.Context) (token.KeySet, error) { return s.set, nil }
+
+// TestTokenExpiresInFollowsTheCap: the token endpoint answers the minted
+// expiry minus now, and a leaf that ends before the bearer lifetime caps it
+// (the lifetime is an hour; the leaf ends in ten minutes).
+func TestTokenExpiresInFollowsTheCap(t *testing.T) {
+	e := newEnv(t, envOptions{issuer: true, registration: identities.ModeOpen})
+	now := e.clock.Now()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "leaf"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(10 * time.Minute),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, pub, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(der)
+	k := token.Key{
+		KID: base64.RawURLEncoding.EncodeToString(sum[:]), Algorithm: keys.EdDSA, Public: pub,
+		Chain: [][]byte{der}, NotBefore: tmpl.NotBefore, NotAfter: tmpl.NotAfter,
+	}
+	src := leafKeySource{token.KeySet{Active: k, Signer: ed25519Signer{priv}, Keys: []token.Key{k}}}
+	iss, err := token.NewIssuer(context.Background(), "http://inproc", src, time.Hour, e.clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.issuer, e.opts.Issuer = iss, iss
+	e.auth = Bearer{Verifier: token.Verifier{Own: iss}, Now: e.clock.Now}
+
+	key := genKey(t, keys.EdDSA)
+	e.mustRegister("pat", key)
+	resp := e.exchange(e.assertionFor("pat", key, "http://inproc/v1/auth/token", 0), "")
+	if resp.StatusCode != 200 {
+		t.Fatalf("token: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	var at gen.AccessToken
+	if err := json.Unmarshal([]byte(readBody(t, resp)), &at); err != nil {
+		t.Fatal(err)
+	}
+	if at.ExpiresIn != 600 {
+		t.Fatalf("expires_in = %d, want 600 (the leaf's remaining time)", at.ExpiresIn)
+	}
+}
+
+// ed25519Signer adapts an Ed25519 key to token.ContextSigner.
+type ed25519Signer struct{ k ed25519.PrivateKey }
+
+func (s ed25519Signer) Public() crypto.PublicKey { return s.k.Public() }
+
+func (s ed25519Signer) SignContext(_ context.Context, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	return s.k.Sign(rand.Reader, digest, opts)
+}
+
+func TestExpiresInRoundsAndNeverGoesNegative(t *testing.T) {
+	now := time.Unix(1000, 0)
+	if got := expiresIn(now.Add(3599999900*time.Microsecond), now); got != 3600 {
+		t.Errorf("3599.9999 s = %d, want 3600", got)
+	}
+	if got := expiresIn(now.Add(-time.Minute), now); got != 0 {
+		t.Errorf("past expiry = %d, want 0", got)
 	}
 }

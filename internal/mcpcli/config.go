@@ -109,7 +109,10 @@ func runConfig(_ context.Context, args []string, environ []string, _ io.Reader, 
 		_, _ = fmt.Fprintf(stderr, "%s config: unexpected argument %q\n", Binary, fs.Arg(0))
 		return 2
 	}
-	applyEnv(&o, environ)
+	if err := applyEnv(&o, environ); err != nil {
+		_, _ = fmt.Fprintf(stderr, "%s config: %v\n", Binary, err)
+		return 2
+	}
 	server, code := target("config", o, stderr)
 	if code != -1 {
 		return code
@@ -134,6 +137,15 @@ func runConfig(_ context.Context, args []string, environ []string, _ io.Reader, 
 	snippetArgs = append(snippetArgs, "-server", server, "-identity", r.Identity)
 	if o.Credential != "" {
 		snippetArgs = append(snippetArgs, "-credential", o.Credential)
+	}
+	if o.InsecureHTTP {
+		snippetArgs = append(snippetArgs, "-insecure-http")
+	}
+	if o.RootThumbprint != "" {
+		snippetArgs = append(snippetArgs, "-root-thumbprint", o.RootThumbprint)
+	}
+	if o.Installation != "" {
+		snippetArgs = append(snippetArgs, "-installation", o.Installation)
 	}
 	doc, err := json.MarshalIndent(configSnippet{MCPServers: map[string]configServer{"agentmesh": {Command: exe, Args: snippetArgs}}}, "", "  ")
 	if err != nil {

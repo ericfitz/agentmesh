@@ -629,3 +629,43 @@ func (e *testEnv) writeHooksConfig(t *testing.T, minutes int) {
 		t.Fatal(err)
 	}
 }
+
+// TestStopHookMakesNoDiscoverCall: the hook's budget is 500 ms, so it never
+// calls discover (Options.NoDiscover); it still answers within its budget.
+func TestStopHookMakesNoDiscoverCall(t *testing.T) {
+	e := newTestEnv(t)
+	var mu sync.Mutex
+	paths := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths[r.URL.Path]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	e.writeProfile(t, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: srv.URL})
+	key, err := keys.Generate(keys.EdDSA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (credential.Store{Dir: profile.CredentialDir(e.ConfigDir, "lab")}).Save("pat", key); err != nil {
+		t.Fatal(err)
+	}
+	e.writeState(t, sessionstate.File{Session: "s1", Identity: "pat", Profile: "lab", DisplayName: "pat", ResumeToken: "x",
+		HarnessPID: testHarness.Pid, HarnessStart: testHarness.Start, Primary: true, OpenedAt: 1})
+
+	var so, se testkit.LockedBuffer
+	start := time.Now()
+	code := RunStopHook(context.Background(), nil, e.Environ, strings.NewReader(`{}`), &so, &se)
+	if d := time.Since(start); code != 0 || so.String() != "" || se.String() != "" || d > hookBudget+300*time.Millisecond {
+		t.Fatalf("exit %d stdout %q stderr %q after %v", code, so.String(), se.String(), d)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) == 0 {
+		t.Fatal("the server saw no request: the hook did not reach it")
+	}
+	if n := paths["/v1/discover"]; n != 0 {
+		t.Fatalf("%d discover requests from the stop hook, want 0 (%v)", n, paths)
+	}
+}

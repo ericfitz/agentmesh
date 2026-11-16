@@ -18,10 +18,9 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/rules"
-	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
-	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/store"
 	"github.com/ericfitz/agentmesh/internal/store/sqlite"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 const startMs = 1_700_000_000_000
@@ -567,7 +566,7 @@ func TestResetCredential(t *testing.T) {
 }
 
 // fixture builds the Reset fixtures: pat and kim with keys, admin root with a
-// key, a token, the signing key, a channel with messages, a session and a
+// key, a token, the installed intermediate, a channel with messages, a session and a
 // receipt.
 func fixture(t *testing.T, s Service) {
 	t.Helper()
@@ -581,10 +580,7 @@ func fixture(t *testing.T, s Service) {
 		t.Fatal(err)
 	}
 	newToken(t, s, TokenInput{})
-	sk := signingkeys.Service{Core: s.Core, Provider: keyprovider.StoreProvider{}, Settings: signingkeys.DefaultSettings()}
-	if _, _, err := sk.EnsureActive(ctx); err != nil {
-		t.Fatal(err)
-	}
+	trusttest.New(t, time.UnixMilli(startMs)).Install(t, s.Core)
 	err := s.Store.Append(ctx, func(ctx context.Context, tx store.Tx) error {
 		ch, err := tx.CreateChannel(ctx, store.ChannelCreate{Name: "dev", Kind: store.KindOrdinary, Creator: "pat", CreatedAt: startMs})
 		if err != nil {
@@ -610,7 +606,7 @@ type snapshot struct {
 	Identities []store.Identity
 	Keys       map[string][]store.PublicKey
 	Tokens     []store.EnrollmentToken
-	Signing    []store.SigningKey
+	Trust      []store.TrustCertificate
 	MaxSeq     int64
 }
 
@@ -630,7 +626,7 @@ func snap(t *testing.T, s Service) snapshot {
 		if sn.Tokens, err = tx.ListEnrollmentTokens(ctx); err != nil {
 			return err
 		}
-		if sn.Signing, err = tx.ListSigningKeys(ctx); err != nil {
+		if sn.Trust, err = tx.TrustCertificates(ctx, store.TrustIntermediate); err != nil {
 			return err
 		}
 		sn.MaxSeq, err = tx.MaxSeq(ctx)
@@ -780,8 +776,8 @@ func TestResetEverythingKeepsCaller(t *testing.T) {
 		if len(got.Tokens) != 0 {
 			t.Fatalf("tokens = %+v", got.Tokens)
 		}
-		if !reflect.DeepEqual(got.Signing, before.Signing) || got.MaxSeq != before.MaxSeq {
-			t.Fatal("signing key or MaxSeq changed")
+		if !reflect.DeepEqual(got.Trust, before.Trust) || got.MaxSeq != before.MaxSeq {
+			t.Fatal("trust material or MaxSeq changed")
 		}
 		chs, _ := channelNames(t, s)
 		if len(chs) != 1 || chs[0].Name != "general" {

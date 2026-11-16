@@ -84,7 +84,7 @@ func TestOnlyMCPCommands(t *testing.T) {
 }
 
 func TestServeOptions(t *testing.T) {
-	env := []string{"AGENTMESH_SERVER=http://h:1", "AGENTMESH_CREDENTIAL=k.pem"}
+	env := []string{"AGENTMESH_SERVER=https://h:1", "AGENTMESH_CREDENTIAL=k.pem"}
 	o, code := serveOptions(nil, env, &bytes.Buffer{})
 	if code != -1 {
 		t.Fatalf("code %d", code)
@@ -95,15 +95,15 @@ func TestServeOptions(t *testing.T) {
 	if o.Client.Local != nil {
 		t.Error("Client.Local is set: the MCP-only binary has no local mode")
 	}
-	if o.Client.Server != "http://h:1" {
+	if o.Client.Server != "https://h:1" {
 		t.Errorf("Server = %q", o.Client.Server)
 	}
 	if !strings.HasSuffix(o.Client.Credential, "k.pem") || !isAbs(o.Client.Credential) {
 		t.Errorf("Credential = %q, want an absolute path ending in k.pem", o.Client.Credential)
 	}
 
-	o, code = serveOptions([]string{"-server", "http://h:2"}, env, &bytes.Buffer{})
-	if code != -1 || o.Client.Server != "http://h:2" {
+	o, code = serveOptions([]string{"-server", "https://h:2"}, env, &bytes.Buffer{})
+	if code != -1 || o.Client.Server != "https://h:2" {
 		t.Errorf("-server over the variable: code %d, Server %q", code, o.Client.Server)
 	}
 
@@ -124,4 +124,16 @@ func TestServeIdentityGuard(t *testing.T) {
 	if code != 1 || out != "" || !strings.Contains(errs, "agentmesh-mcponly serve") {
 		t.Errorf("code %d, stdout %q, stderr %q", code, out, errs)
 	}
+}
+
+// noPin drops the first-contact line ("pinned root ...") of a stderr text: a
+// test of another behavior that first meets a server need not repeat it.
+func noPin(s string) string {
+	var keep []string
+	for _, l := range strings.SplitAfter(s, "\n") {
+		if !strings.Contains(l, ": pinned root ") {
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "")
 }

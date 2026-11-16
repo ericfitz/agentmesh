@@ -2,6 +2,7 @@ package profile
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/repoconfig"
 	"github.com/ericfitz/agentmesh/internal/store"
 	"github.com/ericfitz/agentmesh/internal/strictjson"
@@ -39,6 +41,15 @@ type Profile struct {
 	// OIDC names the corporate provider a human signs in through on a server
 	// profile (spec 5.3); nil: the profile has no human sign-in.
 	OIDC *OIDC `json:"oidc,omitempty"`
+	// InsecureHTTP lets a server URL use http to a host other than 127.0.0.1,
+	// ::1 and localhost (local testing only; spec 4.10).
+	InsecureHTTP bool `json:"insecure_http,omitempty"`
+	// RootThumbprint pins the trust root: 43 base64url characters, the SHA-256
+	// of the root certificate (spec 4.10).
+	RootThumbprint string `json:"root_thumbprint,omitempty"`
+	// Installation is the installation name the client expects of the server
+	// (pki.ValidInstallationName).
+	Installation string `json:"installation,omitempty"`
 }
 
 // OIDC is the "oidc" object of a server profile: the provider, the public
@@ -61,12 +72,8 @@ func (o OIDC) Validate() error {
 	if u.User != nil {
 		return fmt.Errorf("oidc.issuer %q must not carry credentials", o.Issuer)
 	}
-	if u.Scheme == "http" {
-		switch u.Hostname() {
-		case "127.0.0.1", "::1", "localhost":
-		default:
-			return fmt.Errorf("oidc.issuer %q must use https (http is accepted only for 127.0.0.1, ::1 and localhost)", o.Issuer)
-		}
+	if u.Scheme == "http" && !loopbackHost(u.Hostname()) {
+		return fmt.Errorf("oidc.issuer %q must use https (http is accepted only for 127.0.0.1, ::1 and localhost)", o.Issuer)
 	}
 	if o.ClientID == "" {
 		return errors.New("oidc.client_id is required")
@@ -99,9 +106,28 @@ func (p Profile) Validate() error {
 		if p.OIDC != nil {
 			return errors.New("oidc is only valid in server mode")
 		}
+		if p.InsecureHTTP {
+			return errors.New("insecure_http is only valid in server mode")
+		}
+		if p.RootThumbprint != "" {
+			return errors.New("root_thumbprint is only valid in server mode")
+		}
+		if p.Installation != "" {
+			return errors.New("installation is only valid in server mode")
+		}
 	case ModeServer:
-		if err := validServer(p.Server); err != nil {
+		if err := validServer(p); err != nil {
 			return err
+		}
+		if p.RootThumbprint != "" {
+			if err := ValidRootThumbprint(p.RootThumbprint); err != nil {
+				return err
+			}
+		}
+		if p.Installation != "" {
+			if err := pki.ValidInstallationName(p.Installation); err != nil {
+				return fmt.Errorf("installation: %w", err)
+			}
 		}
 		if p.SQLite != "" {
 			return errors.New("sqlite is only valid in local mode")
@@ -129,7 +155,28 @@ func (p Profile) Validate() error {
 	return nil
 }
 
-func validServer(s string) error {
+// loopbackHost reports whether host is one of the three names for which http
+// is accepted without insecure_http.
+func loopbackHost(host string) bool {
+	switch host {
+	case "127.0.0.1", "::1", "localhost":
+		return true
+	}
+	return false
+}
+
+// ValidRootThumbprint checks the form of a root thumbprint: 43 base64url
+// characters without padding that decode to 32 bytes.
+func ValidRootThumbprint(t string) error {
+	b, err := base64.RawURLEncoding.Strict().DecodeString(t)
+	if err != nil || len(t) != 43 || len(b) != 32 {
+		return fmt.Errorf("root_thumbprint %q must be 43 base64url characters (the SHA-256 of the root certificate, no padding)", t)
+	}
+	return nil
+}
+
+func validServer(p Profile) error {
+	s := p.Server
 	if s == "" {
 		return errors.New("server is required in server mode")
 	}
@@ -148,6 +195,11 @@ func validServer(s string) error {
 	}
 	if u.Fragment != "" || strings.Contains(s, "#") {
 		return fmt.Errorf("server %q must have no fragment", s)
+	}
+	if u.Scheme == "http" {
+		if !loopbackHost(u.Hostname()) && !p.InsecureHTTP {
+			return fmt.Errorf("server %q must use https (http is accepted for 127.0.0.1, ::1 and localhost, or with insecure_http: true, the flag -insecure-http, for local testing only)", s)
+		}
 	}
 	return nil
 }
@@ -447,3 +499,7 @@ func SetTUIRailWidth(path string, width int) error {
 	c.TUI.RailWidth = width
 	return c.Save()
 }
+
+// LoopbackHost reports whether host is one of the three names for which http
+// is accepted without insecure_http.
+func LoopbackHost(host string) bool { return loopbackHost(host) }

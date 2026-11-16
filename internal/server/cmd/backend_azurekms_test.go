@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,7 +18,7 @@ import (
 func TestAzurekmsBackendIsRegistered(t *testing.T) {
 	const good = "azurekms://kv-test.vault.azure.net/signing-key"
 	t.Setenv("AZURE_TOKEN_CREDENTIALS", "prod")
-	p, err := openKeyProvider(config.Config{SigningKeyURI: good})
+	p, err := openIntermediateProvider(config.Config{IntermediateKeyURI: good})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,14 +27,14 @@ func TestAzurekmsBackendIsRegistered(t *testing.T) {
 	}
 	// A malformed key for the backend is refused, not accepted lazily; the
 	// error does not quote the URI.
-	_, err = openKeyProvider(config.Config{SigningKeyURI: "azurekms://us3r:t0ken@kv-test.vault.azure.net/signing-key"})
+	_, err = openIntermediateProvider(config.Config{IntermediateKeyURI: "azurekms://us3r:t0ken@kv-test.vault.azure.net/signing-key"})
 	if err == nil || strings.Contains(err.Error(), "t0ken") || strings.Contains(err.Error(), "us3r") {
 		t.Fatalf("a malformed azurekms URI: err %v", err)
 	}
 	// An unset credential selector is a configuration error here, so the
 	// server exits 2 (not ErrUnavailable, which exits 1).
 	t.Setenv("AZURE_TOKEN_CREDENTIALS", "")
-	if _, err = openKeyProvider(config.Config{SigningKeyURI: good}); err == nil || errors.Is(err, keyprovider.ErrUnavailable) {
+	if _, err = openIntermediateProvider(config.Config{IntermediateKeyURI: good}); err == nil || errors.Is(err, keyprovider.ErrUnavailable) {
 		t.Fatalf("an unset AZURE_TOKEN_CREDENTIALS: err %v", err)
 	}
 	for _, scheme := range keyprovider.Schemes() {
@@ -43,7 +42,7 @@ func TestAzurekmsBackendIsRegistered(t *testing.T) {
 			continue
 		}
 		setBackend(t, scheme, nil)
-		_, err := openKeyProvider(config.Config{SigningKeyURI: scheme + "://x"})
+		_, err := openIntermediateProvider(config.Config{IntermediateKeyURI: scheme + "://x"})
 		want := "the " + scheme + " backend is not in this build (build with -tags " + scheme + ")"
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err %v, want %q", scheme, err, want)
@@ -55,13 +54,12 @@ func TestAzurekmsBackendIsRegistered(t *testing.T) {
 // for the start and for rotate: exit 2.
 func TestAzurekmsUnsetCredentialSelectorExits2(t *testing.T) {
 	t.Setenv("AZURE_TOKEN_CREDENTIALS", "")
-	const uri = "signing_key_uri=azurekms://kv-test.vault.azure.net/signing-key"
-	db := filepath.Join(t.TempDir(), "ab2.db")
-	if code, _, stderr := runOnce(nil, "-listen", "127.0.0.1:0", "-sqlite", db, "-set", uri); code != 2 || !strings.Contains(stderr, "AZURE_TOKEN_CREDENTIALS") {
+	const uri = "intermediate_key_uri=azurekms://kv-test.vault.azure.net/signing-key"
+	if code, _, stderr := startWithKeyURI(t, uri); code != 2 || !strings.Contains(stderr, "AZURE_TOKEN_CREDENTIALS") {
 		t.Fatalf("start: exit %d, stderr %q; want 2", code, stderr)
 	}
-	e := newAdminEnv(t)
-	if code, _, errOut := e.run("-set", uri, "signing-key", "rotate"); code != 2 || !strings.Contains(errOut, "AZURE_TOKEN_CREDENTIALS") {
+	e := newCAEnv(t)
+	if code, _, errOut := e.run(append(e.settings(uri), "signing-key", "rotate")...); code != 2 || !strings.Contains(errOut, "AZURE_TOKEN_CREDENTIALS") {
 		t.Fatalf("rotate: exit %d, stderr %q; want 2", code, errOut)
 	}
 }

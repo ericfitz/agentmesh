@@ -3,6 +3,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -10,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/bus"
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/core/identities"
 	"github.com/ericfitz/agentmesh/internal/core/scopes"
-	"github.com/ericfitz/agentmesh/internal/keyprovider"
+	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
+	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/store"
 	"github.com/ericfitz/agentmesh/internal/store/sqlite"
 )
@@ -478,151 +480,333 @@ func TestAdminCreateScopedIdentity(t *testing.T) {
 	}
 }
 
-// seedSigningKey puts an active store-provider key with the given age into
-// the file, so a rotation test does not hit the 3600 s default cooldown by
-// accident (the command's clock is the real one and cannot be set). It
-// returns the kid.
-func (e *adminEnv) seedSigningKey(age time.Duration) string {
+// skEnv is a caEnv with the intermediate installed, running `signing-key`.
+type skEnv struct{ *caEnv }
+
+func newSKEnv(t *testing.T) *skEnv {
+	t.Helper()
+	e := &skEnv{newCAEnv(t)}
+	if code, _, errOut := e.ca("install", e.f.CertFile); code != 0 {
+		t.Fatalf("install: %d %s", code, errOut)
+	}
+	return e
+}
+
+func (e *skEnv) sk(args ...string) (int, string, string) {
 	e.t.Helper()
-	_, st := e.service()
-	k, err := keyprovider.StoreProvider{}.Next(context.Background())
+	all := append(e.settings("intermediate_key_file="+e.f.KeyFile), "signing-key")
+	return e.run(append(all, args...)...)
+}
+
+// leaf stores a leaf of the fixture's key, valid from now for a day.
+func (e *skEnv) leaf() *x509.Certificate {
+	e.t.Helper()
+	c, _ := e.core()
+	_, cert := e.f.Leaf(e.t, c, time.Now(), 24*time.Hour)
+	return cert
+}
+
+func tp(c *x509.Certificate) string { return pki.Thumbprint(c.Raw) }
+
+func TestSigningKeyList(t *testing.T) {
+	e := newSKEnv(t)
+	code, out, errOut := e.sk("list")
+	wantExit(t, code, 0, errOut)
+	if want := fmt.Sprintf("trust-number %d\n", e.trustNumber()); out != want {
+		t.Fatalf("no leaves: %q, want %q", out, want)
+	}
+	a, b := e.leaf(), e.leaf()
+	code, out, errOut = e.sk("list")
+	wantExit(t, code, 0, errOut)
+	line := func(c *x509.Certificate, state string) string {
+		return fmt.Sprintf("leaf %s serial %s %s %s %s", tp(c), pki.SerialText(c.SerialNumber),
+			c.NotBefore.UTC().Format(time.RFC3339), c.NotAfter.UTC().Format(time.RFC3339), state)
+	}
+	if want := line(a, "other") + "\n" + line(b, "other") + "\n" + fmt.Sprintf("trust-number %d\n", e.trustNumber()); out != want {
+		t.Fatalf("list:\n%s\nwant\n%s", out, want)
+	}
+	// A revoked leaf is listed last, as revoked.
+	if code, _, errOut := e.sk("revoke", "-cert", certFile(t, a)); code != 0 {
+		t.Fatalf("revoke: %d %s", code, errOut)
+	}
+	_, out, _ = e.sk("list")
+	if want := line(b, "other") + "\n" + line(a, "revoked") + "\n" + fmt.Sprintf("trust-number %d\n", e.trustNumber()); out != want {
+		t.Fatalf("list after revoke:\n%s\nwant\n%s", out, want)
+	}
+	if strings.Contains(out, "PRIVATE KEY") {
+		t.Fatal("list leaks a key")
+	}
+}
+
+func TestSigningKeyRotate(t *testing.T) {
+	e := newSKEnv(t)
+	// Nothing to revoke: the trust number alone, exit 0, nothing written.
+	n0 := e.trustNumber()
+	code, out, errOut := e.sk("rotate")
+	wantExit(t, code, 0, errOut)
+	if want := fmt.Sprintf("trust-number %d\n", n0); out != want || e.trustNumber() != n0 {
+		t.Fatalf("rotate with no leaves: %q (number %d -> %d)", out, n0, e.trustNumber())
+	}
+
+	a, b := e.leaf(), e.leaf()
+	code, out, errOut = e.sk("rotate")
+	wantExit(t, code, 0, errOut)
+	n1 := e.trustNumber()
+	want := fmt.Sprintf("revoked %s human-messages 0\nrevoked %s human-messages 0\ntrust-number %d\n", tp(a), tp(b), n1)
+	if out != want || n1 <= n0 || errOut != "" {
+		t.Fatalf("rotate:\n%s\nwant\n%s (number %d -> %d, stderr %q)", out, want, n0, n1, errOut)
+	}
+	if _, l, _ := e.sk("list"); strings.Count(l, " revoked\n") != 2 {
+		t.Fatalf("list after rotate: %q", l)
+	}
+
+	// A second run revokes only the leaves issued since.
+	c := e.leaf()
+	code, out, errOut = e.sk("rotate")
+	wantExit(t, code, 0, errOut)
+	n2 := e.trustNumber()
+	if want := fmt.Sprintf("revoked %s human-messages 0\ntrust-number %d\n", tp(c), n2); out != want || n2 <= n1 {
+		t.Fatalf("second rotate: %q, want %q (number %d -> %d)", out, want, n1, n2)
+	}
+	// And with none issued since: the trust number alone, unchanged.
+	code, out, errOut = e.sk("rotate")
+	wantExit(t, code, 0, errOut)
+	if want := fmt.Sprintf("trust-number %d\n", n2); out != want || e.trustNumber() != n2 {
+		t.Fatalf("third rotate: %q, want %q", out, want)
+	}
+}
+
+// A leaf under another intermediate key of the installation is not covered:
+// its thumbprint goes to standard error and nothing else changes for it.
+func TestSigningKeyRotateNotCovered(t *testing.T) {
+	e := newSKEnv(t)
+	k2 := newP256(t)
+	inter2 := craft(t, e.f, &k2.PublicKey, nil)
+	_, st := e.core()
+	foreign := leafUnder(t, inter2, k2, time.Now(), 24*time.Hour)
+	err := st.Tx(context.Background(), func(ctx context.Context, tx store.Tx) error {
+		if _, err := tx.PutTrustCertificate(ctx, store.TrustCertificate{
+			Kind: store.TrustIntermediate, Thumbprint: tp(inter2), DER: inter2.Raw,
+			NotAfter: inter2.NotAfter.UnixMilli(), CreatedAt: time.Now().UnixMilli(),
+		}); err != nil {
+			return err
+		}
+		_, err := tx.PutTrustCertificate(ctx, store.TrustCertificate{
+			Kind: store.TrustLeaf, Thumbprint: tp(foreign), DER: foreign.Raw,
+			IssuerKey: pki.KeyID(inter2.SubjectKeyId), NotAfter: foreign.NotAfter.UnixMilli(), CreatedAt: time.Now().UnixMilli(),
+		})
+		return err
+	})
 	if err != nil {
-		e.t.Fatal(err)
+		t.Fatal(err)
 	}
-	pub, err := keys.MarshalPublic(k.Public)
-	if err != nil {
-		e.t.Fatal(err)
+	mine := e.leaf()
+	code, out, errOut := e.sk("rotate")
+	wantExit(t, code, 0, errOut)
+	if errOut != "not-covered "+tp(foreign)+"\n" {
+		t.Fatalf("stderr %q, want the foreign leaf's thumbprint", errOut)
 	}
-	row := store.SigningKey{
-		KID: k.KID, State: store.SigningKeyActive, Provider: store.SigningProviderStore, Algorithm: string(k.Algorithm),
-		PublicKey: pub, PrivateKeyPEM: string(k.PrivatePEM), CreatedAt: time.Now().Add(-age).UnixMilli(),
+	if !strings.HasPrefix(out, "revoked "+tp(mine)+" human-messages 0\n") || strings.Contains(out, tp(foreign)) {
+		t.Fatalf("stdout %q", out)
 	}
-	if err := st.Tx(context.Background(), func(ctx context.Context, tx store.Tx) error { return tx.PutSigningKey(ctx, row) }); err != nil {
-		e.t.Fatal(err)
-	}
-	return k.KID
 }
 
-func TestAdminSigningKeyList(t *testing.T) {
+func TestSigningKeyRevoke(t *testing.T) {
+	t.Run("certificate with a row", func(t *testing.T) {
+		e := newSKEnv(t)
+		a, b := e.leaf(), e.leaf()
+		n0 := e.trustNumber()
+		code, out, errOut := e.sk("revoke", "-cert", certFile(t, a))
+		wantExit(t, code, 0, errOut)
+		n1 := e.trustNumber()
+		if want := fmt.Sprintf("revoked %s human-messages 0\ntrust-number %d\n", tp(a), n1); out != want || n1 <= n0 {
+			t.Fatalf("stdout %q, want %q (number %d -> %d)", out, want, n0, n1)
+		}
+		// Repeated: unchanged, the number does not move.
+		code, out, errOut = e.sk("revoke", "-cert", certFile(t, a))
+		wantExit(t, code, 0, errOut)
+		if want := fmt.Sprintf("unchanged %s\ntrust-number %d\n", pki.SerialText(a.SerialNumber), n1); out != want || e.trustNumber() != n1 {
+			t.Fatalf("repeat: %q, want %q", out, want)
+		}
+		// The other leaf is untouched.
+		if _, l, _ := e.sk("list"); !strings.Contains(l, tp(b)+" serial "+pki.SerialText(b.SerialNumber)+" ") || strings.Count(l, " revoked\n") != 1 {
+			t.Fatalf("list: %q", l)
+		}
+	})
+
+	t.Run("serial that list printed", func(t *testing.T) {
+		e := newSKEnv(t)
+		a := e.leaf()
+		n0 := e.trustNumber()
+		s := pki.SerialText(a.SerialNumber)
+		code, out, errOut := e.sk("revoke", "-serial", s)
+		wantExit(t, code, 0, errOut)
+		n1 := e.trustNumber()
+		if want := fmt.Sprintf("revoked %s human-messages 0\ntrust-number %d\n", tp(a), n1); out != want || n1 <= n0 {
+			t.Fatalf("stdout %q, want %q (number %d -> %d)", out, want, n0, n1)
+		}
+		// Upper case is the same number; the repeat is unchanged.
+		code, out, errOut = e.sk("revoke", "-serial", strings.ToUpper(s))
+		wantExit(t, code, 0, errOut)
+		if want := fmt.Sprintf("unchanged %s\ntrust-number %d\n", s, n1); out != want {
+			t.Fatalf("repeat: %q, want %q", out, want)
+		}
+	})
+
+	t.Run("serial no row has", func(t *testing.T) {
+		e := newSKEnv(t)
+		n0 := e.trustNumber()
+		code, out, errOut := e.sk("revoke", "-serial", "00ABCDEF01")
+		wantExit(t, code, 0, errOut)
+		n1 := e.trustNumber()
+		if want := fmt.Sprintf("revoked abcdef01 human-messages 0\ntrust-number %d\n", n1); out != want || n1 <= n0 {
+			t.Fatalf("stdout %q, want %q (number %d -> %d)", out, want, n0, n1)
+		}
+		code, out, _ = e.sk("revoke", "-serial", "abcdef01")
+		if want := fmt.Sprintf("unchanged abcdef01\ntrust-number %d\n", n1); code != 0 || out != want {
+			t.Fatalf("repeat: %d %q, want %q", code, out, want)
+		}
+	})
+
+	t.Run("certificate without a row", func(t *testing.T) {
+		e := newSKEnv(t)
+		a := e.leaf()
+		_, st := e.core()
+		err := st.Tx(context.Background(), func(ctx context.Context, tx store.Tx) error {
+			rows, err := tx.TrustCertificates(ctx, store.TrustLeaf)
+			if err != nil {
+				return err
+			}
+			ids := make([]int64, len(rows))
+			for i, r := range rows {
+				ids[i] = r.ID
+			}
+			_, err = tx.DeleteTrustCertificates(ctx, ids)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		n0 := e.trustNumber()
+		code, out, errOut := e.sk("revoke", "-cert", certFile(t, a))
+		wantExit(t, code, 0, errOut)
+		n1 := e.trustNumber()
+		if want := fmt.Sprintf("revoked %s human-messages 0\ntrust-number %d\n", tp(a), n1); out != want || n1 <= n0 {
+			t.Fatalf("stdout %q, want %q (number %d -> %d)", out, want, n0, n1)
+		}
+	})
+
+	t.Run("a certificate another key signed", func(t *testing.T) {
+		e := newSKEnv(t)
+		other := e.f.Sibling(t, "other-install")
+		c, _ := e.core()
+		_, foreign := other.Leaf(t, c, time.Now(), 24*time.Hour)
+		n0 := e.trustNumber()
+		code, out, errOut := e.sk("revoke", "-cert", certFile(t, foreign))
+		wantExit(t, code, 2, errOut)
+		if out != "" || !strings.Contains(errOut, "not signed by the configured intermediate key") || e.trustNumber() != n0 {
+			t.Fatalf("stdout %q stderr %q", out, errOut)
+		}
+	})
+
+	t.Run("lock held is retryable", func(t *testing.T) {
+		e := newSKEnv(t)
+		a := e.leaf()
+		_, st := e.core()
+		now := time.Now().UnixMilli()
+		if held, err := st.TryLock(context.Background(), signingkeys.LockName, "another-replica", now, now+time.Hour.Milliseconds()); err != nil || !held {
+			t.Fatalf("lock: %v %v", held, err)
+		}
+		for _, args := range [][]string{{"rotate"}, {"revoke", "-cert", certFile(t, a)}, {"revoke", "-serial", "1f"}} {
+			code, out, errOut := e.sk(args...)
+			wantExit(t, code, 1, errOut)
+			if out != "" || !strings.Contains(errOut, "try again") {
+				t.Fatalf("%v: stdout %q stderr %q", args, out, errOut)
+			}
+		}
+	})
+}
+
+// Every input the command refuses is exit 2 with a message and writes nothing.
+func TestSigningKeyRevokeRefusals(t *testing.T) {
+	e := newSKEnv(t)
+	a := e.leaf()
+	good := certFile(t, a)
+	two := writeTemp(t, "two.pem", append(pki.EncodePEM("CERTIFICATE", a.Raw), pki.EncodePEM("CERTIFICATE", a.Raw)...))
+	wrongType := writeTemp(t, "req.pem", pki.EncodePEM("CERTIFICATE REQUEST", a.Raw))
+	garbage := writeTemp(t, "garbage.pem", pki.EncodePEM("CERTIFICATE", []byte("not a certificate")))
+	empty := writeTemp(t, "empty.pem", nil)
+	missing := filepath.Join(t.TempDir(), "absent.pem")
+	n0 := e.trustNumber()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string // a substring of stderr
+	}{
+		{"neither", []string{"revoke"}, "exactly one of -cert or -serial"},
+		{"both", []string{"revoke", "-cert", good, "-serial", "1f"}, "exactly one of -cert or -serial"},
+		{"empty serial", []string{"revoke", "-serial", ""}, "exactly one of -cert or -serial"},
+		{"not hexadecimal", []string{"revoke", "-serial", "xyz"}, "hexadecimal"},
+		{"0x prefix", []string{"revoke", "-serial", "0x1f"}, "hexadecimal"},
+		{"sign", []string{"revoke", "-serial", "-1f"}, "hexadecimal"},
+		{"plus sign", []string{"revoke", "-serial", "+1f"}, "hexadecimal"},
+		{"underscore", []string{"revoke", "-serial", "1_f"}, "hexadecimal"},
+		{"zero", []string{"revoke", "-serial", "000"}, "must be positive"},
+		{"too long", []string{"revoke", "-serial", strings.Repeat("ff", 20)}, "longer than 20 octets"},
+		{"missing file", []string{"revoke", "-cert", missing}, "absent.pem"},
+		{"empty file", []string{"revoke", "-cert", empty}, "empty.pem"},
+		{"two blocks", []string{"revoke", "-cert", two}, "two.pem"},
+		{"wrong block type", []string{"revoke", "-cert", wrongType}, "req.pem"},
+		{"unparseable", []string{"revoke", "-cert", garbage}, "garbage.pem"},
+		{"extra argument", []string{"revoke", "-serial", "1f", "extra"}, "unexpected argument"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := e.sk(tc.args...)
+			wantExit(t, code, 2, errOut)
+			if out != "" || !strings.Contains(errOut, tc.want) {
+				t.Fatalf("stdout %q stderr %q, want %q", out, errOut, tc.want)
+			}
+		})
+	}
+	if e.trustNumber() != n0 {
+		t.Fatal("a refused revoke changed the trust number")
+	}
+}
+
+// Without the trust settings every verb is exit 2 naming the missing setting.
+func TestSigningKeyRequiresTrust(t *testing.T) {
 	e := newAdminEnv(t)
-	kid := e.seedSigningKey(2 * time.Hour)
-	code, out, errOut := e.run("signing-key", "list")
-	if code != 0 {
-		t.Fatalf("list: code %d stderr %q", code, errOut)
-	}
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], kid+" active store ") || !strings.Contains(lines[0], " created ") {
-		t.Fatalf("list: %q", out)
-	}
-	if strings.Contains(out, "PRIVATE KEY") || strings.Contains(out, " retired ") || strings.Contains(out, " ref ") {
-		t.Fatalf("list leaks or over-reports: %q", out)
-	}
-	if !regexp.MustCompile(`^\S+ active store (EdDSA|ES256) created \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$`).MatchString(lines[0]) {
-		t.Fatalf("list line format: %q", lines[0])
-	}
-	// An empty set prints nothing and succeeds.
-	e2 := newAdminEnv(t)
-	if code, out, _ := e2.run("signing-key", "list"); code != 0 || out != "" {
-		t.Fatalf("empty list: code %d out %q", code, out)
+	for _, args := range [][]string{{"list"}, {"rotate"}, {"revoke", "-serial", "1f"}} {
+		code, _, errOut := e.run(append([]string{"signing-key"}, args...)...)
+		if code != 2 || !strings.Contains(errOut, "root_certificate_file") {
+			t.Errorf("%v: code %d stderr %q, want 2 naming root_certificate_file", args, code, errOut)
+		}
 	}
 }
 
-func TestAdminSigningKeyRotate(t *testing.T) {
-	e := newAdminEnv(t)
-	old := e.seedSigningKey(2 * time.Hour) // older than the 3600 s default cooldown
-	code, out, errOut := e.run("signing-key", "rotate")
-	if code != 0 {
-		t.Fatalf("rotate: code %d stderr %q", code, errOut)
-	}
-	m := regexp.MustCompile(`^active (\S+); (\S+) retiring until (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\n$`).FindStringSubmatch(out)
-	if m == nil || m[2] != old || m[1] == old {
-		t.Fatalf("rotate output %q (old kid %s)", out, old)
-	}
-	newKID := m[1]
-	_, out, _ = e.run("signing-key", "list")
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], newKID+" active ") ||
-		!strings.HasPrefix(lines[1], old+" retiring ") || !strings.Contains(lines[1], " retired ") || !strings.Contains(lines[1], " remove-after "+m[3]) {
-		t.Fatalf("list after rotate: %q", out)
-	}
-
-	// Inside the cooldown: refused, nothing changes.
-	code, _, errOut = e.run("signing-key", "rotate")
-	if code != 1 || !strings.Contains(errOut, "the next rotation is allowed at") || !strings.Contains(errOut, "-revoke-previous is exempt") {
-		t.Fatalf("second rotate: code %d stderr %q", code, errOut)
-	}
-	if _, again, _ := e.run("signing-key", "list"); again != out {
-		t.Fatalf("a refused rotate changed the set:\n%s\nvs\n%s", out, again)
-	}
-
-	// -revoke-previous is never refused by the cooldown; the deleted key is the
-	// active one (newKID) and the retiring one stays.
-	code, out, errOut = e.run("signing-key", "rotate", "-revoke-previous")
-	m2 := regexp.MustCompile(`^active (\S+); (\S+) revoked\n$`).FindStringSubmatch(out)
-	if code != 0 || m2 == nil || m2[2] != newKID {
-		t.Fatalf("revoke: code %d out %q stderr %q", code, out, errOut)
-	}
-	_, out, _ = e.run("signing-key", "list")
-	if strings.Contains(out, newKID) || !strings.Contains(out, m2[1]+" active ") || !strings.Contains(out, old+" retiring ") {
-		t.Fatalf("list after revoke: %q", out)
-	}
-	// The flag may come after nothing else; extra positionals are usage errors.
-	if code, _, _ := e.run("signing-key", "rotate", "-revoke-previous", "extra"); code != 2 {
-		t.Fatalf("extra argument: code %d, want 2", code)
-	}
-}
-
-func TestAdminSigningKeyRotateNoPrevious(t *testing.T) {
-	e := newAdminEnv(t)
-	code, out, errOut := e.run("signing-key", "rotate")
-	if code != 0 || !regexp.MustCompile(`^active \S+; previous: none\n$`).MatchString(out) {
-		t.Fatalf("rotate on an empty set: code %d out %q stderr %q", code, out, errOut)
-	}
-	if _, l, _ := e.run("signing-key", "list"); strings.Count(l, "\n") != 1 || !strings.Contains(l, " active ") {
-		t.Fatalf("list: %q", l)
-	}
-}
-
-func TestAdminSigningKeyCooldownSetting(t *testing.T) {
-	// A fresh key and a 1 s cooldown set with -set: the cooldown text names 1.
-	e := newAdminEnv(t)
-	e.seedSigningKey(0)
-	code, _, errOut := e.run("-set", "signing_key_rotation_cooldown_seconds=3000", "signing-key", "rotate")
-	if code != 1 || !strings.Contains(errOut, "signing_key_rotation_cooldown_seconds 3000") {
-		t.Fatalf("code %d stderr %q", code, errOut)
-	}
-}
-
-func TestAdminSigningKeyUnknownBackend(t *testing.T) {
-	setBackend(t, "awskms", nil) // a build with the awskms tag registers it; this test needs it absent
-	e := newAdminEnv(t)
-	code, _, errOut := e.run("-set", "signing_key_uri=awskms:///alias/x", "signing-key", "rotate")
-	if code != 2 || !strings.Contains(errOut, "signing_key_uri: the awskms backend is not in this build") {
-		t.Fatalf("code %d stderr %q, want exit 2 and the awskms backend text", code, errOut)
-	}
-	// list needs no provider, so it works whatever the URI names.
-	if code, _, errOut := e.run("-set", "signing_key_uri=awskms:///alias/x", "signing-key", "list"); code != 0 {
-		t.Fatalf("list with an external URI: code %d stderr %q", code, errOut)
-	}
-}
-
-func TestAdminSigningKeyUsage(t *testing.T) {
+func TestSigningKeyUsage(t *testing.T) {
 	e := newAdminEnv(t)
 	for _, bad := range [][]string{
 		{"signing-key"},
 		{"signing-key", "bogus"},
 		{"signing-key", "list", "extra"},
 		{"signing-key", "list", "-revoke-previous"},
+		{"signing-key", "rotate", "-revoke-previous"},
+		{"signing-key", "rotate", "-cert", "x"},
 		{"signing-key", "rotate", "-from", "x"},
 		{"signing-key", "rotate", "extra"},
 	} {
-		if code, _, errOut := e.run(bad...); code != 2 || errOut == "" {
+		code, _, errOut := e.run(bad...)
+		if code != 2 || errOut == "" {
 			t.Errorf("%v: code %d stderr %q, want 2 with a message", bad, code, errOut)
 		}
 	}
+	if code, _, errOut := e.run("signing-key"); !strings.Contains(errOut, "list | rotate | revoke -cert FILE | -serial S") {
+		t.Errorf("usage text %q (code %d)", errOut, code)
+	}
 	// A usage error never opens the store: a path that cannot be created is not touched.
 	var o, er bytes.Buffer
-	if code := RunAdmin(context.Background(), []string{"-sqlite", "/nonexistent-dir/x.db", "signing-key", "bogus"}, nil, &o, &er); code != 2 {
+	if code := RunAdmin(context.Background(), []string{"-sqlite", "/nonexistent-dir/x.db", "signing-key", "revoke"}, nil, &o, &er); code != 2 {
 		t.Errorf("usage error with an unopenable store: code %d stderr %q", code, er.String())
 	}
 }

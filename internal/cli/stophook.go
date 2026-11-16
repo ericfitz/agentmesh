@@ -126,7 +126,9 @@ func stopHookWork(ctx context.Context, environ []string, stdin io.Reader) hookRe
 	}
 	// Profile and identity come from the state file only (bindProfile on zero
 	// flags), never from flags, the environment or the repository file.
-	o := client.Options{Environ: environ, Cwd: hi.Cwd}
+	// NoDiscover: the hook's budget is 500 ms, so it makes no discover call (it
+	// only peeks, which carries no trust number).
+	o := client.Options{Environ: environ, Cwd: hi.Cwd, NoDiscover: true}
 	if err := bindProfile(&o, l); err != nil {
 		return hookResult{stage: "bind", err: err}
 	}

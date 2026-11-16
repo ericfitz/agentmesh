@@ -1,6 +1,8 @@
 package mcpcli
 
 import (
+	"encoding/json"
+	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -9,6 +11,8 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/fileacl"
+	"github.com/ericfitz/agentmesh/internal/pki"
+	"github.com/ericfitz/agentmesh/internal/profile"
 )
 
 func testEnviron(t *testing.T) (environ []string, configDir string) {
@@ -53,7 +57,7 @@ func TestRegisterTokenNeverEchoed(t *testing.T) {
 		t.Errorf("variable token: code %d, output %q %q", code, out, errs)
 	}
 	// An unreachable server leaks nothing either.
-	code, out, errs = run([]string{"register", "-server", "http://127.0.0.1:1", "-identity", "pat", "-enrollment-token", token}, environ)
+	code, out, errs = run([]string{"register", "-profile", "unreach", "-server", "http://127.0.0.1:1", "-identity", "pat", "-enrollment-token", token}, environ)
 	if code != 1 || strings.Contains(out+errs, token) {
 		t.Errorf("unreachable: code %d, output %q %q", code, out, errs)
 	}
@@ -94,7 +98,7 @@ func TestRegisterCredentialAndRerun(t *testing.T) {
 	}
 	args := []string{"register", "-server", base, "-identity", "pat", "-credential", key}
 	code, out, errs := run(args, environ)
-	if code != 0 || out != "registered pat at "+base+" (created)\n" || errs != "" {
+	if code != 0 || out != "registered pat at "+base+" (created)\n" || noPin(errs) != "" {
 		t.Fatalf("first run: code %d, stdout %q, stderr %q", code, out, errs)
 	}
 	code, out, errs = run(args, environ)
@@ -124,4 +128,46 @@ func TestRegisterRefusesOSLoginName(t *testing.T) {
 	if code, out, errs = run([]string{"register", "-server", base, "-identity", "other"}, environ); code != 0 {
 		t.Errorf("other name: code %d, stdout %q, stderr %q", code, out, errs)
 	}
+}
+
+func TestRegisterWritesTrustMembers(t *testing.T) {
+	base := startServer(t)
+	thumb, inst := discoverTrust(t, base)
+	environ, configDir := testEnviron(t)
+	code, _, errs := run([]string{"register", "-server", base, "-identity", "pat", "-profile", "lab", "-insecure-http", "-root-thumbprint", thumb, "-installation", inst}, environ)
+	if code != 0 {
+		t.Fatalf("register: code %d, stderr %q", code, errs)
+	}
+	cfg, err := profile.Load(filepath.Join(configDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Profiles["lab"]; !p.InsecureHTTP || p.RootThumbprint != thumb || p.Installation != inst {
+		t.Fatalf("profile %+v", p)
+	}
+	code, out, errs := run([]string{"register", "-server", "http://elsewhere:1", "-identity", "pat", "-profile", "other"}, environ)
+	if code != 2 || out != "" || !strings.Contains(errs, "-insecure-http") {
+		t.Fatalf("http without the switch: code %d, stdout %q, stderr %q", code, out, errs)
+	}
+}
+
+// discoverTrust reads the root thumbprint and the installation name a server
+// advertises, so a test can state them as the profile's expected values.
+func discoverTrust(t *testing.T, base string) (thumb, installation string) {
+	t.Helper()
+	resp, err := http.Get(base + "/v1/discover")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var doc struct {
+		Trust struct {
+			Root         []byte `json:"root"`
+			Installation string `json:"installation"`
+		} `json:"trust"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	return pki.Thumbprint(doc.Trust.Root), doc.Trust.Installation
 }

@@ -63,8 +63,10 @@ AGENT=cats-agent
 VICTIM=cats-victim
 SERVER_SETS=(-set send_messages_per_second=10000 -set send_kib_per_second=65536
   -set token_lifetime_seconds=86400 -set session_lease_seconds=86400
-  -set watch_max_seconds=1 -set maintenance_interval_seconds=3600
-  -set signing_key_rotation_cooldown_seconds=1)
+  -set watch_max_seconds=1 -set maintenance_interval_seconds=3600)
+# The server's CA (ADR 0019 section 7): the root tool's directory, the
+# intermediate key and the installation's name, all under the campaign directory.
+INSTALLATION=cats-installation
 SKIP_PATHS=(/v1/admin/reset /v1/admin/signing-keys/rotate
   '/v1/admin/identities/{identity}/reset-credential'
   /v1/admin/bridges '/v1/admin/bridges/{channel}')
@@ -252,7 +254,7 @@ collect_secrets() {
     for f in "$DIR"/data/tokens/*/*.json; do
       [ -f "$f" ] && jq -r '.access_token // empty' "$f"
     done
-    for f in "$DIR"/config/credentials/*/*; do
+    for f in "$DIR"/config/credentials/*/* "$DIR"/ca/root.key "$DIR"/intermediate.key; do
       [ -f "$f" ] && grep -v -e '^-----' "$f"
     done
   } 2>/dev/null | awk 'length($0) >= 16' >>"$file" || true
@@ -265,6 +267,29 @@ require_live() {
 }
 
 # ---------------------------------------------------------------- up
+
+# bootstrap_ca gives the server a CA: the root (ca init), the intermediate
+# request (admin ca csr), the signed certificate (ca sign) and its installation
+# (admin ca install), all through the built binary, in "$DIR/ca" and "$DIR".
+# It sets CA_SETS to the server's three trust settings. `up` always starts from
+# an empty directory, so every `up` makes a fresh CA (a new root, key and
+# certificate); `down` removes the directory, CA included.
+CA_SETS=()
+bootstrap_ca() {
+  local db=$1 root=$DIR/ca
+  local csr=$DIR/intermediate.csr cert=$DIR/intermediate.pem
+  CA_SETS=(-set "root_certificate_file=$root/root.pem"
+    -set "intermediate_key_file=$DIR/intermediate.key"
+    -set "installation_name=$INSTALLATION")
+  am ca init -dir "$root" >>"$DIR/harness.log" 2>&1 ||
+    die 3 "ca init failed (see $DIR/harness.log)"
+  am server admin -sqlite "$db" "${CA_SETS[@]}" ca csr -out "$csr" >>"$DIR/harness.log" 2>&1 ||
+    die 3 "ca csr failed (see $DIR/harness.log)"
+  am ca sign -dir "$root" "$csr" >"$cert" 2>>"$DIR/harness.log" ||
+    { rm -f "$cert"; die 3 "ca sign failed (see $DIR/harness.log)"; }
+  am server admin -sqlite "$db" "${CA_SETS[@]}" ca install "$cert" >>"$DIR/harness.log" 2>&1 ||
+    die 3 "ca install failed (see $DIR/harness.log)"
+}
 
 do_up() {
   need_tool go
@@ -284,6 +309,7 @@ do_up() {
     { tail -n 20 "$DIR/harness.log" >&2; die 3 "go build failed"; }
 
   local db=$DIR/server.sqlite tok
+  bootstrap_ca "$db"
   am server admin -sqlite "$db" create-identity "$ADMIN" >>"$DIR/harness.log" 2>&1 ||
     die 3 "create-identity $ADMIN failed (see $DIR/harness.log)"
   am server admin -sqlite "$db" admins add -identity "$ADMIN" >>"$DIR/harness.log" 2>&1 ||
@@ -293,7 +319,7 @@ do_up() {
   [ -n "$tok" ] || die 3 "enrollment create returned no token (see $DIR/harness.log)"
   collect_secrets "$tok"
 
-  "$DIR/agentmesh" server -listen "127.0.0.1:$PORT" -sqlite "$db" "${SERVER_SETS[@]}" \
+  "$DIR/agentmesh" server -listen "127.0.0.1:$PORT" -sqlite "$db" "${SERVER_SETS[@]}" "${CA_SETS[@]}" \
     >"$DIR/server.log" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$DIR/server.pid"

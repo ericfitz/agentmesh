@@ -76,7 +76,7 @@ type Admin interface {
 	// The signing key operations answer unavailable (not retryable) with
 	// SigningKeysNotConfigured where the server has no signing keys (local
 	// mode has none). Both are administrator only.
-	ListSigningKeys(ctx context.Context) ([]SigningKey, error)
+	ListSigningKeys(ctx context.Context) (SigningKeyList, error)
 	RotateSigningKey(ctx context.Context, in RotateSigningKeyInput) (SigningKeyRotation, error)
 }
 

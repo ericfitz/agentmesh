@@ -12,6 +12,10 @@ type OpenSessionInput struct {
 	Hint        string
 	ResumeToken string
 	Cursors     []OfferedCursor
+	// TrustNumber is the trust number the client holds (ADR 0019 section
+	// 4.9); nil when it holds none. The core refuses a value outside 0 to
+	// rules.MaxTrustNumber. A local Bus ignores it.
+	TrustNumber *int64
 }
 
 // OfferedCursor is a position a client offers on open.
@@ -43,6 +47,11 @@ type Session struct {
 	Resumed         bool
 	RejectedCursors []RejectedCursor
 	Pending         []PendingChannel
+	// TrustNumber is the server's trust number, and Trust the bundle when the
+	// client's number was absent or differed (ADR 0019 section 4.9). Both are
+	// nil from a local Bus.
+	TrustNumber *int64
+	Trust       *TrustBundle
 }
 
 // CloseSessionInput closes a session, freeing its display name.
@@ -56,6 +65,8 @@ type ReceiveInput struct {
 	Count      int
 	Channels   []string
 	IncludeOwn bool
+	// TrustNumber is as OpenSessionInput.TrustNumber.
+	TrustNumber *int64
 }
 
 // ReceiveResult is one delivery batch (Decision 16): the messages, the batch
@@ -69,6 +80,9 @@ type ReceiveResult struct {
 	Gaps        []Gap
 	Notice      string
 	Instruction string
+	// TrustNumber and Trust are as Session's.
+	TrustNumber *int64
+	Trust       *TrustBundle
 }
 
 // MaxWatchTimeout is the longest timeout one Watch call accepts; the server
@@ -85,6 +99,9 @@ type WatchInput struct {
 	After      int64
 	Timeout    time.Duration
 	IncludeOwn bool
+	// TrustNumber is as OpenSessionInput.TrustNumber: the watch wakes at once
+	// when the server's number differs from it (ADR 0019 section 4.9).
+	TrustNumber *int64
 }
 
 // WatchResult is the outcome of a watch (Decision 42). Woke false means the
@@ -94,6 +111,8 @@ type WatchResult struct {
 	Seq      int64
 	Count    int
 	Channels []string
+	// TrustNumber is the server's trust number; nil from a local Bus.
+	TrustNumber *int64
 }
 
 // PeekInput asks for a session's pending counts without reading them.

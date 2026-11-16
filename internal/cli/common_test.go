@@ -131,7 +131,8 @@ func TestOpenDialsNothingInServerMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	c, code := open(context.Background(), client.Options{Environ: e.Environ, Cwd: e.Home, Profile: "lab"}, &stderr)
+	// NoDiscover: the one call open makes otherwise is the trust step's discover.
+	c, code := open(context.Background(), client.Options{Environ: e.Environ, Cwd: e.Home, Profile: "lab", NoDiscover: true}, &stderr)
 	if c == nil || code != 0 {
 		t.Fatalf("code %d, stderr %q", code, stderr.String())
 	}

@@ -8,8 +8,8 @@ One binary, `agentmesh`, provides the server (`agentmesh server`) and its host-s
 - [admin-bootstrap.md](admin-bootstrap.md): `server admin` commands, enrollment tokens, the first administrator, the admin API.
 - [inspection.md](inspection.md): the write-inspection webhook: what is sent, the verdict, failure modes, health and logs.
 - [slack-bridge.md](slack-bridge.md): the Slack app, the token files, creating, removing and archiving a bridge, and what happens when a create fails.
-- [signing-keys.md](signing-keys.md): the key providers, rotation per provider, the trust boundary and what happens when the key service is down.
-- [backup.md](backup.md): what to back up, how, and what a restore loses.
+- [signing-keys.md](signing-keys.md): the certificate hierarchy (root, intermediate, leaf), the four commands of a first start, a root from an outside CA, the key service backends, renewal, revocation, the trust boundary and what happens when the key service is down.
+- [backup.md](backup.md): what to back up, how, what a restore loses and what to run after one.
 - [upgrade.md](upgrade.md): versions and what happens to the database at start.
 
-With the Store-row provider (the default) the server's signing key is stored in clear in the database, so read access to the database is equivalent to the administrator flag. An external key provider keeps the private key out of the database; see [signing-keys.md](signing-keys.md).
+A server cannot start without a certificate authority: a root certificate, an intermediate key with a certificate the root signed, and an installation name (see [signing-keys.md](signing-keys.md), "A first start"). The database holds only certificates and revocation lists, no private key, so read access to the database does not let anyone mint a token; write access is still equivalent to the administrator flag.

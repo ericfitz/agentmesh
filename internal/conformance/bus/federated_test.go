@@ -62,8 +62,9 @@ func TestFederatedEndToEnd(t *testing.T) {
 
 		var stdout, stderr testkit.LockedBuffer
 		done := make(chan int, 1)
+		trust := serverTrust(t, st)
 		go func() {
-			done <- cmd.Run(ctx, []string{"-listen", "127.0.0.1:0", storeFlag, dsn, "-set", setIssuers}, nil, &stdout, &stderr)
+			done <- cmd.Run(ctx, append([]string{"-listen", "127.0.0.1:0", storeFlag, dsn, "-set", setIssuers}, trust.Sets()...), nil, &stdout, &stderr)
 		}()
 		stopped := false
 		stop := func() {

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/go-jose/go-jose/v4"
 
@@ -30,23 +31,22 @@ import (
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
 	"github.com/ericfitz/agentmesh/internal/core/notify/pgnotify"
 	"github.com/ericfitz/agentmesh/internal/gen"
-	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/server"
 	"github.com/ericfitz/agentmesh/internal/server/config"
 )
 
-var listeningRE = regexp.MustCompile(`agentmesh server listening on (\S+) \((sqlite|postgres), registration (\S+), issuer (\S+), kid (\S+)\)`)
+var listeningRE = regexp.MustCompile(`agentmesh server listening on (\S+) \((sqlite|postgres), registration (\S+), issuer (\S+), leaf (\S+) until (\S+)\)`)
 
 // running is one `agentmesh server` started through Run in a goroutine.
 type running struct {
-	t                               *testing.T
-	addr, engine, mode, issuer, kid string
-	stdout, stderr                  *testkit.LockedBuffer
-	cancel                          context.CancelFunc
-	ch                              chan int
-	finished                        chan struct{}
-	stopOnce                        sync.Once
-	code                            int
+	t                                       *testing.T
+	addr, engine, mode, issuer, leaf, until string
+	stdout, stderr                          *testkit.LockedBuffer
+	cancel                                  context.CancelFunc
+	ch                                      chan int
+	finished                                chan struct{}
+	stopOnce                                sync.Once
+	code                                    int
 }
 
 // launch starts Run and returns at once; waitReady blocks until the listening
@@ -76,7 +76,7 @@ func (r *running) waitReady() *running {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if m := listeningRE.FindStringSubmatch(r.stdout.String()); m != nil {
-			r.addr, r.engine, r.mode, r.issuer, r.kid = m[1], m[2], m[3], m[4], m[5]
+			r.addr, r.engine, r.mode, r.issuer, r.leaf, r.until = m[1], m[2], m[3], m[4], m[5], m[6]
 			return r
 		}
 		select {
@@ -107,7 +107,48 @@ func (r *running) base() string { return "http://" + r.addr }
 
 func startRun(t *testing.T, environ []string, args ...string) *running {
 	t.Helper()
-	return launch(t, environ, args...).waitReady()
+	return launch(t, environ, withTrust(t, environ, args)...).waitReady()
+}
+
+// withTrust appends the trust settings of a fixture installed in the SQLite
+// file the arguments, the -config file or the environment name (the same fixture
+// for every start over one file). Arguments that name no SQLite file, or that
+// already set the root, are returned as they are.
+func withTrust(t *testing.T, environ, args []string) []string {
+	t.Helper()
+	db, cfg := "", ""
+	for i, a := range args {
+		if strings.Contains(a, "root_certificate_file=") {
+			return args
+		}
+		if i+1 < len(args) {
+			switch a {
+			case "-sqlite":
+				db = args[i+1]
+			case "-config":
+				cfg = args[i+1]
+			}
+		}
+	}
+	if db == "" && cfg != "" {
+		var file struct {
+			SQLite string `json:"sqlite"`
+		}
+		if b, err := os.ReadFile(cfg); err == nil && json.Unmarshal(b, &file) == nil {
+			db = file.SQLite
+		}
+	}
+	if db == "" {
+		for _, e := range environ {
+			if v, ok := strings.CutPrefix(e, "AGENTMESH_SERVER_SQLITE="); ok {
+				db = v
+			}
+		}
+	}
+	if db == "" {
+		t.Fatalf("withTrust: no SQLite file in the arguments, the -config file or the environment: %v", args)
+	}
+	return append(append([]string(nil), args...), trusttest.SQLiteSets(t, db)...)
 }
 
 // runServer starts Run with a nil environment.
@@ -266,7 +307,7 @@ func TestRunConfiguresLogging(t *testing.T) {
 	var got Config
 	var out, errb bytes.Buffer
 	serve := func(_ context.Context, c Config) error { got = c; return nil }
-	args := []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "ab2.db")}
+	args := withTrust(t, nil, []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "ab2.db")})
 	if code := run(context.Background(), args, nil, &out, &errb, serve); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, errb.String())
 	}
@@ -314,7 +355,8 @@ func TestStoreNotifier(t *testing.T) {
 
 func TestRunRejectsUnopenableStore(t *testing.T) {
 	dir := t.TempDir() // a directory is not a database file
-	code, _, errs := runOnce(nil, "-listen", "127.0.0.1:0", "-sqlite", dir)
+	// The trust settings come first: the start checks them before it opens the Store.
+	code, _, errs := runOnce(nil, append([]string{"-listen", "127.0.0.1:0", "-sqlite", dir}, trusttest.New(t, time.Time{}).Sets()...)...)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1 (stderr %q)", code, errs)
 	}
@@ -436,62 +478,23 @@ func jwksKIDs(t *testing.T, base string) []string {
 	return out
 }
 
-// Decision (Eric, 2026-10-21), item 2; Definition of Done D. The signing key
-// is one Store row: a second start loads it; two starts at once end with one
-// row (the deterministic proof is Task 5's TestIdentitiesSigningKeyConcurrent
-// on both engines; this smoke may pass without the race occurring); a failed
-// start leaves either nothing or the committed row, never half of one.
-func TestSigningKeyStoreLifecycle(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ab2.db")
-	// A fixed issuer, so a token minted by one start verifies on the next.
+// Definition of Done D (ADR 0019 section 5, "Server start"): two servers
+// started at once over one fresh file both start with leaves of their own, and
+// a bearer minted by one is served by the other. The retired signing_key_file
+// setting stays unknown.
+func TestStartReplicasIssueTheirOwnLeaves(t *testing.T) {
 	issuer := []string{"-set", "issuer=http://agentmesh.local"}
-	args := append([]string{"-listen", "127.0.0.1:0", "-sqlite", path}, issuer...)
+	args := append([]string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "ab2.db")}, issuer...)
 
-	first := runServer(t, args...)
-	if want := "generated signing key " + first.kid; !strings.Contains(first.stdout.String(), want) {
-		t.Fatalf("first start stdout %q lacks %q", first.stdout.String(), want)
-	}
-	if got := jwksKIDs(t, first.base()); len(got) != 1 || got[0] != first.kid {
-		t.Fatalf("jwks kids %v, want [%s]", got, first.kid)
-	}
-	_, tok := registerAndMint(t, first, "pat")
-	if got := first.stop(); got != 0 {
-		t.Fatalf("exit %d", got)
-	}
-
-	// Second start over the same file: nothing generated, same kid, and the
-	// first run's token verifies.
-	second := runServer(t, args...)
-	if strings.Contains(second.stdout.String(), "generated signing key") {
-		t.Fatalf("second start generated a key: %q", second.stdout.String())
-	}
-	if second.kid != first.kid {
-		t.Fatalf("second kid %s, first %s", second.kid, first.kid)
-	}
-	if got := jwksKIDs(t, second.base()); len(got) != 1 || got[0] != first.kid {
-		t.Fatalf("second jwks kids %v", got)
-	}
-	if code, body := httpDo(t, nil, "GET", second.base()+"/v1/channels", tok.Token); code != 200 {
-		t.Fatalf("token minted by the first run: %d %s", code, body)
-	}
-	second.stop()
-
-	// Two servers started at once over one fresh file both start, report one
-	// kid, and exactly one of them created the row.
 	path2 := filepath.Join(t.TempDir(), "ab2.db")
-	args2 := append([]string{"-listen", "127.0.0.1:0", "-sqlite", path2}, issuer...)
+	args2 := withTrust(t, nil, append([]string{"-listen", "127.0.0.1:0", "-sqlite", path2}, issuer...))
 	a := launch(t, nil, args2...)
 	b := launch(t, nil, args2...)
 	a.waitReady()
 	b.waitReady()
-	if a.kid != b.kid {
-		t.Fatalf("concurrent starts disagree on the kid: %s vs %s", a.kid, b.kid)
+	if a.leaf == b.leaf {
+		t.Fatalf("concurrent starts share the leaf %s", a.leaf)
 	}
-	created := strings.Count(a.stdout.String(), "generated signing key") + strings.Count(b.stdout.String(), "generated signing key")
-	if created != 1 {
-		t.Fatalf("%d of the two starts generated a key, want exactly 1", created)
-	}
-	// A token minted by one verifies on the other.
 	_, atok := registerAndMint(t, a, "kim")
 	if code, body := httpDo(t, nil, "GET", b.base()+"/v1/channels", atok.Token); code != 200 {
 		t.Fatalf("a's token on b: %d %s", code, body)
@@ -499,83 +502,50 @@ func TestSigningKeyStoreLifecycle(t *testing.T) {
 	a.stop()
 	b.stop()
 
-	// A corrupt row stops the start with exit 1 naming the row, and is left alone.
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	if _, err := db.Exec("UPDATE signing_keys SET private_key_pem = 'garbage'"); err != nil {
-		t.Fatal(err)
-	}
-	code, _, errs := runOnce(nil, args...)
-	if code != 1 || !strings.Contains(errs, "signing key row") {
-		t.Fatalf("corrupt row: exit %d, stderr %q", code, errs)
-	}
-	var pemText string
-	if err := db.QueryRow("SELECT private_key_pem FROM signing_keys").Scan(&pemText); err != nil || pemText != "garbage" {
-		t.Fatalf("the corrupt row was changed: %q, %v", pemText, err)
-	}
-
-	// signing_key_file is not a setting: the key is a Store row.
-	code, _, errs = runOnce(nil, append(args, "-set", "signing_key_file=x")...)
+	// signing_key_file is not a setting.
+	code, _, errs := runOnce(nil, append(withTrust(t, nil, args), "-set", "signing_key_file=x")...)
 	if code != 2 || !strings.Contains(errs, "signing_key_file") {
 		t.Fatalf("signing_key_file: exit %d, stderr %q", code, errs)
 	}
 }
 
-// A start that fails after the key row was committed leaves the row; the next
-// start loads it and generates nothing. The failure is the embedding key,
-// which Run reads after the signing key (the plan task 9 order).
-func TestSigningKeyAfterFailedStart(t *testing.T) {
+// leafRows counts the leaf rows of the SQLite file at path.
+func leafRows(t *testing.T, path string) int {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var n int
+	if err := db.QueryRow("SELECT count(*) FROM trust_material WHERE kind = 'leaf'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// A start that fails after the leaf row was stored leaves the unused row; the
+// next start issues another leaf and serves. The failure is the embedding key,
+// which Run reads after the leaf is issued.
+func TestStartFailedAfterLeafLeavesUnusedRow(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ab2.db")
-	args := []string{"-listen", "127.0.0.1:0", "-sqlite", path}
+	args := withTrust(t, nil, []string{"-listen", "127.0.0.1:0", "-sqlite", path})
 	missing := filepath.Join(t.TempDir(), "no-such-key")
 	code, out, errs := runOnce(nil, append(args, "-set", "embedding_endpoint=http://127.0.0.1:1/v1/embeddings",
 		"-set", "embedding_model=m", "-set", "embedding_api_key_file="+missing)...)
 	if code == 0 || !strings.Contains(errs, "embedding_api_key_file") {
 		t.Fatalf("missing embedding key file: exit %d, stderr %q", code, errs)
 	}
-	m := regexp.MustCompile(`generated signing key (\S+)`).FindStringSubmatch(out)
-	if m == nil {
-		t.Fatalf("the failed start created no key row before failing: stdout %q", out)
+	if strings.Contains(out, "listening") {
+		t.Fatalf("a failed start printed the listening line: %q", out)
+	}
+	if n := leafRows(t, path); n != 1 {
+		t.Fatalf("leaf rows after the failed start = %d, want 1 (the unused leaf)", n)
 	}
 	r := runServer(t, args...)
-	if strings.Contains(r.stdout.String(), "generated signing key") || r.kid != m[1] {
-		t.Fatalf("the committed row was not reused: stdout %q, first kid %s", r.stdout.String(), m[1])
-	}
-	if got := jwksKIDs(t, r.base()); len(got) != 1 || got[0] != r.kid {
-		t.Fatalf("jwks kids %v", got)
-	}
-}
-
-// A database whose active key is a store row and a configuration naming an
-// external key stop the start (exit 1) with the rotate instruction, and the
-// row is left alone.
-func TestSigningKeyProviderMismatchRefusesStart(t *testing.T) {
-	setBackend(t, "awskms", func(string) (keyprovider.Provider, error) { return stubProvider{}, nil })
-	path := filepath.Join(t.TempDir(), "ab2.db")
-	args := []string{"-listen", "127.0.0.1:0", "-sqlite", path}
-	first := runServer(t, args...)
-	kid := first.kid
-	if got := first.stop(); got != 0 {
-		t.Fatalf("exit %d", got)
-	}
-	code, _, errs := runOnce(nil, append(args, "-set", "signing_key_uri=awskms://k")...)
-	if code != 1 || !strings.Contains(errs, "signing key: ") || !strings.Contains(errs, "configured provider is awskms") ||
-		!strings.Contains(errs, "signing-key rotate") {
-		t.Fatalf("mismatch: exit %d, stderr %q", code, errs)
-	}
-	again := runServer(t, args...)
-	defer again.stop()
-	if again.kid != kid {
-		t.Fatalf("kid changed from %s to %s", kid, again.kid)
-	}
-	// A scheme without a backend in this build is a configuration error (2).
-	setBackend(t, "gcpkms", nil) // a build with the gcpkms tag registers it; this check needs it absent
-	code, _, errs = runOnce(nil, append(args, "-set", "signing_key_uri=gcpkms://k")...)
-	if code != 2 || !strings.Contains(errs, "the gcpkms backend is not in this build") {
-		t.Fatalf("no backend: exit %d, stderr %q", code, errs)
+	defer r.stop()
+	if n := leafRows(t, path); n != 2 {
+		t.Fatalf("leaf rows after the next start = %d, want 2", n)
 	}
 }
 
@@ -699,7 +669,7 @@ func TestRunSlackTokenFiles(t *testing.T) {
 	badBot := write("badbot", "xapp-SECRETWRONGBOT")
 	missing := filepath.Join(dir, "absent")
 	base := func() []string {
-		return []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "ab2.db")}
+		return withTrust(t, nil, []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "ab2.db")})
 	}
 	set := func(kv ...string) []string {
 		a := base()
@@ -768,39 +738,12 @@ func TestRunSlackTokenFiles(t *testing.T) {
 	})
 }
 
-// TestStartWithCorruptRetiringRowExits1: a retiring row the issuer cannot load
-// stops the start with exit 1 (a runtime failure, not a configuration error),
-// and the row is left alone.
-func TestStartWithCorruptRetiringRowExits1(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "ab2.db")
-	args := []string{"-listen", "127.0.0.1:0", "-sqlite", path, "-set", "issuer=http://agentmesh.local"}
-	runServer(t, args...).stop()
-
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = db.Close() }()
-	if _, err := db.Exec(`INSERT INTO signing_keys (kid, state, provider, provider_ref, algorithm, public_key, private_key_pem, created_at, retired_at, remove_after)
-		VALUES ('bad-kid', 'retiring', 'store', '', 'EdDSA', x'00', 'garbage', 1, 2, 3)`); err != nil {
-		t.Fatal(err)
-	}
-	code, _, errs := runOnce(nil, args...)
-	if code != 1 || !strings.Contains(errs, "bad-kid") {
-		t.Fatalf("corrupt retiring row: exit %d, stderr %q", code, errs)
-	}
-	var n int
-	if err := db.QueryRow("SELECT count(*) FROM signing_keys WHERE kid = 'bad-kid' AND private_key_pem = 'garbage'").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("the corrupt row was changed: %d, %v", n, err)
-	}
-}
-
 // A missing inspection key file, or an inspection_api_key_env naming an unset
 // variable, fails the start with exit 2 naming the setting (issue #5).
 func TestInspectionKeyStartFailures(t *testing.T) {
 	base := func() []string {
-		return []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "ab2.db"),
-			"-set", "inspection_endpoint=http://127.0.0.1:1/inspect"}
+		return withTrust(t, nil, []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "ab2.db"),
+			"-set", "inspection_endpoint=http://127.0.0.1:1/inspect"})
 	}
 	missing := filepath.Join(t.TempDir(), "no-such-key")
 	code, _, errs := runOnce(nil, append(base(), "-set", "inspection_api_key_file="+missing)...)
@@ -872,7 +815,7 @@ func TestRunWithInjectsServe(t *testing.T) {
 	var slackNil bool
 	var mode string
 	var out, errb bytes.Buffer
-	code := RunWith(context.Background(), []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "s.sqlite")}, nil, &out, &errb,
+	code := RunWith(context.Background(), withTrust(t, nil, []string{"-listen", "127.0.0.1:0", "-sqlite", filepath.Join(t.TempDir(), "s.sqlite")}), nil, &out, &errb,
 		func(_ context.Context, c Config) error {
 			calls++
 			slackNil = c.Slack == nil

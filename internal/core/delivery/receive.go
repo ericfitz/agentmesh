@@ -133,6 +133,9 @@ func (s Service) Receive(ctx context.Context, identity string, in bus.ReceiveInp
 	if err := rules.CheckItems("channels", len(in.Channels)); err != nil {
 		return bus.ReceiveResult{}, err
 	}
+	if err := rules.CheckTrustNumber("trust_number", in.TrustNumber); err != nil {
+		return bus.ReceiveResult{}, err
+	}
 	for _, name := range in.Channels {
 		if err := store.NameRule(name); err != nil {
 			return bus.ReceiveResult{}, core.E(bus.CodeValidation, "channel %s", err)
@@ -154,6 +157,7 @@ func (s Service) Receive(ctx context.Context, identity string, in bus.ReceiveInp
 	if err != nil {
 		return bus.ReceiveResult{}, core.FromStore(err)
 	}
+	res.TrustNumber, res.Trust = core.InBand(s.Trust(), in.TrustNumber)
 	return res, nil
 }
 

@@ -32,6 +32,7 @@ func openSessionInput(req gen.OpenSessionRequestObject) ab2bus.OpenSessionInput 
 		for _, c := range derefOr(b.Cursors) {
 			in.Cursors = append(in.Cursors, ab2bus.OfferedCursor{Channel: c.Channel, Seq: c.Seq})
 		}
+		in.TrustNumber = b.TrustNumber
 	}
 	return in
 }
@@ -43,6 +44,7 @@ func sessionToGen(s ab2bus.Session) gen.Session {
 		ResumeToken: s.ResumeToken, Resumed: s.Resumed,
 		Pending:         make([]gen.PendingChannel, 0, len(s.Pending)),
 		RejectedCursors: make([]gen.RejectedCursor, 0, len(s.RejectedCursors)),
+		TrustNumber:     s.TrustNumber, Trust: trustToGen(s.Trust),
 	}
 	for _, p := range s.Pending {
 		out.Pending = append(out.Pending, gen.PendingChannel{Channel: p.Channel, Pending: p.Pending})
@@ -80,6 +82,7 @@ func receiveInput(req gen.ReceiveRequestObject) ab2bus.ReceiveInput {
 		in.Count = derefOr(b.Count) // absent is 0; the core defaults it
 		in.Channels = derefOr(b.Channels)
 		in.IncludeOwn = derefOr(b.IncludeOwn)
+		in.TrustNumber = b.TrustNumber
 	}
 	return in
 }
@@ -90,8 +93,9 @@ func receiveResultToGen(r ab2bus.ReceiveResult) gen.ReceiveResult {
 	out := gen.ReceiveResult{
 		AckIgnored: r.AckIgnored, Batch: r.Batch, Redelivered: r.Redelivered,
 		Instruction: optStr(r.Instruction), Notice: optStr(r.Notice),
-		Gaps:     make([]gen.Gap, 0, len(r.Gaps)),
-		Messages: make([]gen.Message, 0, len(r.Messages)),
+		Gaps:        make([]gen.Gap, 0, len(r.Gaps)),
+		Messages:    make([]gen.Message, 0, len(r.Messages)),
+		TrustNumber: r.TrustNumber, Trust: trustToGen(r.Trust),
 	}
 	for _, g := range r.Gaps {
 		out.Gaps = append(out.Gaps, gen.Gap{Channel: g.Channel, From: g.From, To: g.To})
@@ -120,9 +124,10 @@ func (a *api) Watch(ctx context.Context, req gen.WatchRequestObject) (gen.WatchR
 // watchInput validates the timeout (watchTimeout) and builds the input.
 func watchInput(req gen.WatchRequestObject) (ab2bus.WatchInput, error) {
 	in := ab2bus.WatchInput{
-		Session:    req.Session,
-		After:      derefOr(req.Params.After),
-		IncludeOwn: derefOr(req.Params.IncludeOwn),
+		Session:     req.Session,
+		After:       derefOr(req.Params.After),
+		IncludeOwn:  derefOr(req.Params.IncludeOwn),
+		TrustNumber: req.Params.TrustNumber,
 	}
 	if t := req.Params.Timeout; t != nil {
 		d, err := watchTimeout(float64(*t))
@@ -140,7 +145,7 @@ func wakeToGen(r ab2bus.WatchResult) gen.Wake {
 	if chans == nil {
 		chans = []string{}
 	}
-	return gen.Wake{Seq: r.Seq, Count: r.Count, Channels: chans}
+	return gen.Wake{Seq: r.Seq, Count: r.Count, Channels: chans, TrustNumber: r.TrustNumber}
 }
 
 func (a *api) ListIdentities(ctx context.Context, _ gen.ListIdentitiesRequestObject) (gen.ListIdentitiesResponseObject, error) {

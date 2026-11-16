@@ -63,9 +63,14 @@ func startSlackFixture(root string, check *respcheck.Checker, add func(error)) (
 	ctx, cancel := context.WithCancel(context.Background())
 	f.cancel = cancel
 	ready := make(chan net.Addr, 1)
+	trust, err := bootstrapCA(f.home, filepath.Join(root, "slack-trust"), f.sqlite)
+	if err != nil {
+		cancel()
+		return f, err
+	}
 	go func() {
-		f.code = cmd.RunWith(ctx, []string{"-listen", "127.0.0.1:0", "-registration", "enrollment", "-sqlite", f.sqlite,
-			"-set", "session_retention_hours=1", "-set", "issuer=" + f.proxy.URL}, nil, f.out, f.errb,
+		f.code = cmd.RunWith(ctx, append([]string{"-listen", "127.0.0.1:0", "-registration", "enrollment", "-sqlite", f.sqlite,
+			"-set", "session_retention_hours=1", "-set", "issuer=" + f.proxy.URL}, trust...), nil, f.out, f.errb,
 			func(ctx context.Context, c cmd.Config) error {
 				c.Slack = f.fake
 				c.SlackCfg.PostInterval = 100 * time.Millisecond

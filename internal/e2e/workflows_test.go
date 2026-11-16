@@ -94,6 +94,14 @@ func freshKeyJWK(t testing.TB) (crypto.Signer, string, map[string]any) {
 // token and returns its access token.
 func (w *wfRunner) register(t *testing.T, identity, enrollmentToken string) string {
 	t.Helper()
+	tok, _, _ := w.registerWithKey(t, identity, enrollmentToken)
+	return tok
+}
+
+// registerWithKey is register that also returns the identity's key and kid, so
+// a test can sign a further assertion for it.
+func (w *wfRunner) registerWithKey(t *testing.T, identity, enrollmentToken string) (string, crypto.Signer, string) {
+	t.Helper()
 	key, kid, pub := freshKeyJWK(t)
 	ca, err := assertion.Sign(assertion.Input{Identity: identity, Audience: w.audience, Key: key, KID: kid, Now: time.Now()})
 	if err != nil {
@@ -106,7 +114,7 @@ func (w *wfRunner) register(t *testing.T, identity, enrollmentToken string) stri
 	if tok == "" {
 		t.Fatalf("register-and-login %s: no access_token in %v", identity, out)
 	}
-	return tok
+	return tok, key, kid
 }
 
 func str(t *testing.T, out map[string]any, name string) string {
@@ -141,7 +149,7 @@ func TestArazzoWorkflows(t *testing.T) {
 	// Fixture 1: the binary's server.
 	ann := one.register(t, "arazzo-ann", token())
 	bob := one.register(t, "arazzo-bob", token())
-	root := one.register(t, "arazzo-root", token())
+	root, rootKey, rootKID := one.registerWithKey(t, "arazzo-root", token())
 	mustRun(t, fx.homeA, "server", "admin", "-sqlite", fx.sqlite, "admins", "add", "-identity", "arazzo-root")
 
 	one.run(t, "send-receive-ack", "send-receive-ack", map[string]any{"bearer": ann, "peer_bearer": bob, "channel": "arazzo-inbox"})
@@ -155,11 +163,13 @@ func TestArazzoWorkflows(t *testing.T) {
 	one.run(t, "channel-access", "channel-access", map[string]any{
 		"bearer": ann, "identity": "arazzo-ann", "peer_bearer": bob, "peer_identity": "arazzo-bob",
 		"channel": "arazzo-acl", "new_name": "arazzo-acl-renamed"})
-	// A plain rotation retires the previous key, so the earlier bearers stay
-	// valid. The fixture's cooldown is 1 s from the key's creation (server
-	// start); a run of this test alone reaches here sooner, so wait it out.
-	time.Sleep(1100 * time.Millisecond)
-	one.run(t, "signing-key-rotation", "signing-key-rotation", map[string]any{"admin_bearer": root})
+	// The rotation revokes the key that signed root's bearer (Ruling 6), so the
+	// workflow exchanges again; an assertion is single-use, hence a second one.
+	exchange, err := assertion.Sign(assertion.Input{Identity: "arazzo-root", Audience: one.audience, Key: rootKey, KID: rootKID, Now: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	one.run(t, "signing-key-rotation", "signing-key-rotation", map[string]any{"admin_bearer": root, "exchange_assertion": exchange})
 
 	// Fixture 2: the in-process server with the Slack fake.
 	two := &wfRunner{r: &arazzotest.Runner{Doc: doc, BaseURL: slackFx.serverURL(), Log: t.Logf}, audience: slackFx.serverURL(), prefix: "slack:"}

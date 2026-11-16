@@ -8,6 +8,12 @@ after you fix the URL or start the server.
     > agentmesh-mcponly: check: reach failed
     (exit 1)
 
+The server's root or installation name changed (exit 2 from register, FAIL
+reach from check). The command names the pinned and the new root and pins
+nothing. Confirm the new thumbprint with the server's operator; if the change
+is expected, run the same register or check again with -accept-new-root, which
+replaces the pin and prints the old and the new root.
+
 has no local mode (exit 2). No server is known, so the command fell back to
 the built-in local profile, which this binary cannot open. Pass -server URL,
 set AGENTMESH_SERVER, or run register -server URL first so the profile records

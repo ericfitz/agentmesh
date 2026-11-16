@@ -6,9 +6,16 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="${DOCKER_SMOKE_NAME:-agentmesh-smoke}"
 IMAGE="agentmesh:smoke"
-cleanup() { docker rm -f -v "$NAME" "$NAME-nocfg" "$NAME-nolisten" >/dev/null 2>&1 || true; }
+# DATA is the serving container's /data, bind-mounted from the host: the CA's files and the database live there, so
+# the one-off commands of step 4b and the server see the same store (the files belong to the host user: --user below).
+DATA=""
+cleanup() {
+  docker rm -f -v "$NAME" "$NAME-nocfg" "$NAME-nolisten" >/dev/null 2>&1 || true
+  if [ -n "$DATA" ]; then rm -rf "$DATA"; fi
+}
 trap cleanup EXIT
 cleanup
+DATA="$(mktemp -d "${TMPDIR:-/tmp}/agentmesh-smoke.XXXXXX")"
 
 fail() { echo "docker-smoke: FAIL: $*" >&2; exit 1; }
 
@@ -50,22 +57,6 @@ expect_exit "$NAME-nocfg" 2 'exactly one of sqlite or postgres is required' "$IM
 echo "step 2b: a store without listen exits 2"
 expect_exit "$NAME-nolisten" 2 'listen is required' -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db "$IMAGE"
 
-echo "step 2c: every key provider backend is in the image"
-# The image carries all four backends (BUILD_TAGS in the Dockerfile; open note signing-keys 1); an untagged binary
-# answers every scheme with "not in this build". With the placeholder URI "<scheme>://none" the three URI-checking
-# backends refuse it as a configuration error (exit 2); hashivault does too, because New checks its environment
-# (VAULT_ADDR, VAULT_TOKEN), which the container leaves unset. No key service is needed. The log must carry the
-# backend's own text; expect_exit also fails when the log quotes the URI ("://none").
-for spec in awskms:2:'agentmesh server: awskms:' gcpkms:2:'agentmesh server: gcpkms:' azurekms:2:'agentmesh server: azurekms:' \
-  hashivault:2:'agentmesh server: hashivault:'; do
-  scheme="${spec%%:*}"
-  rest="${spec#*:}"
-  want="${rest%%:*}"
-  text="${rest#*:}"
-  expect_exit "$NAME-nolisten" "$want" "$text" -e AGENTMESH_SERVER_LISTEN=0.0.0.0:8420 \
-    -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db -e "AGENTMESH_SERVER_SIGNING_KEY_URI=$scheme://none" "$IMAGE"
-done
-
 echo "step 3: version"
 got="$(docker run --rm --entrypoint /agentmesh "$IMAGE" version)"
 [ "$got" = smoke ] || fail "version printed \"$got\", want smoke"
@@ -74,9 +65,44 @@ echo "step 4: non-root user"
 got="$(docker inspect --format '{{.Config.User}}' "$IMAGE")"
 [ "$got" = nonroot ] || fail "image user is \"$got\", want nonroot"
 
+echo "step 4b: the server's CA, made with the image's binary"
+# The four commands of the CA bootstrap: the root tool, the request, the signature, the installation
+# (ADR 0019 section 7). Each runs once in a throwaway container on the bind mount; the redirect is on the host.
+CA_SETS=(-set root_certificate_file=/data/ca/root.pem -set intermediate_key_file=/data/intermediate.key
+  -set installation_name=smoke-installation)
+agentmesh_run() { docker run --rm --user "$(id -u):$(id -g)" -v "$DATA:/data" --entrypoint /agentmesh "$IMAGE" "$@"; }
+agentmesh_run ca init -dir /data/ca >/dev/null || fail "ca init failed"
+agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca csr -out /data/intermediate.csr >/dev/null ||
+  fail "ca csr failed"
+agentmesh_run ca sign -dir /data/ca /data/intermediate.csr >"$DATA/intermediate.pem" || fail "ca sign failed"
+agentmesh_run server admin -sqlite /data/agentmesh.db "${CA_SETS[@]}" ca install /data/intermediate.pem >/dev/null ||
+  fail "ca install failed"
+
+echo "step 4c: every key provider backend is in the image"
+# The image carries all four backends (BUILD_TAGS in the Dockerfile; open note signing-keys 1); an untagged binary
+# answers every scheme with "not in this build". With the placeholder URI "<scheme>://none" the three URI-checking
+# backends refuse it as a configuration error (exit 2); hashivault does too, because New checks its environment
+# (VAULT_ADDR, VAULT_TOKEN), which the container leaves unset. The start checks the root first, so the container
+# mounts the CA of step 4b. No key service is needed. The log must carry the
+# backend's own text; expect_exit also fails when the log quotes the URI ("://none").
+for spec in awskms:2:'agentmesh server: awskms:' gcpkms:2:'agentmesh server: gcpkms:' azurekms:2:'agentmesh server: azurekms:' \
+  hashivault:2:'agentmesh server: hashivault:'; do
+  scheme="${spec%%:*}"
+  rest="${spec#*:}"
+  want="${rest%%:*}"
+  text="${rest#*:}"
+  expect_exit "$NAME-nolisten" "$want" "$text" --user "$(id -u):$(id -g)" -v "$DATA:/data" \
+    -e AGENTMESH_SERVER_LISTEN=0.0.0.0:8420 -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db \
+    -e AGENTMESH_SERVER_ROOT_CERTIFICATE_FILE=/data/ca/root.pem -e AGENTMESH_SERVER_INSTALLATION_NAME=smoke-installation \
+    -e "AGENTMESH_SERVER_INTERMEDIATE_KEY_URI=$scheme://none" "$IMAGE"
+done
+
 echo "step 5: serving container"
-docker run -d --name "$NAME" -p 127.0.0.1::8420 \
+docker run -d --name "$NAME" -p 127.0.0.1::8420 --user "$(id -u):$(id -g)" -v "$DATA:/data" \
   -e AGENTMESH_SERVER_LISTEN=0.0.0.0:8420 -e AGENTMESH_SERVER_SQLITE=/data/agentmesh.db \
+  -e AGENTMESH_SERVER_ROOT_CERTIFICATE_FILE=/data/ca/root.pem \
+  -e AGENTMESH_SERVER_INTERMEDIATE_KEY_FILE=/data/intermediate.key \
+  -e AGENTMESH_SERVER_INSTALLATION_NAME=smoke-installation \
   "$IMAGE" -registration open >/dev/null
 port="$(docker port "$NAME" 8420/tcp | head -n 1 | sed 's/.*://')"
 [ -n "$port" ] || fail "no published port for $NAME"
@@ -131,7 +157,8 @@ case "$logs" in
   *':8420 (sqlite, registration open'*) ;;
   *) fail "log lacks the listening line with 'registration open': $logs" ;;
 esac
-case "$logs" in *'generated signing key'*) ;; *) fail "log lacks 'generated signing key': $logs" ;; esac
+case "$logs" in *', leaf '*) ;; *) fail "the listening line lacks ', leaf ': $logs" ;; esac
+case "$logs" in *'generated signing key'* | *'adopted signing key'*) fail "log has a retired signing key line: $logs" ;; esac
 
 echo "step 9: compose example validates; its .env is neither committed nor in the build context"
 git -C "$ROOT" check-ignore -q deploy/.env || fail "deploy/.env is not git-ignored"

@@ -23,7 +23,6 @@ import (
 	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/core/notify/pgnotify"
 	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
-	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/server"
 	"github.com/ericfitz/agentmesh/internal/server/config"
 	"github.com/ericfitz/agentmesh/internal/slackapi"
@@ -52,16 +51,15 @@ func RunWith(ctx context.Context, args []string, environ []string, stdout, stder
 // run is Run with the serving function injected, so a test can look at the
 // Config the flags produce without serving.
 //
-// State (Definition of Done D): the signing key set is loaded from, or its
-// first key created in, the Store (signingkeys.Service.EnsureActive). A second
-// start loads the active row and prints nothing; two starts at once end with
-// one row and one of them prints "generated signing key" (or "adopted signing
-// key" for an external provider); a start that fails afterwards leaves the
-// committed row for the next start; a corrupt row stops the start (exit 1)
-// and is never overwritten; an active row of another provider than the
-// configured one stops the start (exit 1, the message names the rotate
-// command) and is never changed. A key service that is down at start with no
-// active row exits 1, and the next start retries.
+// State (Definition of Done D, ADR 0019 section 5, "Server start"): the trust
+// settings, the root and the intermediate key are checked before the Store is
+// opened, so a start that fails there leaves nothing. signingkeys.New then
+// issues this process's leaf and stores its row: a second start issues another
+// leaf (the first still verifies until it expires or is revoked), replicas
+// start independently and each issues its own, a start that fails before the
+// row is stored leaves nothing and one that fails after it leaves an unused
+// leaf row. Exit 2 is a configuration or trust state an operator must change,
+// exit 1 a Store or key service failure the next start retries.
 func run(ctx context.Context, args []string, environ []string, stdout, stderr io.Writer, serve func(context.Context, Config) error) int {
 	if len(args) > 0 && args[0] == "admin" {
 		return RunAdmin(ctx, args[1:], environ, stdout, stderr)
@@ -122,6 +120,12 @@ func run(ctx context.Context, args []string, environ []string, stdout, stderr io
 		return fail(2, "%v", err)
 	}
 
+	// The root and the intermediate key are checked before the store is opened.
+	root, provider, err := openStartTrust(ctx, cfg, time.Now())
+	if err != nil {
+		return fail(startExit(err), "%v", err)
+	}
+
 	st, err := openStore(ctx, cfg, logger)
 	if err != nil {
 		return fail(1, "%v", err)
@@ -143,40 +147,25 @@ func run(ctx context.Context, args []string, environ []string, stdout, stderr io
 		}
 	}
 
-	// The signing key is a Store row (Milestone 5 choice 6). This Core exists
-	// only for it; Serve builds its own over the same Store.
+	// This Core exists only for the trust rules; Serve builds the serving one.
 	c, err := core.New(st, cc, core.Options{Now: time.Now, Logger: logger})
 	if err != nil {
 		return fail(1, "%v", err)
 	}
-	provider, err := openKeyProvider(cfg)
+	manager, err := signingkeys.New(ctx, signingkeys.Options{
+		Trust:        signingkeys.Trust{Core: c, Root: root, Installation: cfg.InstallationName, Provider: provider},
+		LeafValidity: cfg.LeafValidity(),
+	})
 	if err != nil {
-		// A key service that cannot be reached is a runtime failure (1); a
-		// bad URI or a backend not in this build is a configuration error (2).
-		if errors.Is(err, keyprovider.ErrUnavailable) {
-			return fail(1, "%v", err)
-		}
-		return fail(2, "%v", err)
+		return fail(startExit(startFailure(cfg, err)), "signing key: %v", err)
 	}
-	keysSvc := &signingkeys.Service{Core: c, Provider: provider, Settings: signingSettings(cfg)}
-	active, created, err := keysSvc.EnsureActive(ctx)
-	if err != nil {
-		return fail(1, "signing key: %v", err)
-	}
-	issuer, err := token.NewIssuer(ctx, issuerURL, signingkeys.NewKeyring(*keysSvc), time.Duration(cfg.TokenLifetimeSeconds)*time.Second, c.Now)
+	issuer, err := token.NewIssuer(ctx, issuerURL, manager, time.Duration(cfg.TokenLifetimeSeconds)*time.Second, c.Now)
 	if err != nil {
 		return fail(1, "issuer: %v", err)
 	}
-	// Serve's maintenance jobs rotate through this Service, so a rotation
-	// reloads this process's issuer at once.
-	keysSvc.OnChange = issuer.Invalidate
-	if created {
-		if provider.Name() == keyprovider.NameStore {
-			_, _ = fmt.Fprintf(stdout, "generated signing key %s\n", active.KID)
-		} else {
-			_, _ = fmt.Fprintf(stdout, "adopted signing key %s (%s %s)\n", active.KID, provider.Name(), keyprovider.KeyName(cfg.SigningKeyURI))
-		}
-	}
+	// A rotation, a renewal or a reload that changes the leaves reloads this
+	// process's issuer at once.
+	manager.SetOnChange(issuer.Invalidate)
 
 	ext := externalIssuers(cfg)
 
@@ -215,7 +204,7 @@ func run(ctx context.Context, args []string, environ []string, stdout, stderr io
 		Logger:       logger,
 		Registration: mode,
 		Issuer:       issuer,
-		SigningKeys:  keysSvc,
+		SigningKeys:  manager,
 		External:     ext,
 		Embedder:     embedder,
 		Inspector:    inspector,
@@ -228,8 +217,9 @@ func run(ctx context.Context, args []string, environ []string, stdout, stderr io
 			Logger:           logger,
 		},
 		Ready: func(a net.Addr) {
-			_, _ = fmt.Fprintf(stdout, "agentmesh server listening on %s (%s, registration %s, issuer %s, kid %s)\n",
-				a, engine, mode, issuer.URL(), issuer.KID())
+			thumb, notAfter := manager.Current()
+			_, _ = fmt.Fprintf(stdout, "agentmesh server listening on %s (%s, registration %s, issuer %s, leaf %s until %s)\n",
+				a, engine, mode, issuer.URL(), thumb, notAfter.UTC().Format(time.RFC3339))
 		},
 	})
 	if err != nil {

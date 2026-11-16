@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/testkit"
 
 	"github.com/ericfitz/agentmesh/internal/auth/assertion"
@@ -37,9 +38,10 @@ import (
 const replicaIssuer = "http://agentmesh.test"
 
 // replicaListeningRE captures address, engine, registration mode, issuer and
-// kid from `agentmesh server listening on ADDR (ENGINE, registration MODE,
-// issuer URL, kid KID)`. The issuer here has no port, unlike auth_test.go's.
-var replicaListeningRE = regexp.MustCompile(`listening on (\S+) \((\w+), registration (\w+), issuer (\S+), kid (\S+)\)`)
+// leaf from `agentmesh server listening on ADDR (ENGINE, registration MODE,
+// issuer URL, leaf THUMBPRINT until TIME)`. The issuer here has no port, unlike
+// auth_test.go's.
+var replicaListeningRE = regexp.MustCompile(`listening on (\S+) \((\w+), registration (\w+), issuer (\S+), leaf (\S+) until (\S+)\)`)
 
 // replica is one `agentmesh server` started through cmd.Run.
 type replica struct {
@@ -48,7 +50,7 @@ type replica struct {
 	done           chan int
 	base           string // http://127.0.0.1:port
 	mode, issuer   string
-	kid            string
+	leaf           string
 	client         *gen.ClientWithResponses
 }
 
@@ -69,7 +71,7 @@ func startReplica(t *testing.T, ctx context.Context, name string, e dbtest.Engin
 	for {
 		if m := replicaListeningRE.FindStringSubmatch(r.stdout.String()); m != nil {
 			r.base = "http://" + m[1]
-			r.mode, r.issuer, r.kid = m[3], m[4], m[5]
+			r.mode, r.issuer, r.leaf = m[3], m[4], m[5]
 			break
 		}
 		select {
@@ -200,9 +202,10 @@ func TestReplicasWake(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		st, _, dsn := openStoreDSN(t, e)
+		trust := serverTrust(t, st).Sets()
 
-		a := startReplica(t, ctx, "A", e, dsn)
-		b := startReplica(t, ctx, "B", e, dsn)
+		a := startReplica(t, ctx, "A", e, dsn, trust...)
+		b := startReplica(t, ctx, "B", e, dsn, trust...)
 		stopped := false
 		stop := func() {
 			if stopped {
@@ -228,11 +231,12 @@ func TestReplicasWake(t *testing.T) {
 				t.Errorf("replica %s: registration %q issuer %q, want open and %s", r.name, r.mode, r.issuer, replicaIssuer)
 			}
 		}
-		if a.kid != b.kid {
-			t.Errorf("kid differs: A %s, B %s", a.kid, b.kid)
+		// Each replica issues a leaf of its own (ADR 0019 section 5, "Server start").
+		if a.leaf == b.leaf {
+			t.Errorf("both replicas started on the leaf %s", a.leaf)
 		}
-		if n := strings.Count(a.stdout.String()+b.stdout.String(), "generated signing key"); n != 1 {
-			t.Errorf("%d replicas generated a signing key, want exactly 1:\nA: %s\nB: %s", n, a.stdout.String(), b.stdout.String())
+		if out := a.stdout.String() + b.stdout.String(); strings.Contains(out, "generated signing key") || strings.Contains(out, ", kid ") {
+			t.Errorf("a replica printed a line of the retired key set:\nA: %s\nB: %s", a.stdout.String(), b.stdout.String())
 		}
 		if t.Failed() {
 			t.FailNow()
@@ -242,7 +246,7 @@ func TestReplicasWake(t *testing.T) {
 		sam := newReplicaWho(t, "sam")
 		var patBusA, patBusB *remote.Bus
 
-		// (1) The signing key row and the issuer are shared (choice 8).
+		// (1) The issuer is shared and each replica accepts the other's leaf (choice 8).
 		t.Run("shared-key-and-issuer", func(t *testing.T) {
 			a.register(t, ctx, pat)
 			var bearer string
@@ -589,19 +593,23 @@ func bearerKID(t *testing.T, raw string) string {
 	return h.KID
 }
 
-// TestReplicasSigningKeyRotation: two replicas over one database and
-// rotations of the signing key set (issue #6 acceptance 4). The replicas and
-// the host commands run with signing_key_rotation_cooldown_seconds=1 (the
-// default 3600 s would refuse a rotation right after the key's creation) and
-// each leaf waits past that second before it rotates.
-func TestReplicasSigningKeyRotation(t *testing.T) {
+// TestReplicasTrust: two replicas over one database and forced renewals of the
+// leaf (ADR 0019 sections 4.8 and 4.9). One fixture serves the whole test: it
+// is installed once, its settings go to both replicas and to the host commands.
+// A forced renewal always revokes (Ruling 6) every unexpired leaf of the
+// configured key but the new one, the other replica's included, so each API
+// caller exchanges again afterwards and the other replica issues a leaf of its
+// own. The leaves are counted by scripts/m7-exit-checks.sh (3 on SQLite, 4 on
+// Postgres, where a watch can wake across the servers).
+func TestReplicasTrust(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		_, _, dsn := openStoreDSN(t, e)
-		const cooldown = "signing_key_rotation_cooldown_seconds=1"
-		a := startReplica(t, ctx, "A", e, dsn, "-set", cooldown)
-		b := startReplica(t, ctx, "B", e, dsn, "-set", cooldown)
+		rst, reopen, dsn := openStoreDSN(t, e)
+		fix := serverTrust(t, rst)
+		trust := fix.Sets()
+		a := startReplica(t, ctx, "A", e, dsn, trust...)
+		b := startReplica(t, ctx, "B", e, dsn, trust...)
 		stopped := false
 		stop := func() {
 			if stopped {
@@ -626,21 +634,140 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 		if e.Name == "postgres" {
 			storeFlag = "-postgres"
 		}
-		adminWith := func(cd string, args ...string) (int, string, string) {
+		admin := func(args ...string) (int, string, string) {
 			var so, se bytes.Buffer
-			code := cmd.RunAdmin(ctx, append([]string{storeFlag, dsn, "-set", cd}, args...), nil, &so, &se)
+			code := cmd.RunAdmin(ctx, append([]string{storeFlag, dsn}, args...), nil, &so, &se)
 			return code, so.String(), se.String()
 		}
-		admin := func(args ...string) (int, string, string) { return adminWith(cooldown, args...) }
-		pastCooldown := func() { time.Sleep(1200 * time.Millisecond) }
+		// loginEventually exchanges an assertion of w through r, retrying while the
+		// replica has no usable leaf (a revocation took it; its renewal loop
+		// issues the next one).
+		loginEventually := func(r *replica, w *replicaWho) (string, *remote.Bus) {
+			t.Helper()
+			deadline := time.Now().Add(30 * time.Second)
+			for {
+				at, err := remote.Token(ctx, r.client, w.assertionFor(t))
+				if err == nil {
+					return at.Token, remote.New(r.clientWith(t, at.Token))
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("token for %s through %s: %v", w.name, r.name, err)
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+		}
 
-		// (1) Two host rotations at once: one wins, one meets the cooldown.
-		t.Run("concurrent-rotate-one-active", func(t *testing.T) {
-			// The host commands use a 3 s cooldown here and the key is older
-			// than that, so both may rotate; a loser that stalls up to 3 s
-			// after the winner still meets the winner's young key.
-			const wide = "signing_key_rotation_cooldown_seconds=3"
-			time.Sleep(3200 * time.Millisecond)
+		root := newReplicaWho(t, "root")
+		a.register(t, ctx, root)
+		if code, so, se := admin(append(trust, "admins", "add", "-identity", "root")...); code != 0 {
+			t.Fatalf("admins add: %d %s%s", code, so, se)
+		}
+
+		// (1) A bearer minted through one replica is accepted by the other, in
+		// both directions: each replica reads the leaves the other stored.
+		t.Run("bearer-crosses-replicas", func(t *testing.T) {
+			bearerA, _ := a.login(t, ctx, root)
+			if status, body := getChannels(t, b.base, bearerA); status != http.StatusOK {
+				t.Fatalf("GET /v1/channels through B with A's bearer = %d %s, want 200", status, body)
+			}
+			bearerB, _ := b.login(t, ctx, root)
+			if status, body := getChannels(t, a.base, bearerB); status != http.StatusOK {
+				t.Fatalf("GET /v1/channels through A with B's bearer = %d %s, want 200", status, body)
+			}
+		})
+
+		// (2) A forced renewal through A (it revokes every other leaf, so the one
+		// that signed the caller's bearer too): A mints with the new leaf after an
+		// exchange, B (which has never seen it) accepts that bearer at once
+		// through the unknown-key reload, and having reloaded refuses the bearer
+		// of the leaf the renewal revoked and issues a new leaf of its own. A
+		// second renewal makes A refuse the first one's bearer at once and B
+		// within one reload interval.
+		t.Run("forced-renewal-revokes-across", func(t *testing.T) {
+			bearerOld, rootBusA := loginEventually(a, root)
+			rot, err := rootBusA.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
+			if err != nil {
+				t.Fatalf("RotateSigningKey through A: %v", err)
+			}
+			if status, body := getChannels(t, a.base, bearerOld); status != http.StatusUnauthorized {
+				t.Fatalf("A with the old leaf's bearer = %d %s, want 401", status, body)
+			}
+			bearer2, _ := a.login(t, ctx, root)
+			if got := bearerKID(t, bearer2); got != rot.Current.Thumbprint {
+				t.Fatalf("A minted with kid %s, want the new current %s", got, rot.Current.Thumbprint)
+			}
+			if status, body := getChannels(t, a.base, bearer2); status != http.StatusOK {
+				t.Fatalf("GET /v1/channels through A = %d %s, want 200", status, body)
+			}
+			if status, body := getChannels(t, b.base, bearer2); status != http.StatusOK {
+				t.Fatalf("GET /v1/channels through B with the new leaf's bearer = %d %s, want 200 (unknown-key reload)", status, body)
+			}
+
+			// B, having reloaded, refuses a bearer of a leaf A's renewal revoked and
+			// has issued a new leaf of its own: its key list names a current leaf
+			// that is not the one it started with and not A's.
+			deadline := time.Now().Add(token.ReloadInterval + 20*time.Second)
+			for {
+				set, err := remote.New(b.clientWith(t, bearer2)).ListSigningKeys(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(set.Keys) > 0 && set.Keys[0].State == ab2bus.SigningKeyCurrent &&
+					set.Keys[0].Thumbprint != b.leaf && set.Keys[0].Thumbprint != rot.Current.Thumbprint {
+					if status, body := getChannels(t, b.base, bearerOld); status != http.StatusUnauthorized {
+						t.Fatalf("B with A's old leaf's bearer = %d %s, want 401", status, body)
+					}
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("B has no new current leaf of its own after %s: %+v", token.ReloadInterval+20*time.Second, set)
+				}
+				time.Sleep(500 * time.Millisecond)
+			}
+
+			// open note: signing-keys 9
+			if _, err := remote.New(a.clientWith(t, bearer2)).RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{}); err != nil {
+				t.Fatalf("second rotation through A: %v", err)
+			}
+			if status, body := getChannels(t, a.base, bearer2); status != http.StatusUnauthorized {
+				t.Fatalf("A with the revoked leaf's bearer = %d %s, want 401 at once", status, body)
+			}
+			deadline = time.Now().Add(token.ReloadInterval + 5*time.Second)
+			for {
+				status, body := getChannels(t, b.base, bearer2)
+				if status == http.StatusUnauthorized {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("B still accepts the revoked leaf's bearer after %s: %d %s", token.ReloadInterval+5*time.Second, status, body)
+				}
+				time.Sleep(500 * time.Millisecond)
+			}
+		})
+
+		// (3) Two changes at once. First two host rotations (section 4.8): the
+		// trust lock admits one at a time, so each exits 0 or, meeting the lock, 1
+		// saying to try again; at least one wins, and afterwards every leaf that
+		// was there before the race is revoked. Then two forced renewals at once,
+		// one through each replica: each ends as a success or as a retryable
+		// unavailable (never an error that is not retryable); a round in which
+		// one of them met the lock is awaited (a renewal that starts after the
+		// other's end meets no lock, so a round can pass with two successes); the
+		// loser, retried with a fresh bearer, succeeds.
+		t.Run("two-forced-renewals", func(t *testing.T) {
+			st, err := reopen()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hc, err := core.New(st, core.Defaults(), core.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var before []string
+			for range 3 {
+				_, leaf := fix.Leaf(t, hc, time.Now(), 24*time.Hour)
+				before = append(before, pki.Thumbprint(leaf.Raw))
+			}
 			var codes [2]int
 			var errs [2]string
 			var wg sync.WaitGroup
@@ -648,88 +775,137 @@ func TestReplicasSigningKeyRotation(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					codes[i], _, errs[i] = adminWith(wide, "signing-key", "rotate")
+					codes[i], _, errs[i] = admin(append(trust, "signing-key", "rotate")...)
 				}()
 			}
 			wg.Wait()
-			zero, one := 0, 0
+			zero := 0
 			for i, c := range codes {
 				switch c {
 				case 0:
 					zero++
 				case 1:
-					one++
-					if !strings.Contains(errs[i], "the next rotation is allowed at") {
-						t.Errorf("the losing rotation's stderr = %q, want the cooldown text", errs[i])
+					if !strings.Contains(errs[i], "try again") {
+						t.Errorf("the losing rotation's stderr = %q, want the retry text", errs[i])
 					}
+				default:
+					t.Errorf("rotation %d: exit %d, stderr %q", i, c, errs[i])
 				}
 			}
-			if zero != 1 || one != 1 {
-				t.Fatalf("exit codes %v (stderr %q, %q), want exactly one 0 and one 1", codes, errs[0], errs[1])
+			if zero == 0 {
+				t.Fatalf("exit codes %v (stderr %q, %q), want at least one 0", codes, errs[0], errs[1])
 			}
-			code, out, se := admin("signing-key", "list")
+			code, out, se := admin(append(trust, "signing-key", "list")...)
 			if code != 0 {
 				t.Fatalf("list: %d %s", code, se)
 			}
-			if n := strings.Count(out, " active "); n != 1 || strings.Count(out, " retiring ") != 1 {
-				t.Fatalf("list after the race:\n%s\nwant one active and one retiring key", out)
-			}
-		})
-
-		root := newReplicaWho(t, "root")
-		a.register(t, ctx, root)
-		if code, so, se := admin("admins", "add", "-identity", "root"); code != 0 {
-			t.Fatalf("admins add: %d %s%s", code, so, se)
-		}
-		_, rootBusA := a.login(t, ctx, root)
-
-		// (2) A rotation through A's API: A mints with the new kid, and B
-		// (which has never seen it) accepts the bearer at once.
-		var bearer2 string
-		t.Run("new-kid-verifies-on-both", func(t *testing.T) {
-			pastCooldown()
-			rot, err := rootBusA.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
-			if err != nil {
-				t.Fatalf("RotateSigningKey through A: %v", err)
-			}
-			bearer2, _ = a.login(t, ctx, root)
-			if got := bearerKID(t, bearer2); got != rot.Active.KID {
-				t.Fatalf("A minted with kid %s, want the new active %s", got, rot.Active.KID)
-			}
-			if status, body := getChannels(t, a.base, bearer2); status != http.StatusOK {
-				t.Fatalf("GET /v1/channels through A = %d %s, want 200", status, body)
-			}
-			if status, body := getChannels(t, b.base, bearer2); status != http.StatusOK {
-				t.Fatalf("GET /v1/channels through B with the new kid's bearer = %d %s, want 200 (unknown-kid reload)", status, body)
-			}
-		})
-		if bearer2 == "" {
-			t.Fatal("no bearer from the new key; the revoke leaf cannot run")
-		}
-
-		// (3) A revoking rotation: A refuses the revoked key's bearer at once,
-		// B within one reload interval plus the unknown-kid margin.
-		t.Run("revoke-propagates", func(t *testing.T) {
-			// open note: signing-keys 9
-			rootA2 := remote.New(a.clientWith(t, bearer2))
-			if _, err := rootA2.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{RevokePrevious: true}); err != nil {
-				t.Fatalf("revoking rotation through A: %v", err)
-			}
-			if status, body := getChannels(t, a.base, bearer2); status != http.StatusUnauthorized {
-				t.Fatalf("A with the revoked key's bearer = %d %s, want 401 at once", status, body)
-			}
-			deadline := time.Now().Add(token.ReloadInterval + 5*time.Second)
-			for {
-				status, body := getChannels(t, b.base, bearer2)
-				if status == http.StatusUnauthorized {
-					return
+			lines := strings.Split(out, "\n")
+			for _, tp := range append(before, a.leaf, b.leaf) {
+				found := false
+				for _, l := range lines {
+					if strings.Contains(l, tp) {
+						found = true
+						if !strings.HasSuffix(l, " revoked") {
+							t.Errorf("the leaf %s is not revoked after the race: %q", tp, l)
+						}
+					}
 				}
-				if time.Now().After(deadline) {
-					t.Fatalf("B still accepts the revoked key's bearer after %s: %d %s", token.ReloadInterval+5*time.Second, status, body)
+				if !found {
+					t.Errorf("list after the race lacks the leaf %s:\n%s", tp, out)
 				}
-				time.Sleep(500 * time.Millisecond)
+			}
+
+			met := false
+			for round := 0; round < 8 && !met; round++ {
+				_, busA := loginEventually(a, root)
+				_, busB := loginEventually(b, root)
+				var errs [2]error
+				var wg sync.WaitGroup
+				start := make(chan struct{})
+				for i, bus := range []*remote.Bus{busA, busB} {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						<-start
+						_, errs[i] = bus.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{})
+					}()
+				}
+				close(start)
+				wg.Wait()
+				won, lost := 0, -1
+				for i, err := range errs {
+					if err == nil {
+						won++
+						continue
+					}
+					var be *ab2bus.Error
+					if !errors.As(err, &be) || be.Code != ab2bus.CodeUnavailable || !be.Retryable {
+						t.Fatalf("renewal %d: %v, want success or a retryable unavailable", i, err)
+					}
+					lost = i
+				}
+				if won == 0 {
+					t.Fatalf("no renewal won: %v", errs)
+				}
+				if lost < 0 {
+					continue
+				}
+				met = true
+				r := []*replica{a, b}[lost]
+				_, retry := loginEventually(r, root)
+				if _, err := retry.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{}); err != nil {
+					t.Fatalf("the retry of the renewal that met the lock: %v", err)
+				}
+			}
+			if !met {
+				t.Fatal("in 8 rounds of two renewals at once, none met the trust lock")
 			}
 		})
+
+		// (4) A watch armed on B with the number it holds wakes (count 0, a
+		// different number) within 5 seconds of a forced renewal through A: the
+		// doorbell crossed the servers. Postgres only, as the cross-server leaves
+		// of TestReplicasWake: two servers over one SQLite file share no hints.
+		if e.Name == "postgres" {
+			t.Run("watch-wakes-across-replicas", func(t *testing.T) {
+				_, busA := loginEventually(a, root)
+				_, busB := loginEventually(b, root)
+				sess, err := busB.Open(ctx, ab2bus.OpenSessionInput{})
+				if err != nil {
+					t.Fatalf("Open through B: %v", err)
+				}
+				defer func() { _ = busB.Close(context.Background(), ab2bus.CloseSessionInput{Session: sess.ID}) }()
+				if sess.TrustNumber == nil {
+					t.Fatal("the session of B carries no trust number")
+				}
+				num := *sess.TrustNumber
+				out := make(chan watchOutcome, 1)
+				go func() {
+					res, err := busB.Watch(ctx, ab2bus.WatchInput{Session: sess.ID, Timeout: 5 * time.Second, TrustNumber: &num})
+					out <- watchOutcome{res, err, time.Now()}
+				}()
+				waitWatchRegistered(t, ctx, rst, sess.ID, "")
+				time.Sleep(300 * time.Millisecond)
+				renewed := time.Now()
+				if _, err := busA.RotateSigningKey(ctx, ab2bus.RotateSigningKeyInput{}); err != nil {
+					t.Fatalf("RotateSigningKey through A: %v", err)
+				}
+				select {
+				case o := <-out:
+					if o.err != nil {
+						t.Fatalf("watch on B: %v", o.err)
+					}
+					if !o.res.Woke || o.res.Count != 0 || o.res.TrustNumber == nil || *o.res.TrustNumber == num {
+						t.Fatalf("watch on B = %+v (held number %d), want woke, count 0 and another number", o.res, num)
+					}
+					if d := o.at.Sub(renewed); d > 5*time.Second {
+						t.Fatalf("watch on B woke %v after the renewal, want within 5 s", d)
+					}
+				case <-time.After(12 * time.Second):
+					t.Fatal("watch on B did not return")
+				}
+			})
+		}
 		stop()
 	})
 }
@@ -743,7 +919,7 @@ func TestReplicasInspection(t *testing.T) {
 	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		_, _, dsn := openStoreDSN(t, e)
+		ist, _, dsn := openStoreDSN(t, e)
 
 		var requests, failing atomic.Int64
 		insp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -770,7 +946,7 @@ func TestReplicasInspection(t *testing.T) {
 		}))
 		defer insp.Close()
 
-		set := []string{"-set", "inspection_endpoint=" + insp.URL}
+		set := append([]string{"-set", "inspection_endpoint=" + insp.URL}, serverTrust(t, ist).Sets()...)
 		a := startReplica(t, ctx, "A", e, dsn, set...)
 		b := startReplica(t, ctx, "B", e, dsn, set...)
 		defer func() {

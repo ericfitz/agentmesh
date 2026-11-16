@@ -13,7 +13,7 @@ import (
 // With the awskms tag the awskms scheme opens its provider; every other
 // scheme is still refused with its own tag.
 func TestAwskmsBackendIsRegistered(t *testing.T) {
-	p, err := openKeyProvider(config.Config{SigningKeyURI: "awskms:///alias/agentmesh"})
+	p, err := openIntermediateProvider(config.Config{IntermediateKeyURI: "awskms:///alias/agentmesh"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestAwskmsBackendIsRegistered(t *testing.T) {
 		t.Fatalf("provider %q", p.Name())
 	}
 	// A malformed key for the backend is refused, not accepted lazily.
-	if _, err := openKeyProvider(config.Config{SigningKeyURI: "awskms:///not-a-key"}); err == nil {
+	if _, err := openIntermediateProvider(config.Config{IntermediateKeyURI: "awskms:///not-a-key"}); err == nil {
 		t.Fatal("a malformed awskms URI was accepted")
 	}
 	for _, scheme := range keyprovider.Schemes() {
@@ -31,7 +31,7 @@ func TestAwskmsBackendIsRegistered(t *testing.T) {
 		if _, ok := keyBackends[scheme]; ok {
 			continue // another tag is on too
 		}
-		_, err := openKeyProvider(config.Config{SigningKeyURI: scheme + "://x"})
+		_, err := openIntermediateProvider(config.Config{IntermediateKeyURI: scheme + "://x"})
 		want := "the " + scheme + " backend is not in this build (build with -tags " + scheme + ")"
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err %v, want %q", scheme, err, want)

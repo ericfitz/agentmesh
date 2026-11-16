@@ -79,6 +79,11 @@ func open(ctx context.Context, o client.Options, stderr io.Writer) (*client.Conn
 		// the TUI's screen.
 		o.OpenLogger = slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	}
+	if o.Notice == nil {
+		// Trust events (first contact, a replaced root, a refused CRL) are for
+		// the operator, never stdout, where the result's JSON goes.
+		o.Notice = func(line string) { _, _ = fmt.Fprintf(stderr, "agentmesh: %s\n", line) }
+	}
 	c, err := client.Open(ctx, o)
 	if err != nil {
 		fail(stderr, err)
@@ -92,6 +97,12 @@ func open(ctx context.Context, o client.Options, stderr io.Writer) (*client.Conn
 		testConn(c)
 	}
 	return c, 0
+}
+
+// acceptNewRootFlag registers -accept-new-root, the flag of register, login and
+// login -human only (ADR 0019 section 4.13): no other command can replace a pin.
+func acceptNewRootFlag(fs *flag.FlagSet, o *client.Options) {
+	fs.BoolVar(&o.AcceptNewRoot, "accept-new-root", false, "trust the server's new root or installation name and replace the pinned one (prints the old and the new)")
 }
 
 // processTable is the process table that watch, wait and the hooks locate

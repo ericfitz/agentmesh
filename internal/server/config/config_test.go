@@ -2,14 +2,14 @@ package config
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ericfitz/agentmesh/internal/core"
-	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -303,80 +303,37 @@ func TestSlackSettings(t *testing.T) {
 	}
 }
 
-// open note: signing-keys 6
-func TestSigningKeyDefaults(t *testing.T) {
-	d := Default()
-	if d.SigningKeyURI != "" || d.SigningKeyRotationHours != 720 || d.SigningKeyRotationCooldownSeconds != 3600 {
-		t.Errorf("signing key defaults: %q %d %d", d.SigningKeyURI, d.SigningKeyRotationHours, d.SigningKeyRotationCooldownSeconds)
-	}
-	if err := valid().Validate(); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSigningKeyURIValidation(t *testing.T) {
-	for _, uri := range []string{"", "awskms://x", "gcpkms://x", "azurekms://x", "hashivault://x"} {
-		c := valid()
-		c.SigningKeyURI = uri
-		if err := c.Validate(); err != nil {
-			t.Errorf("signing_key_uri %q: %v", uri, err)
-		}
-	}
-	for _, uri := range []string{"gcs://x", "awskms", "AWSKMS://x", "awskms://", "://x"} {
-		c := valid()
-		c.SigningKeyURI = uri
-		err := c.Validate()
-		if err == nil || !strings.Contains(err.Error(), "signing_key_uri") {
-			t.Errorf("signing_key_uri %q: err %v, want a signing_key_uri refusal", uri, err)
-			continue
-		}
-		if uri != "awskms://" {
-			for _, s := range []string{"awskms", "gcpkms", "azurekms", "hashivault"} {
-				if !strings.Contains(err.Error(), s) {
-					t.Errorf("signing_key_uri %q: %q does not name %s", uri, err, s)
-				}
+// TestUnknownSettingRefused: the three settings of the old key set are gone
+// (ADR 0019 section 4.16), so each is an unknown setting in every source.
+func TestUnknownSettingRefused(t *testing.T) {
+	for _, name := range []string{"signing_key_uri", "signing_key_rotation_hours", "signing_key_rotation_cooldown_seconds"} {
+		for _, s := range Settings() {
+			if s == name {
+				t.Errorf("Settings() still lists %s", name)
 			}
 		}
-	}
-}
-
-func TestSigningKeyRotationBounds(t *testing.T) {
-	for _, h := range []int{0, 48, 720, 8760} {
-		c := valid()
-		c.SigningKeyRotationHours = h
-		if err := c.Validate(); err != nil {
-			t.Errorf("signing_key_rotation_hours %d: %v", h, err)
+		_, err := Load("", nil, Overrides{name: "1"})
+		if err == nil || !strings.Contains(err.Error(), "unknown setting") || !strings.Contains(err.Error(), name) {
+			t.Errorf("-set %s: err %v, want unknown setting", name, err)
 		}
-	}
-	for _, h := range []int{1, 47, 8761, -1} {
-		c := valid()
-		c.SigningKeyRotationHours = h
-		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "signing_key_rotation_hours") {
-			t.Errorf("signing_key_rotation_hours %d: err %v", h, err)
+		_, err = Load("", []string{EnvName(name) + "=1"}, nil)
+		if err == nil || !strings.Contains(err.Error(), "unknown setting") {
+			t.Errorf("environment %s: err %v, want unknown setting", name, err)
 		}
-	}
-	for _, s := range []int{1, 3600, 86400} {
-		c := valid()
-		c.SigningKeyRotationCooldownSeconds = s
-		if err := c.Validate(); err != nil {
-			t.Errorf("signing_key_rotation_cooldown_seconds %d: %v", s, err)
+		file := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(file, []byte(`{"`+name+`": 1}`), 0o600); err != nil {
+			t.Fatal(err)
 		}
-	}
-	for _, s := range []int{0, -1, 86401} {
-		c := valid()
-		c.SigningKeyRotationCooldownSeconds = s
-		if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "signing_key_rotation_cooldown_seconds") {
-			t.Errorf("signing_key_rotation_cooldown_seconds %d: err %v", s, err)
+		_, err = Load(file, nil, nil)
+		if err == nil || !strings.Contains(err.Error(), "unknown field") || !strings.Contains(err.Error(), name) {
+			t.Errorf("config file %s: err %v, want an unknown field refusal", name, err)
 		}
 	}
 }
 
-// The removal time of a retiring key assumes no bearer lives longer than
-// MaxBearerLifetime, so it must be the upper bound both lifetimes validate to.
-func TestMaxBearerLifetimeIsTheCeiling(t *testing.T) {
-	if got := time.Duration(MaxTokenLifetimeSeconds) * time.Second; got != signingkeys.MaxBearerLifetime {
-		t.Fatalf("MaxTokenLifetimeSeconds is %v, signingkeys.MaxBearerLifetime %v", got, signingkeys.MaxBearerLifetime)
-	}
+// token_lifetime_seconds and an issuer's human_token_lifetime_seconds validate
+// up to MaxTokenLifetimeSeconds and no further.
+func TestTokenLifetimeCeiling(t *testing.T) {
 	c := valid()
 	c.TokenLifetimeSeconds = MaxTokenLifetimeSeconds + 1
 	if err := c.Validate(); err == nil {

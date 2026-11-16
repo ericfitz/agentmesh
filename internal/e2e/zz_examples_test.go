@@ -8,8 +8,8 @@ package e2e_test
 //
 // The file name sorts last in the package (tests run in file-name order, the
 // package doc): the adminReset row wipes the bus data of fixture 1 and the
-// rotateSigningKey row needs the fixture's 1 s signing-key cooldown to have
-// passed behind TestArazzoWorkflows' rotation (ruling 10).
+// rotateSigningKey row, the last, revokes the key that signed the replay's
+// bearer.
 //
 // The rows are a slice in replay order, one per (operation, example name)
 // with coverage checked both ways. A request is built from every parameter's
@@ -256,7 +256,18 @@ func exampleRows() []exRow {
 		{op: "wellKnown", status: 200},
 		{op: "authorizationServerMetadata", status: 200},
 		{op: "openidConfiguration", status: 200},
-		{op: "discover", status: 200, emptyOK: []string{"/issuers"}}, // the e2e servers configure no external issuer
+		// The example's trust.leaf_crls is filled, which a server answers only
+		// after a leaf has been revoked: a throwaway administrator forces a
+		// renewal first, so the row does not depend on what ran before it.
+		// The replay's own bearer is signed after this, by the new leaf.
+		{op: "discover", status: 200, emptyOK: []string{"/issuers"}, // the e2e servers configure no external issuer
+			setup: func(c *replay) {
+				saved := c.tg.bearer
+				defer func() { c.tg.bearer = saved }()
+				c.registerAndLogin(c.tg, "acme-renewer")
+				c.makeAdmin(c.tg, "acme-renewer")
+				c.must(http.MethodPost, "/v1/admin/signing-keys/rotate", nil, http.StatusOK)
+			}},
 		{op: "jwks", status: 200},
 		{op: "register", status: 201,
 			setup: func(c *replay) {
@@ -322,9 +333,10 @@ func exampleRows() []exRow {
 			},
 			after: func(c *replay, body any) { c.sent = memberInt(c.t, body, "seq") }},
 		{op: "peek", status: 200, live: sessionPath},
-		// Two messages the session itself sent are pending and include_own is
-		// true (ruling 15), so the wake comes at once, after the merge window (Decision 45, 2 s).
-		{op: "watch", status: 200,
+		// The example's trust_number is not the server's, so the watch wakes at
+		// once for the trust numbers (Decision 27): count 0, no channels, no merge
+		// window, although two messages the session sent are pending.
+		{op: "watch", status: 200, emptyOK: []string{"/channels"},
 			live: with(sessionPath, "/query/after", func(c *replay) any { return c.reply - 1 })},
 		{op: "receive", status: 200,
 			emptyOK: []string{"/gaps"}, // gaps appear only after budget eviction deletes unread messages
@@ -409,9 +421,6 @@ func exampleRows() []exRow {
 			emptyOK: []string{"/notices", "/channels/0/capabilities"}},
 		{op: "adminUsage", status: 200},
 		{op: "listSigningKeys", status: 200},
-		// The fixture's cooldown is 1 s from the key's creation; revoke_previous
-		// is false in the example, so the bearer stays valid.
-		{op: "rotateSigningKey", status: 200, setup: func(*replay) { time.Sleep(1100 * time.Millisecond) }},
 		{op: "doneScope", status: 200},
 		{op: "createBridge", slack: true, status: 200,
 			emptyOK: []string{"/not_invited"}, // the replay registers dana in the Slack fake, so every invite succeeds
@@ -435,6 +444,9 @@ func exampleRows() []exRow {
 		{op: "getBridge", slack: true, status: 200, live: map[string]liveFn{"/path/channel": lit(bridgedName)}},
 		{op: "removeBridge", slack: true, status: 204, live: map[string]liveFn{"/path/channel": lit(bridgedName)}},
 		{op: "adminReset", status: 204},
+		// Last: the rotation always revokes the key that signed the replay's
+		// bearer, so no row on fixture 1 can follow it (ADR 0019 Ruling 6).
+		{op: "rotateSigningKey", status: 200},
 	}
 }
 

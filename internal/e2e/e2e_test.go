@@ -39,14 +39,17 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/auth/token"
+	"github.com/ericfitz/agentmesh/internal/core"
+	"github.com/ericfitz/agentmesh/internal/core/notify"
 	"github.com/ericfitz/agentmesh/internal/respcheck"
 	"github.com/ericfitz/agentmesh/internal/server"
 	"github.com/ericfitz/agentmesh/internal/sessionstate"
+	"github.com/ericfitz/agentmesh/internal/store/sqlite"
 )
 
 var (
@@ -229,9 +232,47 @@ func runMain(m *testing.M) int {
 }
 
 var (
-	listeningRE = regexp.MustCompile(`agentmesh server listening on (\S+) \((sqlite|postgres), registration (\S+), issuer (\S+), kid (\S+)\)`)
+	listeningRE = regexp.MustCompile(`agentmesh server listening on (\S+) \((sqlite|postgres), registration (\S+), issuer (\S+), leaf (\S+) until (\S+)\)`)
 	tokenRE     = regexp.MustCompile(`(?m)^token: (abe_\S+)$`)
 )
+
+// bootstrapCA gives the server that will run over the SQLite file sqlite a CA,
+// through the built binary alone (ADR 0019 section 7): `ca init` and `ca sign`
+// in dir, `server admin ca csr` and `ca install` against the file. It returns
+// the server's three trust settings as arguments. home is any directory the
+// binary may use as its own home. The commands are not idempotent: a second call
+// for one dir fails at `ca init`.
+func bootstrapCA(home, dir, sqlite string) ([]string, error) {
+	rootDir := filepath.Join(dir, "ca")
+	sets := []string{
+		"-set", "root_certificate_file=" + filepath.Join(rootDir, "root.pem"),
+		"-set", "intermediate_key_file=" + filepath.Join(dir, "intermediate.key"),
+		"-set", "installation_name=e2e-installation",
+	}
+	csr := filepath.Join(dir, "intermediate.csr")
+	cert := filepath.Join(dir, "intermediate.pem")
+	admin := func(args ...string) []string {
+		return append(append([]string{"server", "admin", "-sqlite", sqlite}, sets...), append([]string{"ca"}, args...)...)
+	}
+	steps := [][]string{
+		{"ca", "init", "-dir", rootDir},
+		admin("csr", "-out", csr),
+		{"ca", "sign", "-dir", rootDir, csr},
+		admin("install", cert),
+	}
+	for i, a := range steps {
+		r := run(home, a...)
+		if r.code != 0 {
+			return nil, fmt.Errorf("agentmesh %s: exit %d, stdout %q, stderr %q", strings.Join(a, " "), r.code, r.stdout, r.err)
+		}
+		if i == 2 {
+			if err := os.WriteFile(cert, []byte(r.stdout), 0o600); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return sets, nil
+}
 
 func startFixture(root string) (*fixture, error) {
 	f := &fixture{root: root, sqlite: filepath.Join(root, "server.sqlite"),
@@ -258,7 +299,12 @@ func startFixture(root string) (*fixture, error) {
 	f.proxy.Start()
 	// maintenance_interval_seconds=3600 (the maximum): no maintenance tick runs during the
 	// package, so TestRequestExamples' health row sees an empty /maintenance/jobs on every machine.
-	f.srv = exec.Command(binPath, "server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "signing_key_rotation_cooldown_seconds=1", "-set", "maintenance_interval_seconds=3600", "-set", "issuer="+f.proxy.URL)
+	trust, err := bootstrapCA(filepath.Join(root, "home-server"), filepath.Join(root, "trust"), f.sqlite)
+	if err != nil {
+		return f, err
+	}
+	srvArgs := append([]string{"server", "-listen", "0.0.0.0:0", "-sqlite", f.sqlite, "-set", "session_retention_hours=1", "-set", "maintenance_interval_seconds=3600", "-set", "issuer=" + f.proxy.URL}, trust...)
+	f.srv = exec.Command(binPath, srvArgs...)
 	f.srv.Env = environFor(filepath.Join(root, "home-server"))
 	f.srv.Stdout, f.srv.Stderr = f.srvOut, f.srvErr
 	if err := f.srv.Start(); err != nil {
@@ -703,14 +749,7 @@ func TestSection24Sequence(t *testing.T) {
 			disc, _ := entry["discovery"].(map[string]any)
 			issuerURL, _ := disc["issuer"].(string)
 			old, _ := entry["access_token"].(string)
-			key, err := keys.Generate(keys.EdDSA)
-			if err != nil {
-				t.Fatal(err)
-			}
-			iss, err := token.NewIssuer(context.Background(), issuerURL, token.StaticKeys(key), time.Hour, time.Now)
-			if err != nil {
-				t.Fatal(err)
-			}
+			iss := foreignIssuer(t, issuerURL)
 			forged, _, err := iss.Mint(context.Background(), token.MintInput{Identity: "pat", Kind: token.KindAgent})
 			if err != nil {
 				t.Fatal(err)
@@ -1072,4 +1111,25 @@ func TestExitCodeTable(t *testing.T) {
 		p.signal(syscall.SIGTERM)
 		expectExit(t, "watch after SIGTERM", p, 3, 5*time.Second)
 	})
+}
+
+// foreignIssuer is an issuer at url over a leaf of its own root and its own
+// throwaway database, on the real clock: it mints bearers the server under
+// test does not know.
+func foreignIssuer(t *testing.T, url string) *token.Issuer {
+	t.Helper()
+	st, err := sqlite.Open(context.Background(), filepath.Join(t.TempDir(), "foreign.sqlite"), sqlite.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	c, err := core.New(st, core.Defaults(), core.Options{Notifier: notify.NewMemory()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := token.NewIssuer(context.Background(), url, trusttest.New(t, time.Time{}).Manager(t, c), time.Hour, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return iss
 }

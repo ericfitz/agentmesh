@@ -110,6 +110,9 @@ func oauthBound(src string) bound {
 func jwtBound(src string) bound {
 	return bound{MaxLength: n(assertion.MaxTokenBytes), Unit: bytesUnit, Source: "assertion.MaxTokenBytes; " + src}
 }
+func trustNumberBound(src string) bound {
+	return bound{Format: "int64", Min: f(0), Max: f(rules.MaxTrustNumber), Source: "rules.MaxTrustNumber; rules.CheckTrustNumber; " + src}
+}
 func countBound(max int, setting, src string) bound {
 	return bound{Format: "int32", Min: f(0), Max: f(float64(max)), Setting: setting, Source: src}
 }
@@ -149,6 +152,7 @@ var bounds = map[string]bound{
 	"operations/unsubscribeTags/query/pattern":   {MaxItems: n(rules.MaxTags), MinItems: 1, Unit: itemsUnit, Source: "rules.NormalizeTagPatterns; unsubscribeTags"},
 	"operations/unsubscribeTags/query/pattern[]": patternItemBound("unsubscribeTags"),
 	"operations/watch/query/after":               seqBound("watch after"),
+	"operations/watch/query/trust_number":        trustNumberBound("watch trust_number"),
 	"operations/watch/query/timeout":             {Format: "double", Min: f(0), Max: f(float64(core.WatchSecondsCeiling)), Unit: secUnit, Setting: "watch_max_seconds", Source: "core.WatchSecondsCeiling"},
 
 	// inline request bodies
@@ -184,17 +188,23 @@ var bounds = map[string]bound{
 	"schemas/JWK.x":   {MaxLength: n(keys.MaxJWKMemberBytes), Unit: bytesUnit, Source: "keys.CheckJWKStrings"},
 	"schemas/JWK.y":   {MaxLength: n(keys.MaxJWKMemberBytes), Unit: bytesUnit, Source: "keys.CheckJWKStrings"},
 
+	"schemas/JWK.x5c":      {MaxItems: n(keys.MaxJWKChainCertificates), Unit: itemsUnit, Source: "keys.MaxJWKChainCertificates; keys.CheckJWKCertificateMembers refuses the member at register"},
+	"schemas/JWK.x5c[]":    {MaxLength: n(keys.MaxJWKCertificateBytes), Unit: codePoints, Source: "keys.MaxJWKCertificateBytes; keys.CheckJWKCertificateMembers refuses the member at register"},
+	"schemas/JWK.x5t#S256": {MaxLength: n(keys.MaxJWKMemberBytes), Unit: bytesUnit, Source: "keys.MaxJWKMemberBytes; keys.CheckJWKCertificateMembers refuses the member at register"},
+
 	"schemas/OfferedCursor.channel": nameBound("offered cursor channel"),
 	"schemas/OfferedCursor.seq":     seqBound("offered cursor seq"),
 
 	"schemas/OpenSessionRequest.cursors":      arrayBound("openSession cursors"),
 	"schemas/OpenSessionRequest.hint":         nameBound("session hint"),
+	"schemas/OpenSessionRequest.trust_number": trustNumberBound("openSession trust_number"),
 	"schemas/OpenSessionRequest.resume_token": {MinLength: sessions.ResumeTokenLen, MaxLength: n(sessions.ResumeTokenLen), Pattern: sessions.ResumeTokenPattern, Unit: codePoints, Source: "sessions.ResumeTokenLen, ResumeTokenPattern"},
 
-	"schemas/ReceiveRequest.ack":        tokenBound("delivery.Receive ack"),
-	"schemas/ReceiveRequest.channels":   arrayBound("receive channels"),
-	"schemas/ReceiveRequest.channels[]": nameBound("receive channel"),
-	"schemas/ReceiveRequest.count":      countBound(core.ReceiveCountCeiling, "receive_max_count", "core.ReceiveCountCeiling"),
+	"schemas/ReceiveRequest.ack":          tokenBound("delivery.Receive ack"),
+	"schemas/ReceiveRequest.channels":     arrayBound("receive channels"),
+	"schemas/ReceiveRequest.channels[]":   nameBound("receive channel"),
+	"schemas/ReceiveRequest.count":        countBound(core.ReceiveCountCeiling, "receive_max_count", "core.ReceiveCountCeiling"),
+	"schemas/ReceiveRequest.trust_number": trustNumberBound("receive trust_number"),
 
 	"schemas/RegisterRequest.enrollment_token": tokenBound("identities.Register"),
 	"schemas/RegisterRequest.identity":         nameBound("registered identity"),

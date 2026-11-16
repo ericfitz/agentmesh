@@ -60,16 +60,17 @@ The administrator flag is the one that gates `GET /v1/admin/status` (see `admin-
 | `maintenance.last_tick_at` | integer, Unix ms | admin | when this process last ticked (absent before its first tick) |
 | `maintenance.lock_error` | string | admin | the last lock error (absent when none) |
 | `maintenance.jobs` | array | admin | the last tick's jobs: `name`, `changed`, `skipped`, and `error` when one failed; `[]` before the first tick or when the lock was held elsewhere |
+| `signing` | object | admin | server mode only: `installation`; `intermediate` and `leaf` (`thumbprint`, `not_before`, `not_after`, whole `days_left`, negative once expired; each absent when the server holds none); `next_renewal_at` (Unix ms, 0 when none is scheduled); `trust_number`, `root_crl_number` and `leaf_crl_number` (0 when none); `last_failure_at` and `last_failure` (the last failed leaf renewal, cleared by the next success); `stopped` (`intermediate_expired`, `intermediate_revoked` or `root_expired`; absent while the server signs) |
 
 ### The status rule
 
-- `degraded` when the `capacity`, the `embedding` or the `inspection` notice is set (an `inspection` notice that no replica has rewritten for `inspection_notice_ttl_seconds` no longer counts, and the next successful inspection on any replica clears it whatever its age), or this process's last maintenance tick recorded a lock error or a failed job. Every tier sees the same `status`; only an administrator sees why.
+- `degraded` when the `capacity`, the `embedding` or the `inspection` notice is set (an `inspection` notice that no replica has rewritten for `inspection_notice_ttl_seconds` no longer counts, and the next successful inspection on any replica clears it whatever its age), this process's last maintenance tick recorded a lock error or a failed job, or (server mode) the intermediate certificate has fewer than 30 days left, the last leaf renewal failed, the current leaf is missing or expired, or signing has stopped (`stopped` is set). Every tier sees the same `status`; only an administrator sees why.
 - `ok` otherwise.
 - Not a document (both this and the 401 are declared responses of the `health` operation in `api/openapi.yaml`): when the store does not answer, the response is a 503 problem (`application/problem+json`) with `code` `unavailable`, `retryable` true and `detail` exactly `store unreachable`. The cause (a driver error that names a host, user or file path) is logged on the server and never sent, because the probe tier is unauthenticated.
 
 ## Examples
 
-Output from a scratch server on loopback (`agentmesh server -listen 127.0.0.1:8431 -sqlite FILE`).
+Output from a scratch server on loopback (`agentmesh server -listen 127.0.0.1:8431 -sqlite FILE`, with the three trust settings of `signing-keys.md`, "A first start").
 
 Anonymous (the probe tier):
 
@@ -101,6 +102,15 @@ $ curl -sS -H "Authorization: Bearer $BEARER" http://127.0.0.1:8431/v1/health
 {"embeddings":{"backlog":0,"rejected":0,"state":"off"},"maintenance":{"interval_seconds":60,"jobs":[],"lock":"unknown","owner":"a31950eb95b5c835988bcf17"},"notices":[],"now":1793207928667,"protocol_version":"1.0.0","started_at":1793207928294,"status":"ok","storage":{"budget_bytes":2147483648,"bytes":352256,"disk_bytes":352256,"disk_ratio":1,"evictable":true,"tier":"normal"},"store":{"engine":"sqlite","schema_version":1},"tier":"admin","version":"2.0.0-dev"}
 ```
 
+The `signing` member (administrator tier, server mode), read from a server that has just started, with `last_failure_at` 0 because no renewal has failed:
+
+```
+$ curl -sS -H "Authorization: Bearer $BEARER" http://127.0.0.1:8461/v1/health | jq -c .signing
+{"installation":"example-prod","intermediate":{"days_left":364,"not_after":1826342663000,"not_before":1794806663000,"thumbprint":"6PxZftaT82DOzCV0LwDXP7Da33SNceu3T7qsh1jNPvQ"},"last_failure_at":0,"leaf":{"days_left":6,"not_after":1795411528000,"not_before":1794806668000,"thumbprint":"sDzE-2EaKNvhn5IGj29i2ywog0uUR9Qyj0m8S8CSFXI"},"leaf_crl_number":0,"next_renewal_at":1795109128534,"root_crl_number":0,"trust_number":1794806663307}
+```
+
+`next_renewal_at` is W/2 after the leaf was issued. After a failed renewal the status is `degraded`, `last_failure` carries the message and `last_failure_at` its time; when the intermediate or the root has expired, or the intermediate's key is revoked, `stopped` names why the server no longer signs; with the leaf expired and no renewal the token endpoint answers 503, and the status is `degraded` (`signing-keys.md`).
+
 `agentmesh health [-profile P] [-identity I]` prints the same document, indented, using the profile's own credential. It exits 0 for `ok` and `degraded`, 1 for a `bus.Error` (an unreachable store among them) and 2 for a flag or resolution error.
 
 ## Reading `maintenance`
@@ -108,10 +118,10 @@ $ curl -sS -H "Authorization: Bearer $BEARER" http://127.0.0.1:8431/v1/health
 The maintenance block is this process's view, kept in memory; nothing about a run is stored in the database. The loop ticks once per `maintenance_interval_seconds`, the first tick one interval after start on the server (in local mode, in `agentmesh mcp` and `agentmesh tui`, after a random delay of up to one interval), so `lock` is `unknown` and `jobs` is empty until then (and after a lock error). After a tick (here with an interval of 1 second):
 
 ```
-"maintenance":{"interval_seconds":1,"jobs":[{"changed":0,"name":"lapsed sessions","skipped":false}, ...14 jobs, 16 on a server...],"last_tick_at":1792911399430,"lock":"held","owner":"724fe2f04ea92cd30e839391"}
+"maintenance":{"interval_seconds":1,"jobs":[{"changed":0,"name":"lapsed sessions","skipped":false}, ...14 jobs, 15 on a server...],"last_tick_at":1792911399430,"lock":"held","owner":"724fe2f04ea92cd30e839391"}
 ```
 
-The two extra jobs on a server, which run just before the last job (`assertion replay expiry`), are `signing key rotation` and `signing key removal`. Rotation reports 1 when it rotated the active signing key and 0 otherwise; its error is the provider mismatch text (the configured provider is not the active key's), or, for an external key the provider still names after it is older than `signing_key_rotation_hours`, `signing key <kid> is older than signing_key_rotation_hours (<n>): point the key URI at a new key, then run agentmesh server admin signing-key rotate`. Removal reports how many retiring keys it deleted.
+The one extra job on a server, which runs just before the last job (`assertion replay expiry`), is `expired leaf removal`. It reports how many leaf certificate rows it deleted: those whose "not after" is more than an hour past, at most 500 a run. An intermediate row is never deleted, and a revoked leaf's serial number stays on the CRL.
 
 With several replicas over Postgres exactly one holds the maintenance lock. Ask each replica: the one that answers `held` runs the jobs, the others answer `held_elsewhere` with no jobs. Two replicas both answering `held`, or none while every replica reports recent ticks, is worth investigating. `owner` is the answering process's own lock owner, not the holder's.
 

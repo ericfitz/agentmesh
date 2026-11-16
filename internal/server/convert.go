@@ -106,6 +106,10 @@ func healthToGen(h bus.Health) gen.Health {
 		}
 		out.Maintenance = g
 	}
+	if sg := h.Signing; sg != nil {
+		g := healthSigningToGen(*sg)
+		out.Signing = &g
+	}
 	return out
 }
 

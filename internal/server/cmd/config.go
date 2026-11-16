@@ -116,7 +116,7 @@ func newLogger(cfg config.Config, stderr io.Writer) *slog.Logger {
 }
 
 // openStore opens the store cfg names (Validate guarantees exactly one).
-// A SQLite file readable by group or others is refused: it holds the signing key.
+// A SQLite file readable by group or others is refused: it is the server's database.
 func openStore(ctx context.Context, cfg config.Config, logger *slog.Logger) (st store.Store, err error) {
 	if cfg.SQLite != "" {
 		st, err = sqlite.Open(ctx, cfg.SQLite, sqlite.Options{RequirePrivate: true, Logger: logger, Store: sqlstore.Options{Logger: logger}})

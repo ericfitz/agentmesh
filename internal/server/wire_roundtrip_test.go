@@ -127,6 +127,10 @@ var pairs = []pair{
 	pairOf("SigningKeyList", remote.FromGenSigningKeyList, ok(signingKeyListToGen)),
 	pairOf("RotateSigningKeyRequestObject", ok(rotateSigningKeyInput), ok(remote.RotateSigningKeyRequest)),
 	pairOf("SigningKeyRotation", remote.FromGenSigningKeyRotation, ok(signingKeyRotationToGen)),
+	pairOf("RevokedLeaf", ok(remote.FromGenRevokedLeaf), ok(revokedLeafToGen)),
+	pairOf("TrustBundle", ok(remote.FromGenTrustBundle), ok(trustBundleToGen)),
+	pairOf("HealthSigning", ok(remote.FromGenHealthSigning), ok(healthSigningToGen)),
+	pairOf("HealthCertificate", ok(remote.FromGenHealthCertificate), ok(healthCertificateToGen)),
 }
 
 // exception names a member a converter pair may not carry, with the reason.
@@ -143,7 +147,7 @@ var exceptions = map[string]exception{
 		Reason: "errors cross as RFC 9457 problems: WriteProblem writes (internal/server), errorOf reads the body at any status (internal/bus/remote, function errorOf)"},
 	"OAuthError": {Type: reflect.TypeFor[gen.OAuthError](), Fields: []string{"Error", "ErrorDescription"},
 		Reason: "the token endpoint answers the RFC 6749 error body (internal/server/oauth.go); internal/bus/remote/auth.go reads it (function oauthErrorOf), not a Bus domain type"},
-	"Discovery": {Type: reflect.TypeFor[gen.Discovery](), Fields: []string{"ApiVersions", "AuthMethods", "AuthorizationServer", "Capabilities", "Issuers", "OpenidConfiguration", "ProtocolVersion", "ServerVersion"},
+	"Discovery": {Type: reflect.TypeFor[gen.Discovery](), Fields: []string{"ApiVersions", "AuthMethods", "AuthorizationServer", "Capabilities", "Issuers", "OpenidConfiguration", "ProtocolVersion", "ServerVersion", "Trust"},
 		Reason: authReason},
 	"AuthMethod": {Type: reflect.TypeFor[gen.AuthMethod](), Fields: []string{"BearerFormat", "Name", "Scheme", "Type"}, Reason: authReason},
 	"WellKnown":  {Type: reflect.TypeFor[gen.WellKnown](), Fields: []string{"Discover"}, Reason: authReason},
@@ -313,16 +317,13 @@ var enumValues = map[string]any{
 	"bus.BridgeState":           bus.BridgeCreating,
 }
 
-// The bus side of a signing key carries its state, provider and algorithm as
-// plain strings, so they are keyed by member path, one set per place a key
-// sits in a filled value.
+// The bus side of a signing key carries its state as a plain string, so it is
+// keyed by member path, one per place a key sits in a filled value.
 func init() {
 	for _, prefix := range []string{
-		"SigningKey", "SigningKeyList.Keys[0]", "SigningKeyList[0]", "SigningKeyRotation.Active", "SigningKeyRotation.Previous",
+		"SigningKey", "SigningKeyList.Keys[0]", "SigningKeyRotation.Current",
 	} {
-		enumValues[prefix+".State"] = "active"
-		enumValues[prefix+".Provider"] = "store"
-		enumValues[prefix+".Algorithm"] = "EdDSA"
+		enumValues[prefix+".State"] = bus.SigningKeyCurrent
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/ericfitz/agentmesh/internal/server/cmd"
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 var listeningRE = regexp.MustCompile(`listening on (\S+) `)
@@ -21,7 +22,8 @@ func startServer(t *testing.T, extra ...string) string {
 	out, errb := &testkit.LockedBuffer{}, &testkit.LockedBuffer{}
 	done := make(chan int, 1)
 	db := filepath.Join(t.TempDir(), "srv.sqlite")
-	args := append([]string{"-listen", "127.0.0.1:0", "-sqlite", db}, extra...)
+	args := append([]string{"-listen", "127.0.0.1:0", "-sqlite", db}, trusttest.SQLiteSets(t, db)...)
+	args = append(args, extra...)
 	go func() { done <- cmd.Run(ctx, args, nil, out, errb) }()
 	t.Cleanup(func() {
 		cancel()

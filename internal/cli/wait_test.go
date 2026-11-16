@@ -295,3 +295,54 @@ func TestWaitOnceClampsWatchTimeout(t *testing.T) {
 		t.Fatalf("waitOnce = %v, watch timeouts %v, want one call of %v", err, got, bus.MaxWatchTimeout)
 	}
 }
+
+// trustWakeBus is a Bus whose Watch answers at once the way a server does when
+// the trust numbers differ (Decision 12): woke, count 0, the server's number.
+type trustWakeBus struct{ bus.Bus }
+
+func (b trustWakeBus) Watch(ctx context.Context, in bus.WatchInput) (bus.WatchResult, error) {
+	select {
+	case <-ctx.Done():
+		return bus.WatchResult{}, ctx.Err()
+	case <-time.After(20 * time.Millisecond):
+	}
+	n := int64(9)
+	return bus.WatchResult{Woke: true, Count: 0, TrustNumber: &n}, nil
+}
+
+// TestWaitExitsZeroOnTrustWake: a wake with count 0 is exit 0 as for a
+// message; a parked session stays silent (decision 18).
+func TestWaitExitsZeroOnTrustWake(t *testing.T) {
+	prev := testConn
+	testConn = func(c *client.Conn) { c.Bus = trustWakeBus{c.Bus} }
+	t.Cleanup(func() { testConn = prev })
+	setup := func(t *testing.T, parked bool) *testEnv {
+		e := newTestEnv(t)
+		sess, err := e.conn(t, "pat").Bus.Open(context.Background(), bus.OpenSessionInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.writeState(t, sessionstate.File{Session: sess.ID, Identity: "pat", Profile: "default", DisplayName: sess.DisplayName, ResumeToken: sess.ResumeToken,
+			HarnessPID: testHarness.Pid, HarnessStart: testHarness.Start, Primary: true, Parked: parked, OpenedAt: 1})
+		return e
+	}
+
+	e := setup(t, false)
+	var so, se testkit.LockedBuffer
+	if code := RunWait(context.Background(), []string{"-timeout", "5s"}, e.Environ, strings.NewReader(""), &so, &se); code != 0 || se.String() != "" {
+		t.Fatalf("exit %d stderr %q", code, se.String())
+	}
+	var w struct {
+		Count    int      `json:"count"`
+		Channels []string `json:"channels"`
+	}
+	if strings.Count(so.String(), "\n") != 1 || json.Unmarshal([]byte(so.String()), &w) != nil || w.Count != 0 || len(w.Channels) != 0 {
+		t.Fatalf("stdout %q", so.String())
+	}
+
+	e = setup(t, true)
+	var so2, se2 testkit.LockedBuffer
+	if code := RunWait(context.Background(), []string{"-timeout", "400ms"}, e.Environ, strings.NewReader(""), &so2, &se2); code != 1 || so2.String() != "" {
+		t.Fatalf("parked: exit %d stdout %q stderr %q", code, so2.String(), se2.String())
+	}
+}

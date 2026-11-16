@@ -122,7 +122,7 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 	server := strings.TrimSuffix(o.Server, "/")
 	switch {
 	case !sel.Defined && o.Server != "":
-		p = profile.Profile{Name: sel.Name, Mode: profile.ModeServer, Server: server}
+		p = profile.Profile{Name: sel.Name, Mode: profile.ModeServer, Server: server, InsecureHTTP: o.InsecureHTTP, RootThumbprint: o.RootThumbprint, Installation: o.Installation}
 		creating = true
 	case !sel.Defined && sel.Name != "default":
 		return out, resolveErr(fmt.Errorf("profile %q is not defined in %s; pass -server to create it", sel.Name, sel.Config.Path))
@@ -130,6 +130,11 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 		return out, resolveErr(errors.New("register applies to server profiles only; a local profile needs no registration"))
 	case serverDisagrees(p, o.Server):
 		return out, serverDisagreesError(p, o.Server)
+	}
+	if !creating {
+		if err := CheckTrustOptions(o, p); err != nil {
+			return out, err
+		}
 	}
 	if err := p.Validate(); err != nil {
 		return out, resolveErr(fmt.Errorf("profile %q: %w", p.Name, err))
@@ -148,6 +153,19 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 	identity, _, err := p.ResolveIdentity(profile.IdentitySelection{Flag: o.Identity, Env: envID, Credentials: have})
 	if err != nil {
 		return out, resolveErr(err)
+	}
+
+	// Trust first: a refusal leaves no pending key behind.
+	plain, err := unauthenticated(o.HTTP, p.Server)
+	if err != nil {
+		return out, err
+	}
+	dataDir, err := profile.DataDir(o.Environ)
+	if err != nil {
+		return out, resolveErr(err)
+	}
+	if _, err := ensureTrust(ctx, o, Resolved{Profile: p, ConfigDir: sel.ConfigDir, DataDir: dataDir}, plain); err != nil {
+		return out, err
 	}
 
 	// Key choice: the -credential file, else the saved credential, else the
@@ -216,7 +234,7 @@ func RegisterIdentity(ctx context.Context, req RegisterRequest) (RegisterOutcome
 		if sel.Config.Profiles == nil {
 			sel.Config.Profiles = map[string]profile.Profile{}
 		}
-		sel.Config.Profiles[p.Name] = profile.Profile{Name: p.Name, Mode: profile.ModeServer, Server: p.Server, Identity: identity}
+		sel.Config.Profiles[p.Name] = profile.Profile{Name: p.Name, Mode: profile.ModeServer, Server: p.Server, Identity: identity, InsecureHTTP: p.InsecureHTTP, RootThumbprint: p.RootThumbprint, Installation: p.Installation}
 		if err := sel.Config.Save(); err != nil {
 			return out, err
 		}

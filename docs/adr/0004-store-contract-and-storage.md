@@ -342,6 +342,8 @@ equivalent to admin.
 Eric's decisions 2 and 8 (2026-10-27, issue #6; recorded whole in ADR 0012) supersede "`signing_keys` is a
 singleton" above: the table is a key set.
 
+Superseded by ADR 0019 (2026-11-16, spec 1 built on branch `adr-0019-spec-1`): the `signing_keys` table, its one-active index and its five methods are removed; `trust_material` takes their place and no private key is in the database. This addendum is history.
+
 - **Rows.** One row per key: `kid` (primary key), `state` (`active` or
   `retiring`), `provider` (`store`, `awskms`, `gcpkms`, `azurekms`,
   `hashivault`), `provider_ref` (the key's name inside an external provider,

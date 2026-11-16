@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/testkit"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 
 	"github.com/ericfitz/agentmesh/internal/auth/keys"
 	"github.com/ericfitz/agentmesh/internal/bus/remote"
@@ -84,7 +85,7 @@ func startHumanServer(t *testing.T, e *testEnv, profileName string) *humanServer
 		t.Fatalf("users add: %d %s%s", code, so.String(), se.String())
 	}
 	go func() {
-		done <- cmd.Run(ctx, []string{"-listen", "127.0.0.1:0", "-sqlite", db, "-set", set}, nil, srvOut, srvErr)
+		done <- cmd.Run(ctx, append([]string{"-listen", "127.0.0.1:0", "-sqlite", db, "-set", set}, trusttest.SQLiteSets(t, db)...), nil, srvOut, srvErr)
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -148,8 +149,9 @@ func TestLoginHuman(t *testing.T) {
 		t.Fatalf("stdout %q", out.String())
 	}
 	assertNoTokenOnStderr(t, e, "lab", errb.String())
-	if want := "agentmesh login: sign in at " + hs.lastURL() + "\n"; errb.String() != want {
-		t.Fatalf("stderr %q, want %q", errb.String(), want)
+	// First contact pins the root and says so, then the sign-in URL.
+	if want := "agentmesh login: sign in at " + hs.lastURL() + "\n"; !strings.HasPrefix(errb.String(), "agentmesh: pinned root ") || !strings.HasSuffix(errb.String(), want) || strings.Count(errb.String(), "\n") != 2 {
+		t.Fatalf("stderr %q, want a pinned-root notice then %q", errb.String(), want)
 	}
 	// login -human always uses the browser, even with a valid session.
 	out, errb = &testkit.LockedBuffer{}, &testkit.LockedBuffer{}

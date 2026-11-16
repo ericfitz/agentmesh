@@ -485,3 +485,64 @@ func TestSavePreservesHooks(t *testing.T) {
 		t.Fatalf("after Save: %v, %v", c.Hooks, err)
 	}
 }
+
+func TestServerURLRule(t *testing.T) {
+	ok := func(server string, insecure bool) error {
+		return Profile{Mode: ModeServer, Server: server, InsecureHTTP: insecure}.Validate()
+	}
+	for _, s := range []string{"https://h", "https://h:1", "http://127.0.0.1:1", "http://[::1]:1", "http://localhost:1"} {
+		if err := ok(s, false); err != nil {
+			t.Errorf("%s: %v", s, err)
+		}
+	}
+	for _, s := range []string{"http://h:1", "http://127.0.0.2:1"} {
+		err := ok(s, false)
+		if err == nil || !strings.Contains(err.Error(), "insecure_http") || !strings.Contains(err.Error(), "-insecure-http") {
+			t.Errorf("%s: want an insecure_http refusal, got %v", s, err)
+		}
+		if err := ok(s, true); err != nil {
+			t.Errorf("%s with insecure_http: %v", s, err)
+		}
+	}
+	want := `server "http://h:1" must use https (http is accepted for 127.0.0.1, ::1 and localhost, or with insecure_http: true, the flag -insecure-http, for local testing only)`
+	if err := ok("http://h:1", false); err == nil || err.Error() != want {
+		t.Errorf("message = %v", err)
+	}
+}
+
+func TestTrustMembers(t *testing.T) {
+	const thumb = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	base := Profile{Mode: ModeServer, Server: "https://h"}
+	bad := []struct {
+		name string
+		p    Profile
+		want string
+	}{
+		{"short thumbprint", Profile{Mode: ModeServer, Server: "https://h", RootThumbprint: thumb[:42]}, "root_thumbprint"},
+		{"plus in thumbprint", Profile{Mode: ModeServer, Server: "https://h", RootThumbprint: thumb[:42] + "+"}, "root_thumbprint"},
+		{"padded thumbprint", Profile{Mode: ModeServer, Server: "https://h", RootThumbprint: thumb[:42] + "="}, "root_thumbprint"},
+		{"installation case", Profile{Mode: ModeServer, Server: "https://h", Installation: "Prod"}, "installation"},
+		{"local thumbprint", Profile{Mode: ModeLocal, RootThumbprint: thumb}, "root_thumbprint is only valid in server mode"},
+		{"local installation", Profile{Mode: ModeLocal, Installation: "prod"}, "installation is only valid in server mode"},
+		{"local insecure_http", Profile{Mode: ModeLocal, InsecureHTTP: true}, "insecure_http is only valid in server mode"},
+	}
+	for _, c := range bad {
+		if err := c.p.Validate(); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: got %v, want %q", c.name, err, c.want)
+		}
+	}
+	full := base
+	full.InsecureHTTP, full.RootThumbprint, full.Installation = true, thumb, "prod"
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := (Config{Path: path, Profiles: map[string]Profile{"lab": full}}).Save(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Profiles["lab"]
+	if !got.InsecureHTTP || got.RootThumbprint != thumb || got.Installation != "prod" {
+		t.Fatalf("round trip = %+v", got)
+	}
+}

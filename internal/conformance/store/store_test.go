@@ -34,13 +34,29 @@ func TestStoreImplementsEveryAggregate(t *testing.T) {
 			}{
 				{"MaxSeq", func() error { _, err := tx.MaxSeq(ctx); return err }},
 				{"ListEnrollmentTokens", func() error { _, err := tx.ListEnrollmentTokens(ctx); return err }},
-				{"ListSigningKeys", func() error {
-					ks, err := tx.ListSigningKeys(ctx)
-					if err == nil && len(ks) != 0 {
-						return errors.New("an empty store lists signing keys") // a stub would not know
+				{"TrustCertificates", func() error {
+					cs, err := tx.TrustCertificates(ctx, ab2store.TrustLeaf)
+					if err == nil && (cs == nil || len(cs) != 0) {
+						return errors.New("an empty store lists trust certificates as nil or non-empty")
 					}
 					return err
 				}},
+				{"TrustCertificateByThumbprint", func() error {
+					_, ok, err := tx.TrustCertificateByThumbprint(ctx, ab2store.TrustLeaf, "nobody")
+					if err == nil && ok {
+						return errors.New("an empty store finds a trust certificate")
+					}
+					return err
+				}},
+				{"CRLs", func() error { _, err := tx.CRLs(ctx); return err }},
+				{"TrustNumber", func() error {
+					n, err := tx.TrustNumber(ctx)
+					if err == nil && n != 0 {
+						return errors.New("a new store has a trust number")
+					}
+					return err
+				}},
+				{"ExpiredLeafCertificates", func() error { _, err := tx.ExpiredLeafCertificates(ctx, 1<<40, 1); return err }},
 				{"PutAssertionJTI", func() error { return tx.PutAssertionJTI(ctx, "alice", "probe", 1) }},
 				{"ListIdentities", func() error { _, err := tx.ListIdentities(ctx); return err }},
 				{"Receipt", func() error { _, _, err := tx.Receipt(ctx, "nobody", "k", fixedNow); return err }},

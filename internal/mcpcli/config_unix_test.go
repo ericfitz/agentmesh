@@ -21,8 +21,8 @@ func TestConfigSnippet(t *testing.T) {
 	}
 	t.Chdir(t.TempDir())
 	for name, args := range map[string][]string{
-		"default":            {"config", "-server", "http://h:1", "-identity", "pat"},
-		"profile-credential": {"config", "-profile", "lab", "-server", "http://h:1", "-identity", "pat", "-credential", "/tmp/my key.pem"},
+		"default":            {"config", "-server", "https://h:1", "-identity", "pat"},
+		"profile-credential": {"config", "-profile", "lab", "-server", "https://h:1", "-identity", "pat", "-credential", "/tmp/my key.pem"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, out, errs := run(args, environ)
@@ -64,7 +64,7 @@ func TestConfigCredentialAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := run([]string{"config", "-server", "http://h:1", "-identity", "pat", "-credential", "rel.pem"}, environ)
+	code, out, errs := run([]string{"config", "-server", "https://h:1", "-identity", "pat", "-credential", "rel.pem"}, environ)
 	want := filepath.Join(wd, "rel.pem")
 	if code != 0 || !strings.Contains(out, `"`+want+`"`) || !strings.Contains(out, " -credential "+want+"\n") {
 		t.Errorf("code %d, stdout %q, stderr %q, want %s", code, out, errs, want)

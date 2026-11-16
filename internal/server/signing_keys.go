@@ -11,7 +11,7 @@ import (
 // imports no key provider. Each method receives the authenticated identity
 // and checks that it is an administrator.
 type SigningKeys interface {
-	ListSigningKeys(ctx context.Context, admin string) ([]bus.SigningKey, error)
+	ListSigningKeys(ctx context.Context, admin string) (bus.SigningKeyList, error)
 	RotateSigningKey(ctx context.Context, admin string, in bus.RotateSigningKeyInput) (bus.SigningKeyRotation, error)
 }
 
@@ -31,8 +31,8 @@ func signingKeysNotConfigured() error {
 	return bus.Errorf(bus.CodeUnavailable, false, "%s", bus.SigningKeysNotConfigured)
 }
 
-func (noSigningKeys) ListSigningKeys(context.Context, string) ([]bus.SigningKey, error) {
-	return nil, signingKeysNotConfigured()
+func (noSigningKeys) ListSigningKeys(context.Context, string) (bus.SigningKeyList, error) {
+	return bus.SigningKeyList{}, signingKeysNotConfigured()
 }
 
 func (noSigningKeys) RotateSigningKey(context.Context, string, bus.RotateSigningKeyInput) (bus.SigningKeyRotation, error) {
@@ -41,32 +41,31 @@ func (noSigningKeys) RotateSigningKey(context.Context, string, bus.RotateSigning
 
 func signingKeyToGen(k bus.SigningKey) gen.SigningKey {
 	return gen.SigningKey{
-		Kid: k.KID, State: gen.SigningKeyState(k.State), Provider: gen.SigningKeyProvider(k.Provider),
-		ProviderRef: k.ProviderRef, Algorithm: gen.SigningKeyAlgorithm(k.Algorithm),
-		CreatedAt: k.CreatedAt, RetiredAt: k.RetiredAt, RemoveAfter: k.RemoveAfter,
+		Thumbprint: k.Thumbprint, Serial: k.Serial, IssuerThumbprint: k.IssuerThumbprint,
+		NotBefore: k.NotBefore, NotAfter: k.NotAfter, State: gen.SigningKeyState(k.State),
 	}
 }
 
-// ListSigningKeys lists the server's signing key set, the active key first.
+// ListSigningKeys lists the unexpired signing leaves, the current one first.
 func (a *api) ListSigningKeys(ctx context.Context, _ gen.ListSigningKeysRequestObject) (gen.ListSigningKeysResponseObject, error) {
-	ks, err := a.signingKeys().ListSigningKeys(ctx, IdentityFrom(ctx))
+	l, err := a.signingKeys().ListSigningKeys(ctx, IdentityFrom(ctx))
 	if err != nil {
 		return nil, err
 	}
-	return gen.ListSigningKeys200JSONResponse(signingKeyListToGen(ks)), nil
+	return gen.ListSigningKeys200JSONResponse(signingKeyListToGen(l)), nil
 }
 
-// signingKeyListToGen converts the keys to their wire list; keys is required
+// signingKeyListToGen converts the list to its wire form; keys is required
 // (empty, never null).
-func signingKeyListToGen(ks []bus.SigningKey) gen.SigningKeyList {
-	out := gen.SigningKeyList{Keys: make([]gen.SigningKey, len(ks))}
-	for i, k := range ks {
+func signingKeyListToGen(l bus.SigningKeyList) gen.SigningKeyList {
+	out := gen.SigningKeyList{Keys: make([]gen.SigningKey, len(l.Keys)), TrustNumber: l.TrustNumber}
+	for i, k := range l.Keys {
 		out.Keys[i] = signingKeyToGen(k)
 	}
 	return out
 }
 
-// RotateSigningKey rotates the active signing key.
+// RotateSigningKey rotates the signing leaf; it always revokes the previous one.
 func (a *api) RotateSigningKey(ctx context.Context, req gen.RotateSigningKeyRequestObject) (gen.RotateSigningKeyResponseObject, error) {
 	res, err := a.signingKeys().RotateSigningKey(ctx, IdentityFrom(ctx), rotateSigningKeyInput(req))
 	if err != nil {
@@ -75,22 +74,23 @@ func (a *api) RotateSigningKey(ctx context.Context, req gen.RotateSigningKeyRequ
 	return gen.RotateSigningKey200JSONResponse(signingKeyRotationToGen(res)), nil
 }
 
-// rotateSigningKeyInput reads the query and the Idempotency-Key header; an
-// absent revoke_previous is false.
+// rotateSigningKeyInput reads the Idempotency-Key header.
 func rotateSigningKeyInput(req gen.RotateSigningKeyRequestObject) bus.RotateSigningKeyInput {
-	return bus.RotateSigningKeyInput{
-		RevokePrevious: derefOr(req.Params.RevokePrevious),
-		IdempotencyKey: idemKey(req.Params.IdempotencyKey),
-	}
+	return bus.RotateSigningKeyInput{IdempotencyKey: idemKey(req.Params.IdempotencyKey)}
 }
 
-// signingKeyRotationToGen converts a rotation to its wire form; previous is
-// absent when the set had no previous key (an empty KID).
+func revokedLeafToGen(r bus.RevokedLeaf) gen.RevokedLeaf {
+	return gen.RevokedLeaf{Thumbprint: r.Thumbprint, HumanMessages: r.HumanMessages}
+}
+
+// signingKeyRotationToGen converts a rotation to its wire form; revoked is
+// required (empty, never null).
 func signingKeyRotationToGen(res bus.SigningKeyRotation) gen.SigningKeyRotation {
-	out := gen.SigningKeyRotation{Active: signingKeyToGen(res.Active), Revoked: res.Revoked}
-	if res.Previous.KID != "" {
-		p := signingKeyToGen(res.Previous)
-		out.Previous = &p
+	out := gen.SigningKeyRotation{
+		Current: signingKeyToGen(res.Current), Revoked: make([]gen.RevokedLeaf, len(res.Revoked)), TrustNumber: res.TrustNumber,
+	}
+	for i, r := range res.Revoked {
+		out.Revoked[i] = revokedLeafToGen(r)
 	}
 	return out
 }

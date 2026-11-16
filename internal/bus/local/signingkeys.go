@@ -13,8 +13,8 @@ func errSigningKeysNotConfigured() error {
 }
 
 // ListSigningKeys answers unavailable.
-func (b *Bus) ListSigningKeys(context.Context) ([]ab2bus.SigningKey, error) {
-	return nil, errSigningKeysNotConfigured()
+func (b *Bus) ListSigningKeys(context.Context) (ab2bus.SigningKeyList, error) {
+	return ab2bus.SigningKeyList{}, errSigningKeysNotConfigured()
 }
 
 // RotateSigningKey answers unavailable.

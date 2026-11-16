@@ -336,7 +336,7 @@ func TestExternalRefusesBadClaims(t *testing.T) {
 func TestVerifierRoutesByIssuer(t *testing.T) {
 	ek := genKey(t, keys.ES256)
 	clk := &clock{t: t0}
-	own := newIssuer(t, keys.EdDSA, issURL, nil)
+	own := newIssuer(t)
 	v := Verifier{Own: own, Now: clk.Now}
 	ctx := context.Background()
 

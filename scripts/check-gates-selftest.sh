@@ -1673,6 +1673,100 @@ block_cats_gates_fire() {
 		'lacks "no-500 rule"'
 }
 
+# mutate_pen LABEL N: the enterprise number constant of internal/pki/eku.go set to N; the pen gate
+# must exit 1 and TestExtKeyUsagePinned must fail (the constant line is the one anchor, once).
+mutate_pen() {
+	local label="$1" n="$2" f="$wt/internal/pki/eku.go" from='const PrivateEnterpriseNumber = 67669' content code=0
+	local glog="$tmp/$label.gate.log" tlog="$tmp/$label.test.log"
+	begin
+	if [ "$(grep -cxF -- "$from" "$f")" -ne 1 ]; then
+		problem "$label" "anchor line not exactly once in internal/pki/eku.go: $from"
+	else
+		content="$(cat "$f")"
+		printf '%s\n' "${content//"$from"/"const PrivateEnterpriseNumber = $n"}" >"$tmp/x" && cp "$tmp/x" "$f"
+		if ! grep -qxF -- "const PrivateEnterpriseNumber = $n" "$f"; then
+			problem "$label" "mutation changed nothing (the constant line is not $n)"
+		else
+			bash "$wt/scripts/pen-gate.sh" >"$glog" 2>&1 || code=$?
+			[ "$code" -eq 1 ] || problem "$label" "pen-gate.sh exit $code, want 1: $(tail -n 2 "$glog" | tr '\n' ' ')"
+			(cd "$wt" && go test -count=1 -p 1 -v -run '^TestExtKeyUsagePinned$' ./internal/pki/ >"$tlog" 2>&1) || true
+			grep -qF -- '--- FAIL: TestExtKeyUsagePinned' "$tlog" || problem "$label" "log lacks '--- FAIL: TestExtKeyUsagePinned': $(tail -n 3 "$tlog" | tr '\n' ' ')"
+		fi
+	fi
+	finish "$label"
+	revert
+}
+
+# --- 41. trust-gates-fire --------------------------------------------------------------
+# Docker-free (the Postgres halves are filtered out). One mutation per rule of
+# the certificate hierarchy (ADR 0019 section 8): the import rules of pki,
+# pki/rootca, trust and trusttest, the chain check's clauses, key revocation,
+# the bundle and trust-number rules, the CA's name check, the pin's installation
+# check and the profile's loopback rule, the pen gate's own selftest, and the enterprise
+# number set to 0 and to 32473 (the pen gate exits 1, TestExtKeyUsagePinned fails).
+# Each anchor is exactly once in its file (mutate_unit_block checks).
+block_trust_gates_fire() {
+	local label=trust-gates-fire m=github.com/ericfitz/agentmesh log="$tmp/b41z.log"
+	begin
+	# internal/trust imports internal/pki, so a probe in pki must import a package the
+	# trust rule allows (internal/filelock): any other import trips trust-leaf too.
+	m7_probe "$label" internal/pki/probe_m7.go "$m/internal/filelock" "deps_violation=$m/internal/pki imports $m/internal/filelock" pki-leaf
+	m7_probe "$label" internal/pki/rootca/probe_m7.go "$m/internal/oidctest" "deps_violation=$m/internal/pki/rootca imports $m/internal/oidctest" pki-leaf
+	m7_probe "$label" internal/trust/probe_m7.go "$m/internal/oidctest" "deps_violation=$m/internal/trust imports $m/internal/oidctest" trust-leaf
+	deps_probe "$label" probe_m4.go "$m/internal/trusttest" "deps_violation=$m imports $m/internal/trusttest"
+	deps_probe "$label" cmd/agentmesh-mcponly/probe_m4.go "$m/internal/trusttest" "deps_violation=$m/cmd/agentmesh-mcponly imports $m/internal/trusttest"
+	finish "$label"
+	revert
+	# the pen gate's selftest, unmutated: six cases, six passed
+	begin
+	if bash "$wt/scripts/pen-gate-selftest.sh" >"$log" 2>&1; then
+		grep -qF '6 run, 6 passed' "$log" || problem pen-selftest "log lacks '6 run, 6 passed': $(tail -n 3 "$log" | tr '\n' ' ')"
+	else
+		problem pen-selftest "exit nonzero: $(tail -n 3 "$log" | tr '\n' ' ')"
+	fi
+	finish pen-selftest
+	# a bearer's row that is trusted without the chain check. Plan deviation: the
+	# brief names TestBearerMatrix/self-signed, which still passes under this
+	# mutation (the token verifier checks a presented chain again); the loader's
+	# rule of the leaf lifetime is what the matrix then sees.
+	mutate_unit_block trust-row-trusted internal/core/signingkeys/material.go \
+		'v, cerr := pki.CheckChain([]*x509.Certificate{leaf, im}, t.Root, t.Installation)' \
+		'v, cerr := pki.Verified{Leaf: leaf, Intermediate: im, NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}, error(nil)' \
+		./internal/core/signingkeys/ '^TestBearerMatrix$' TestBearerMatrix/lifetime-over-ceiling
+	mutate_unit_block chain-name-ignored internal/pki/chain.go \
+		'if c.Subject.CommonName != installation {' 'if false {' \
+		./internal/pki/ '^TestVerifyChain$' TestVerifyChain/other-installation
+	mutate_unit_block chain-usage-intermediate internal/pki/chain.go \
+		'if !HasAgentmeshUsage(c) {' 'if false {' \
+		./internal/pki/ '^TestVerifyChain$' TestVerifyChain/intermediate-without-usage
+	mutate_unit_block chain-usage-leaf internal/pki/chain.go \
+		'if !HasAgentmeshUsage(leaf) {' 'if false {' \
+		./internal/pki/ '^TestVerifyChain$' TestVerifyChain/leaf-without-usage
+	mutate_unit_block chain-lifetime-ignored internal/pki/chain.go \
+		'if leaf.NotAfter.Sub(leaf.NotBefore) > MaxLeafLifetime {' 'if false {' \
+		./internal/pki/ '^TestVerifyChain$' TestVerifyChain/leaf-lifetime-over
+	mutate_unit_block revocation-by-certificate internal/pki/revocations.go \
+		'if r.RevokedKeys(intermediates)[issuer] {' 'if false {' \
+		./internal/pki/ '^TestRevocationByKey$' TestRevocationByKey
+	mutate_unit_block bundle-only-when-lower internal/core/trust.go \
+		'*client != b.TrustNumber {' '*client < b.TrustNumber {' \
+		./internal/conformance/bus/ '^TestRestore$/^sqlite$/^bundle-after-restore$' TestRestore/sqlite/bundle-after-restore
+	mutate_unit_block trust-number-counter internal/store/sqlstore/trust.go \
+		'next := max(now, stored+1)' 'next := stored + 1' \
+		./internal/conformance/store/ '^TestTrustNumber$/^sqlite$' TestTrustNumber/sqlite
+	mutate_unit_block ca-sign-name-unchecked internal/pki/rootca/rootca.go \
+		'if taken && !sameInstallation {' 'if false {' \
+		./internal/pki/rootca/ '^TestSignNameTaken$' TestSignNameTaken
+	mutate_unit_block expected-installation-ignored internal/trust/pin.go \
+		'if e.Installation != "" && b.Installation != e.Installation {' 'if false {' \
+		./internal/trust/ '^TestExpectedInstallation$' TestExpectedInstallation
+	mutate_unit_block profile-loopback-ignored internal/profile/config.go \
+		'if !loopbackHost(u.Hostname()) && !p.InsecureHTTP {' 'if false {' \
+		./internal/profile/ '^TestServerURLRule$' TestServerURLRule
+	mutate_pen pen-zero 0
+	mutate_pen pen-documentation 32473
+}
+
 block_skip_in_wiring
 block_unit_leak
 block_gen_edited
@@ -1713,6 +1807,7 @@ block_spec_bounds_fire
 block_spec_validation_fires
 block_spec_examples_fire
 block_cats_gates_fire
+block_trust_gates_fire
 
 if [ "$bad" -ne 0 ]; then
 	echo "check-gates-selftest: FAILED"

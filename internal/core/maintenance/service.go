@@ -35,9 +35,9 @@ type Service struct {
 	// Archiver archives the Slack channel of a bridge the scope retirement
 	// job retires; nil means the bridge is off (spec 4.3).
 	Archiver scopes.Archiver
-	// SigningKeys runs the signing key rotation and removal jobs; nil means
-	// they are off (a process that does not serve the token endpoint).
-	SigningKeys *signingkeys.Service
+	// Trust runs the expired leaf removal job; nil means it is off (a process
+	// that does not serve the token endpoint).
+	Trust *signingkeys.Trust
 
 	// usage replaces Store.Usage; tests only (a fixed or counting measure).
 	usage func(ctx context.Context) (store.Usage, error)
@@ -109,10 +109,10 @@ func (s Service) Jobs() []Job {
 		{"embeddings", s.embeddings},
 	}
 	// Before "assertion replay expiry", which stays the last job.
-	if sk := s.SigningKeys; sk != nil {
-		js = append(js,
-			Job{"signing key rotation", sk.RotateDue},
-			Job{"signing key removal", sk.RemoveExpired})
+	if t := s.Trust; t != nil {
+		js = append(js, Job{"expired leaf removal", func(ctx context.Context, _ int64) (int, error) {
+			return t.RemoveExpiredLeaves(ctx)
+		}})
 	}
 	return append(js, Job{"assertion replay expiry", s.assertionReplayExpiry})
 }

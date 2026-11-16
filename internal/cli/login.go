@@ -11,7 +11,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/profile"
 )
 
-// RunLogin is `agentmesh login [-profile P] [-identity I]` (Milestone 6
+// RunLogin is `agentmesh login [-profile P] [-identity I] [-accept-new-root]` (Milestone 6
 // choice 14): discovery, assertion, token exchange, cache. It always
 // exchanges, so it proves the credential works and warms the cache the hooks
 // and one-shot commands read. With -human it runs the browser sign-in of a
@@ -21,6 +21,7 @@ func RunLogin(ctx context.Context, args []string, environ []string, stdin io.Rea
 	fs := newFlagSet("login", stderr)
 	o := client.Options{Environ: environ}
 	client.Flags(fs, &o)
+	acceptNewRootFlag(fs, &o)
 	human := fs.Bool("human", false, "sign in through the profile's oidc provider (a human)")
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)

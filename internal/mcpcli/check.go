@@ -40,8 +40,17 @@ func target(cmdName string, o client.Options, stderr io.Writer) (server string, 
 	case sel.Defined && want != "" && want != sel.Profile.Server:
 		return exit(fmt.Errorf("profile %q uses server %s; -server %s disagrees", sel.Name, sel.Profile.Server, o.Server))
 	case sel.Defined:
+		if err := client.CheckTrustOptions(o, sel.Profile); err != nil {
+			return exit(err)
+		}
 		return sel.Profile.Server, -1
 	case want != "":
+		// The in-memory profile of an undefined -server: the server URL rule
+		// (https, or loopback http, or -insecure-http) holds before any request.
+		p := profile.Profile{Name: sel.Name, Mode: profile.ModeServer, Server: want, InsecureHTTP: o.InsecureHTTP, RootThumbprint: o.RootThumbprint, Installation: o.Installation}
+		if err := p.Validate(); err != nil {
+			return exit(fmt.Errorf("profile %q: %w", sel.Name, err))
+		}
 		return want, -1
 	case sel.Name == "default":
 		return exit(client.NoLocalModeError(sel.Name))
@@ -97,6 +106,21 @@ func resolveFix(err error) string {
 	return Binary + " help troubleshoot"
 }
 
+// trustFix is the fix for a failed trust step of reach: a changed root,
+// installation or server is replaced with -accept-new-root after the operator
+// has verified the new root's thumbprint out of band; anything else is a
+// matter for the troubleshooting topic.
+func trustFix(err error, server, profileName string) string {
+	if !client.IsRootMismatch(err) {
+		return Binary + " help troubleshoot"
+	}
+	prof := ""
+	if profileName != "" && profileName != "default" {
+		prof = " -profile " + profileName
+	}
+	return fmt.Sprintf("if the change is expected and you checked the new root's thumbprint with the server's operator, run %s check%s -server %s -accept-new-root", Binary, prof, server)
+}
+
 // ownerOnlyFix is the command that makes a key file owner-only.
 func ownerOnlyFix(path string) string {
 	if runtime.GOOS == "windows" {
@@ -108,7 +132,9 @@ func ownerOnlyFix(path string) string {
 // runCheck is `agentmesh-mcponly check [-server URL] [-identity I]
 // [-credential FILE] [-profile P]`: reach, health, identity, credential,
 // token and access, one line each, stopping at the first FAIL (exit 1). It
-// creates no session and changes no configuration; the token step always
+// creates no session and writes no configuration file, but its reach step pins
+// the server's root on first contact (and replaces the pin with
+// -accept-new-root), as every command does; the token step always
 // exchanges (never uses a cached bearer) and caches the new bearer in the data
 // directory, as serve does. A second or overlapping run does the same. Without an identity it stops after health with
 // the register command to run next (exit 0).
@@ -116,6 +142,8 @@ func runCheck(ctx context.Context, args []string, environ []string, _ io.Reader,
 	fs := newFlagSet("check", stderr)
 	o := client.Options{Environ: environ}
 	commonFlags(fs, &o)
+	acceptNewRootFlag(fs, &o)
+	o.Notice = stderrNotice(stderr)
 	if err := fs.Parse(args); err != nil {
 		return parseExit(err)
 	}
@@ -123,7 +151,10 @@ func runCheck(ctx context.Context, args []string, environ []string, _ io.Reader,
 		_, _ = fmt.Fprintf(stderr, "%s check: unexpected argument %q\n", Binary, fs.Arg(0))
 		return 2
 	}
-	applyEnv(&o, environ)
+	if err := applyEnv(&o, environ); err != nil {
+		_, _ = fmt.Fprintf(stderr, "%s check: %v\n", Binary, err)
+		return 2
+	}
 	server, code := target("check", o, stderr)
 	if code != -1 {
 		return code
@@ -138,6 +169,9 @@ func runCheck(ctx context.Context, args []string, environ []string, _ io.Reader,
 	info, err := client.DiscoverServer(ctx, hc, server)
 	if err != nil {
 		return rep.fail("reach", err.Error(), fmt.Sprintf("check the URL and that the server is running, then %s check -server %s", Binary, server))
+	}
+	if err := client.EnsureServerTrust(ctx, o, hc); err != nil {
+		return rep.fail("reach", err.Error(), trustFix(err, server, selectedProfile(o)))
 	}
 	rep.ok("reach", "%s (server %s, protocol %s)", server, info.ServerVersion, info.ProtocolVersion)
 
@@ -211,4 +245,14 @@ func credentialFix(err error, path, registerFix string) string {
 		return ownerOnlyFix(path)
 	}
 	return registerFix
+}
+
+// selectedProfile is the name of the profile the options select; empty when
+// the selection fails (the trust step has already reported that).
+func selectedProfile(o client.Options) string {
+	sel, err := client.SelectProfile(o)
+	if err != nil {
+		return ""
+	}
+	return sel.Name
 }
