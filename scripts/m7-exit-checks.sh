@@ -7,10 +7,12 @@
 # naming the path). The script prints fail=<n> (every `--- FAIL` line),
 # wake_sqlite=<n> and wake_postgres=<n> (the leaf `--- PASS:
 # TestReplicasWake/<engine>/<leaf>` lines) and maint_sqlite=<n> and
-# maint_postgres=<n> (likewise for TestReplicasMaintenanceExclusive), and
+# maint_postgres=<n> (likewise for TestReplicasMaintenanceExclusive) and
+# trust_sqlite=<n> and trust_postgres=<n> (likewise for TestReplicasTrust), and
 # exits 1 unless fail=0, wake_postgres=6, wake_sqlite=4 (the two cross-server
 # leaves exist on postgres only: two servers over one SQLite file share no
-# hints) and both maint counts are 2.
+# hints), both maint counts are 2, trust_sqlite=3 and trust_postgres=4 (the
+# watch leaf exists on postgres only, for the same reason).
 #
 # The import rule is checked on production imports (`go list -deps` without
 # -test), for every package a pattern matches:
@@ -270,14 +272,18 @@ wake_sqlite="$(count TestReplicasWake sqlite)"
 wake_postgres="$(count TestReplicasWake postgres)"
 maint_sqlite="$(count TestReplicasMaintenanceExclusive sqlite)"
 maint_postgres="$(count TestReplicasMaintenanceExclusive postgres)"
+trust_sqlite="$(count TestReplicasTrust sqlite)"
+trust_postgres="$(count TestReplicasTrust postgres)"
 echo "fail=$fail"
 echo "wake_sqlite=$wake_sqlite"
 echo "wake_postgres=$wake_postgres"
 echo "maint_sqlite=$maint_sqlite"
 echo "maint_postgres=$maint_postgres"
+echo "trust_sqlite=$trust_sqlite"
+echo "trust_postgres=$trust_postgres"
 rc=0
-if [ "$fail" -ne 0 ] || [ "$wake_sqlite" -ne 4 ] || [ "$wake_postgres" -ne 6 ] || [ "$maint_sqlite" -ne 2 ] || [ "$maint_postgres" -ne 2 ]; then
-	echo "m7-exit-checks: want fail=0, wake_sqlite=4, wake_postgres=6, maint_sqlite=2 and maint_postgres=2" >&2
+if [ "$fail" -ne 0 ] || [ "$wake_sqlite" -ne 4 ] || [ "$wake_postgres" -ne 6 ] || [ "$maint_sqlite" -ne 2 ] || [ "$maint_postgres" -ne 2 ] || [ "$trust_sqlite" -ne 3 ] || [ "$trust_postgres" -ne 4 ]; then
+	echo "m7-exit-checks: want fail=0, wake_sqlite=4, wake_postgres=6, maint_sqlite=2, maint_postgres=2, trust_sqlite=3 and trust_postgres=4" >&2
 	rc=1
 fi
 import_check || rc=1
