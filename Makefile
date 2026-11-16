@@ -18,7 +18,7 @@ test:        ## Unit tests: every package except internal/conformance (no Docker
 	go test $(PKGS_UNIT)
 test-race:   ## Every package under the race detector, suites included (needs Postgres like verify)
 	go test -race -count=1 ./...
-tidy-check:  ## go.mod and go.sum are tidy (part of verify; CI also runs it as its own step)
+tidy-check:  ## go.mod and go.sum are tidy (part of verify; also a step of the dispatch-only ci.yml)
 	go mod tidy -diff
 generate:    ## Regenerate internal/gen from api/openapi.yaml with the pinned oapi-codegen
 	go tool oapi-codegen -config api/oapi-codegen.yaml api/openapi.yaml
@@ -38,11 +38,11 @@ test-conformance:  ## Store and Bus conformance suites on SQLite and Postgres; -
 	AGENTMESH_BUS_TRANSPORT=inproc go test -count=1 -p 1 ./internal/conformance/bus/
 check-gates:  ## Prove the negative halves: an unreachable Postgres fails the suites, unit tests exclude the suites, nothing skips, the generator reacts to the schema, the suites fail with no Docker and no variable (needs Docker for the busybox run)
 	bash scripts/check-gates.sh
-check-gates-selftest:  ## Prove the gate scripts fire: one mutation per check in a throwaway worktree of HEAD (minutes; its own CI job, not part of verify)
+check-gates-selftest:  ## Prove the gate scripts fire: one mutation per check in a throwaway worktree of HEAD (minutes; a dispatch-only ci.yml job, not part of verify)
 	bash scripts/check-gates-selftest.sh
 docker-image: ## Build the agentmesh:local Docker image (not part of verify)
 	docker build -t agentmesh:local .
-docker-smoke: ## Build the image and smoke-test it with Docker (not part of verify; its own CI job)
+docker-smoke: ## Build the image and smoke-test it with Docker (not part of verify; a dispatch-only ci.yml job)
 	bash scripts/docker-smoke.sh
 vet-cross:   ## go vet for linux and windows on amd64 and arm64, and golangci-lint for windows (ported from v1)
 	GOOS=linux GOARCH=amd64 go vet ./...
@@ -53,7 +53,7 @@ vet-cross:   ## go vet for linux and windows on amd64 and arm64, and golangci-li
 	$(MAKE) vet-tags
 vet-tags:    ## go vet and go build for each external key provider build tag alone and all four together, on linux and windows
 	bash scripts/vet-tags.sh
-release-check: ## Not part of verify (its own CI job). Release tooling: check-pins, the installer, release, render and build-archive harnesses, the local dry run (test-pipeline), vet-cross. Needs bash, git, go, golangci-lint, python3, jq, shasum, OpenSSL 3, ruby, tar, zip, curl; docker on macOS
+release-check: ## Not part of verify (a dispatch-only ci.yml job). Release tooling: check-pins, the installer, release, render and build-archive harnesses, the local dry run (test-pipeline), vet-cross. Needs bash, git, go, golangci-lint, python3, jq, shasum, OpenSSL 3, ruby, tar, zip, curl; docker on macOS
 	bash release/check-pins.sh
 	bash release/test-install.sh --self-test
 	bash release/test-release.sh
@@ -61,12 +61,12 @@ release-check: ## Not part of verify (its own CI job). Release tooling: check-pi
 	bash release/build-archive.sh --self-test
 	bash release/test-pipeline.sh
 	$(MAKE) vet-cross
-release-lint: ## actionlint over the workflows and shellcheck over release/, scripts/ and install.sh (not part of verify; its own CI job)
+release-lint: ## actionlint over the workflows and shellcheck over release/, scripts/ and install.sh (not part of verify; a dispatch-only ci.yml job)
 	@for t in actionlint shellcheck; do command -v $$t >/dev/null || { echo "release-lint: $$t is not installed"; exit 1; }; done
 	actionlint .github/workflows/*.yml
 	shellcheck -x release/*.sh scripts/*.sh scripts/testdata/cats-fake/cats .githooks/pre-commit
 	shellcheck -s sh install.sh
-release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; its own CI job)
+release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; a dispatch-only ci.yml job)
 	bash release/test-install.sh $(RELEASE_INSTALL_ARGS)
 verify:      ## Done gate (CLAUDE.md): build, the m4, m6 and m10 dependency rules, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, conformance suites on both engines, gate checks
 	$(MAKE) build
