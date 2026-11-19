@@ -463,7 +463,7 @@ Plan and controller rulings (2026-11-07; Eric may overrule; not his decisions):
 - Ruling 2: names stay bytes (`store.MaxNameBytes`).
 - Ruling 3: the task subject is counted in characters (`tasks.MaxSubjectRunes`); "subject must be 1-256 characters".
 - Ruling 4: array bounds count raw entries, not entries after deduplication.
-- Ruling 5: core-owned enums (status tag, task status) stay strings with `maxLength: 256`; no spec `enum`, so the core's messages stand.
+- Ruling 5: core-owned enums (status tag, task status) stay strings with `maxLength: 256`; no spec `enum`, so the core's messages stand. **Changed for task status by ADR 0019 Decision 53** (Eric, 2026-11-19): task status becomes a spec `enum` (issue #47); the status tag stays a string.
 - Ruling 6: a negative id answers `validation` (`rules.NonNegative`), not `not_found`. Nothing can pass an integer above `int64` to the core; the strict decoder refuses it (`TestInt64OverflowRefused`).
 - Ruling 7: the resume token and the search cursor get their real shapes (43 and 19 characters with patterns).
 - Ruling 8: the token endpoint's JWT fields are bounded at 16384 bytes, the other form fields at 1024. The validator refuses an over-bound field first, with the generic RFC 6749 `invalid_request` body; the handler's own `checkTokenFormBounds` stays as defense in depth (`TestCheckTokenFormBounds`).
