@@ -71,15 +71,144 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MOD=github.com/ericfitz/agentmesh
-
-# TAGS is the build-tag set the go list calls below use ("" is the default
-# build). The external key provider backends sit behind tags, so the importer
-# scan and the keyprovider-consumers rule also run once with M7_TAGS (every
-# backend tag, as `make vet-tags` builds them together).
+# TAGS is the build-tag set the rules below read ("" is the default build).
+# The external key provider backends sit behind tags, so the importer scan and
+# the keyprovider-consumers rule also run once with M7_TAGS (every backend tag,
+# as `make vet-tags` builds them together).
+#
+# Speed: the rules read dump files, never `go list` itself. build_dumps runs,
+# in parallel and once per run,
+#   deps.<n>:        go list -deps -f '<path> <imports>' ./...  for the default
+#                    build (n=0) and the M7_TAGS build (n=1), host GOOS: every
+#                    package of the module and everything below it, so a rule
+#                    takes its transitive closure from the file (awk, a DFS in
+#                    go list's own post-order, so a violation list keeps the
+#                    order `go list -deps <pkg>` gave);
+#   imp.<n>.<goos>:  go list -f '<path> <imports> <test imports> <xtest
+#                    imports>' ./... for each tag set and GOOS (CGO off), for
+#                    the importer scan.
+# Eight go list runs in all, whatever the number of rules.
 M7_TAGS="${M7_TAGS:-awskms,gcpkms,azurekms,hashivault}"
 TAGS=""
-# tagflags prints the GOFLAGS value for TAGS, keeping the caller's own flags.
-tagflags() { printf '%s%s' "${GOFLAGS:+$GOFLAGS }" "${TAGS:+-tags=$TAGS}"; }
+GOOSES="linux darwin windows"
+DUMPDIR=""
+# tagflags prints the GOFLAGS value for a tag set, keeping the caller's own flags.
+tagflags() { printf '%s%s' "${GOFLAGS:+$GOFLAGS }" "${1:+-tags=$1}"; }
+
+build_dumps() {
+	DUMPDIR="$(mktemp -d)"
+	trap 'rm -rf "$DUMPDIR"' EXIT
+	local tags goos n=0 pids=() descs=() files=()
+	for tags in "" "$M7_TAGS"; do
+		(cd "$ROOT" && GOFLAGS="$(tagflags "$tags")" go list -deps -f '{{.ImportPath}} {{join .Imports " "}}' ./... >"$DUMPDIR/deps.$n" 2>"$DUMPDIR/deps.$n.err") &
+		pids+=($!)
+		descs+=("tags=$tags go list -deps ./...")
+		files+=("$DUMPDIR/deps.$n.err")
+		for goos in $GOOSES; do
+			(cd "$ROOT" && GOFLAGS="$(tagflags "$tags")" GOOS="$goos" CGO_ENABLED=0 go list -f '{{.ImportPath}} {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}' ./... >"$DUMPDIR/imp.$n.$goos" 2>"$DUMPDIR/imp.$n.$goos.err") &
+			pids+=($!)
+			descs+=("GOOS=$goos tags=$tags go list ./...")
+			files+=("$DUMPDIR/imp.$n.$goos.err")
+		done
+		n=$((n + 1))
+	done
+	local i failed=0
+	for i in "${!pids[@]}"; do
+		# Explicit exits: a go list failure must never read as a package with
+		# no imports.
+		if ! wait "${pids[$i]}"; then
+			echo "m7-exit-checks: ${descs[$i]} failed" >&2
+			head -n 5 "${files[$i]}" >&2 || true
+			failed=1
+		fi
+	done
+	[ "$failed" -eq 0 ] || exit 2
+}
+
+# deps_dump prints the path of the deps dump for the current TAGS.
+deps_dump() {
+	if [ -z "$TAGS" ]; then printf '%s' "$DUMPDIR/deps.0"; else printf '%s' "$DUMPDIR/deps.1"; fi
+}
+
+# AWK_CLOSURE reads a deps dump ("<path> <imports...>" per line). Variables:
+# mode (deps or allow), mod, base (the pattern's import path without a
+# trailing /...), wild (1 when the pattern ended in /...), rule, list (the
+# forbidden or allowed import paths, space separated). The matched packages
+# are walked in import-path order; the closure of each is its DFS post-order
+# (self last), as `go list -deps` prints it. Standard library packages (no dot
+# in the first path element) are never walked. An exact pattern that matches
+# no package is an error (exit 2), as it is for go list.
+# shellcheck disable=SC2016  # awk program: no shell expansion wanted
+AWK_CLOSURE='
+function isstd(p,   a) { split(p, a, "/"); return index(a[1], ".") == 0 }
+function dfs(p,   i, n, parts) {
+	if (p in seen) return
+	seen[p] = 1
+	if (isstd(p) || !(p in imps)) return
+	n = split(imps[p], parts, " ")
+	for (i = 1; i <= n; i++) dfs(parts[i])
+	order[++cnt] = p
+}
+function under(d, e) { return d == e || index(d, e "/") == 1 }
+{
+	imps[$1] = substr($0, length($1) + 2)
+	if (!isstd($1) && ($1 == mod || index($1, mod "/") == 1)) mods[++nm] = $1
+}
+END {
+	for (i = 1; i <= nm; i++) {
+		p = mods[i]
+		if (wild ? under(p, base) : p == base) sel[++ns] = p
+	}
+	if (ns == 0 && !wild) { print "no package matches " base > "/dev/stderr"; exit 2 }
+	for (i = 2; i <= ns; i++) {
+		v = sel[i]
+		for (j = i - 1; j >= 1 && sel[j] > v; j--) sel[j + 1] = sel[j]
+		sel[j + 1] = v
+	}
+	nl = split(list, items, " ")
+	for (s = 1; s <= ns; s++) {
+		p = sel[s]
+		delete seen; delete order; cnt = 0
+		dfs(p)
+		if (mode == "deps") {
+			for (k = 1; k <= nl; k++) {
+				f = items[k]
+				for (i = 1; i <= cnt; i++) {
+					if (under(order[i], f)) { print "deps_violation=" p " imports " f " [rule " rule "]"; break }
+				}
+			}
+		} else {
+			for (i = 1; i <= cnt; i++) {
+				ok = 0
+				for (k = 1; k <= nl; k++) if (under(order[i], items[k])) ok = 1
+				if (!ok) print "deps_violation=" p " imports " order[i] " [rule " rule "]"
+			}
+		}
+	}
+}'
+
+# closure_rule MODE RULE PATTERN ENTRY...: runs AWK_CLOSURE over the dump for
+# TAGS, prints its violation lines and adds them to the global violations.
+closure_rule() {
+	local mode="$1" rule="$2" pattern="$3" base wild=0 out entry list=""
+	shift 3
+	base="$pattern"
+	case "$pattern" in
+	./*) base="$MOD/${pattern#./}" ;;
+	esac
+	case "$base" in
+	*/...) wild=1; base="${base%/...}" ;;
+	esac
+	for entry in "$@"; do list="$list $entry"; done
+	out="$(awk -v mode="$mode" -v mod="$MOD" -v base="$base" -v wild="$wild" -v rule="$rule" -v list="$list" "$AWK_CLOSURE" "$(deps_dump)")" || {
+		echo "m7-exit-checks: go list $pattern failed" >&2
+		exit 2
+	}
+	if [ -n "$out" ]; then
+		printf '%s\n' "$out"
+		violations=$((violations + $(printf '%s\n' "$out" | wc -l)))
+	fi
+}
 
 # check_deps RULE PATTERN FORBIDDEN...: an entry is an in-module path (relative to
 # the module) or, when it starts with "github.com/", a third-party path; each
@@ -87,63 +216,22 @@ tagflags() { printf '%s%s' "${GOFLAGS:+$GOFLAGS }" "${TAGS:+-tags=$TAGS}"; }
 # one. Sets the global violations.
 violations=0
 check_deps() {
-	local rule="$1" pattern="$2" pkg dep f
+	local rule="$1" pattern="$2" f
+	local entries=()
 	shift 2
-	local pkgs deps
-	# Explicit exits: set -e is off inside `import_check || rc=1`, and a go
-	# list failure must never read as a package with no imports.
-	pkgs="$(cd "$ROOT" && GOFLAGS="$(tagflags)" go list "$pattern")" || {
-		echo "m7-exit-checks: go list $pattern failed" >&2
-		exit 2
-	}
-	for pkg in $pkgs; do
-		deps="$(cd "$ROOT" && GOFLAGS="$(tagflags)" go list -deps "$pkg")" || {
-			echo "m7-exit-checks: go list -deps $pkg failed" >&2
-			exit 2
-		}
-		for f in "$@"; do
-			if [[ "$f" == github.com/* ]]; then
-				dep="$f"
-			else
-				dep="$MOD/$f"
-			fi
-			if printf '%s\n' "$deps" | grep -F -x -q -- "$dep" || printf '%s\n' "$deps" | grep -F -q -- "$dep/"; then
-				echo "deps_violation=$pkg imports $dep [rule $rule]"
-				violations=$((violations + 1))
-			fi
-		done
+	for f in "$@"; do
+		if [[ "$f" == github.com/* ]]; then entries+=("$f"); else entries+=("$MOD/$f"); fi
 	done
+	closure_rule deps "$rule" "$pattern" "${entries[@]}"
 }
 
 # check_allowlist RULE PATTERN ALLOWED...: every non-standard production dependency
 # of each package PATTERN matches must equal an allowed entry or lie below it
 # ("<entry>/..."). Entries are full import paths. Sets the global violations.
 check_allowlist() {
-	local rule="$1" pattern="$2" pkg dep a ok
+	local rule="$1" pattern="$2"
 	shift 2
-	local pkgs deps
-	pkgs="$(cd "$ROOT" && GOFLAGS="$(tagflags)" go list "$pattern")" || {
-		echo "m7-exit-checks: go list $pattern failed" >&2
-		exit 2
-	}
-	for pkg in $pkgs; do
-		deps="$(cd "$ROOT" && GOFLAGS="$(tagflags)" go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' "$pkg")" || {
-			echo "m7-exit-checks: go list -deps $pkg failed" >&2
-			exit 2
-		}
-		for dep in $deps; do
-			ok=0
-			for a in "$@"; do
-				case "$dep" in
-				"$a" | "$a"/*) ok=1 ;;
-				esac
-			done
-			if [ "$ok" -eq 0 ]; then
-				echo "deps_violation=$pkg imports $dep [rule $rule]"
-				violations=$((violations + 1))
-			fi
-		done
-	done
+	closure_rule allow "$rule" "$pattern" "$@"
 }
 
 # check_importers RULE IMPORT ALLOWED_PKG: only ALLOWED_PKG (a full import
@@ -153,35 +241,31 @@ check_allowlist() {
 # production, test and external-test files alike. A package is reported once
 # however many GOOS values or tag sets show it. Sets the global violations.
 check_importers() {
-	local rule="$1" target="$2" allowed="$3" goos tags lines line pkg imp rest
-	local seen=" "
-	for tags in "" "$M7_TAGS"; do
-		for goos in linux darwin windows; do
-			lines="$(cd "$ROOT" && GOFLAGS="${GOFLAGS:+$GOFLAGS }${tags:+-tags=$tags}" GOOS="$goos" CGO_ENABLED=0 go list -f '{{.ImportPath}} {{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}' ./...)" || {
-				echo "m7-exit-checks: GOOS=$goos tags=$tags go list ./... failed" >&2
-				exit 2
-			}
-			while IFS= read -r line; do
-				pkg="${line%% *}"
-				rest="${line#"$pkg"}"
-				[ "$pkg" = "$allowed" ] && continue
-				case "$seen" in *" $pkg "*) continue ;; esac
-				for imp in $rest; do
-					case "$imp" in
-					"$target" | "$target"/*)
-						echo "deps_violation=$pkg imports $target [rule $rule]"
-						violations=$((violations + 1))
-						seen="$seen$pkg "
-						break
-						;;
-					esac
-				done
-			done <<<"$lines"
-		done
+	local rule="$1" target="$2" allowed="$3" n goos out
+	local files=()
+	for n in 0 1; do
+		for goos in $GOOSES; do files+=("$DUMPDIR/imp.$n.$goos"); done
 	done
+	# shellcheck disable=SC2016  # awk program: no shell expansion wanted
+	out="$(awk -v rule="$rule" -v target="$target" -v allowed="$allowed" '
+		$1 == allowed || ($1 in done) { next }
+		{
+			for (i = 2; i <= NF; i++) {
+				if ($i == target || index($i, target "/") == 1) {
+					print "deps_violation=" $1 " imports " target " [rule " rule "]"
+					done[$1] = 1
+					break
+				}
+			}
+		}' "${files[@]}")"
+	if [ -n "$out" ]; then
+		printf '%s\n' "$out"
+		violations=$((violations + $(printf '%s\n' "$out" | wc -l)))
+	fi
 }
 
 import_check() {
+	build_dumps
 	check_deps store-no-core './internal/store/...' internal/core
 	check_deps notify-leaf ./internal/core/notify internal/store github.com/jackc/pgx
 	check_deps pgnotify-no-server ./internal/core/notify/pgnotify internal/server internal/gen
