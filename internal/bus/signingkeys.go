@@ -32,7 +32,7 @@ type SigningKeyList struct {
 }
 
 // RotateSigningKeyInput is the rotation's idempotency key; a rotation always
-// revokes the previous leaf (ADR 0019 Ruling 6).
+// revokes every other unexpired leaf (ADR 0019 Ruling 6).
 type RotateSigningKeyInput struct{ IdempotencyKey string }
 
 // RevokedLeaf is one leaf a rotation revoked. HumanMessages counts the human

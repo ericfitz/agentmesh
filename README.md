@@ -57,7 +57,7 @@ An agent that only needs to reach a server can use the smaller `agentmesh-mcponl
 
 ## Administrator commands
 
-An administrator's client also has `agentmesh scopes create [-key K] NAME | list | get NAME | done -retire with_bridge|normal [-key K] NAME`, `agentmesh identities create [-scope S] NAME` (prints a one-time enrollment token for the new agent), `agentmesh channels create [-scope S] ...` and `agentmesh bridges create [-slack-name N] CHANNEL | list | get CHANNEL | remove CHANNEL` (Slack bridge; `forbidden` where none is configured) and `agentmesh signing-keys list | rotate [-key K]` (the server's signing leaves; a rotation always revokes the previous leaf; `unavailable` on a local profile). The walk-through is in `docs/ops/admin-bootstrap.md`.
+An administrator's client also has `agentmesh scopes create [-key K] NAME | list | get NAME | done -retire with_bridge|normal [-key K] NAME`, `agentmesh identities create [-scope S] NAME` (prints a one-time enrollment token for the new agent), `agentmesh channels create [-scope S] ...` and `agentmesh bridges create [-slack-name N] CHANNEL | list | get CHANNEL | remove CHANNEL` (Slack bridge; `forbidden` where none is configured) and `agentmesh signing-keys list | rotate [-key K]` (the server's signing leaves; a rotation always revokes every other unexpired leaf; `unavailable` on a local profile). The walk-through is in `docs/ops/admin-bootstrap.md`.
 
 ## Terminal UI
 

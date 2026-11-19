@@ -39,7 +39,7 @@ func opSigningKey(k bus.SigningKey) opSigningKeyOut {
 
 // RunSigningKeys implements `agentmesh signing-keys list|rotate`
 // (administrator only), the client form of the server's signing leaves; rotate
-// always revokes the previous leaf. Where the server has no signing keys (a
+// always revokes every other unexpired leaf. Where the server has no signing keys (a
 // local profile) every action is unavailable (not retryable).
 func RunSigningKeys(ctx context.Context, args []string, environ []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return opDispatch(ctx, "signing-keys", map[string]opRunFunc{

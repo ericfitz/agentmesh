@@ -65,7 +65,8 @@ func signingKeyListToGen(l bus.SigningKeyList) gen.SigningKeyList {
 	return out
 }
 
-// RotateSigningKey rotates the signing leaf; it always revokes the previous one.
+// RotateSigningKey is the forced renewal; it always revokes every other
+// unexpired leaf of the configured key.
 func (a *api) RotateSigningKey(ctx context.Context, req gen.RotateSigningKeyRequestObject) (gen.RotateSigningKeyResponseObject, error) {
 	res, err := a.signingKeys().RotateSigningKey(ctx, IdentityFrom(ctx), rotateSigningKeyInput(req))
 	if err != nil {

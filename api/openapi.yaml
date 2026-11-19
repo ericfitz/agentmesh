@@ -2489,8 +2489,7 @@ paths:
         The unexpired leaf certificates that sign this server's bearers, the answering
         process's current leaf first, and the trust number. Public facts only: a private key
         is never part of the answer. Administrator only. Any other caller gets 403
-        forbidden. Local mode and a server without a key service answer 503 unavailable, not
-        retryable. Writes nothing. No idempotency key: a read has nothing to repeat.
+        forbidden. Local mode answers 503 unavailable, not retryable. Writes nothing. No idempotency key: a read has nothing to repeat.
         Source: ADR 0019 section 4.11, docs/ops/signing-keys.md.
       responses:
         "200":
@@ -2515,16 +2514,19 @@ paths:
       summary: "Rotate the signing leaf"
       tags: [admin]
       description: >-
-        Makes a new leaf certificate the answering process's current leaf and revokes the
-        previous one at once: the bearers the revoked leaf signed stop verifying, so the
-        caller exchanges its client assertion again. Every rotation revokes; there is no
-        cooldown and no option to keep the previous leaf. The answer names the new leaf, the
-        leaves revoked (each with the count of human messages it signed, always 0 until
-        spec 2) and the trust number. A provider whose next key is the current key is 409
-        conflict. Administrator only. Any other caller gets 403 forbidden. A provider that
-        cannot answer is 503 unavailable, retryable; local mode and a server without a key
-        service answer 503 unavailable, not retryable. Side effects: writes the new key row,
-        deletes the previous one and refreshes the server's key set. Idempotency-Key: a
+        A forced renewal: makes a new leaf certificate the answering process's current leaf
+        and revokes every other unexpired leaf under the installation's intermediate key at
+        once: the bearers a revoked leaf signed stop verifying, so the caller exchanges its
+        client assertion again. Every rotation revokes; there is no cooldown and no option
+        to keep the previous leaf. The answer names the new leaf, the leaves revoked (each
+        with the count of human messages it signed, always 0 until spec 2) and the trust
+        number. Administrator only. Any other caller gets 403 forbidden. A key service that
+        cannot answer, or the trust lock held by another caller, is 503 unavailable,
+        retryable; local mode, and a process that has stopped signing until an operator
+        acts, answer 503 unavailable, not retryable. Side effects: one transaction writes
+        the new leaf's row, the next leaf revocation list and a new trust number; other
+        replicas refuse the revoked leaves' bearers at their next reload (at most 30
+        seconds). Idempotency-Key: a
         repeat with the same key returns the first answer and changes nothing; the same key
         with a different payload is 409 conflict. Source: ADR 0019 section 4.11 and Ruling 6,
         docs/ops/signing-keys.md.
