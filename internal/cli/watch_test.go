@@ -586,3 +586,36 @@ func TestWatchStartedInGapReplacesOlder(t *testing.T) {
 	case <-time.After(2 * watchMinGap):
 	}
 }
+
+// A trust wake (Woke, Seq 0, Count 0) must not lower the floor: the next
+// Watch would announce the old pending messages again (issue #44, M1).
+func TestWatchTrustWakeKeepsFloor(t *testing.T) {
+	prev := watchMinGap
+	watchMinGap = time.Millisecond
+	t.Cleanup(func() { watchMinGap = prev })
+	var afters []int64
+	var mu sync.Mutex
+	s := stubSessions{watch: func(ctx context.Context, in bus.WatchInput) (bus.WatchResult, error) {
+		mu.Lock()
+		afters = append(afters, in.After)
+		n := len(afters)
+		mu.Unlock()
+		switch n {
+		case 1:
+			return bus.WatchResult{Woke: true, Seq: 5, Count: 1, Channels: []string{"general"}}, nil
+		case 2:
+			return bus.WatchResult{Woke: true}, nil // trust wake
+		}
+		<-ctx.Done()
+		return bus.WatchResult{}, ctx.Err()
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	var so testkit.LockedBuffer
+	floor, _ := watchLoop(ctx, s, nil, "s1", "pat", 0, false, &so)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(afters) < 3 || afters[2] != 5 || floor != 5 {
+		t.Fatalf("After values %v, floor %d; want the third Watch after 5", afters, floor)
+	}
+}

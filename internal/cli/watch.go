@@ -68,7 +68,7 @@ func watchLoop(ctx context.Context, s bus.Sessions, mf *wakeFilter, session, dis
 		if !r.Woke {
 			continue
 		}
-		floor = r.Seq
+		floor = max(floor, r.Seq) // a trust wake carries Seq 0: never lower the floor
 		if mf.drops() {
 			continue // parked (decision 18): no wake, floor advanced
 		}
