@@ -3,6 +3,7 @@ package signingkeys_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math/big"
 	"strings"
 	"sync/atomic"
@@ -530,5 +531,67 @@ func TestOnChangeAfterWriteBack(t *testing.T) {
 	}
 	if !e.logged("crls=1") {
 		t.Fatalf("the log does not report the number written:\n%s", e.logs.String())
+	}
+}
+
+// A reload publishes the snapshot Signing reads after it decided the stop and
+// the intermediate (reactLocked), and a write-back publishes after its own
+// refresh: the numbers a reader sees are never behind the stored ones, and the
+// stop and the intermediate agree with the trust number (issue #44).
+func TestSnapshotPublishedAfterPick(t *testing.T) {
+	ctx := context.Background()
+	t.Run("revoked-intermediate", func(t *testing.T) {
+		e, m, _ := renewEnv(t)
+		if _, err := e.tr.InstallRootCRL(ctx, e.f.RevokeIntermediate(t, e.clk.now())); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Reload(ctx); err != nil {
+			t.Fatal(err)
+		}
+		s := m.Signing()
+		if s.Stopped != "intermediate_revoked" || s.Intermediate == nil {
+			t.Fatalf("snapshot = stopped %q, intermediate %v", s.Stopped, s.Intermediate)
+		}
+		if s.TrustNumber != e.trustNumber(t) {
+			t.Fatalf("snapshot trust number %d, stored %d", s.TrustNumber, e.trustNumber(t))
+		}
+	})
+	t.Run("write-back", func(t *testing.T) {
+		e := newEnv(t)
+		e.f.Install(t, e.c)
+		m, err := signingkeys.New(ctx, signingkeys.Options{Trust: e.tr, LeafValidity: week})
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.revokeLeaf(t, 5000, big.NewInt(99))
+		if err := m.Reload(ctx); err != nil {
+			t.Fatal(err)
+		}
+		der := crlBy(t, e.f.Intermediate, interKey(t, e.f), 3000, e.clk.now())
+		if _, err := rawDB(t, e).Exec("UPDATE trust_material SET thumbprint = ?, der = ?, number = 3000 WHERE kind = 'leaf_crl'",
+			pki.Thumbprint(der), der); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Reload(ctx); err != nil {
+			t.Fatal(err)
+		}
+		s := m.Signing()
+		if s.TrustNumber != e.trustNumber(t) || s.LeafCRLNumber != 5000 {
+			t.Fatalf("snapshot trust %d leaf CRL %d, want %d and 5000", s.TrustNumber, s.LeafCRLNumber, e.trustNumber(t))
+		}
+	})
+}
+
+// A start with no intermediate installed fails with ErrNoIntermediate and says
+// nothing about a stop: "no longer issues ... intermediate_expired" would
+// name the wrong cause (issue #44).
+func TestNewNoIntermediateLogsNoStop(t *testing.T) {
+	e := newEnv(t)
+	_, err := signingkeys.New(context.Background(), signingkeys.Options{Trust: e.tr, LeafValidity: week})
+	if !errors.Is(err, signingkeys.ErrNoIntermediate) {
+		t.Fatalf("err = %v", err)
+	}
+	if e.logged("no longer issues") || e.logged("intermediate_expired") {
+		t.Fatalf("the start logged a stop:\n%s", e.logs.String())
 	}
 }

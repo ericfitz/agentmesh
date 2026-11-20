@@ -38,7 +38,7 @@ func target(cmdName string, o client.Options, stderr io.Writer) (server string, 
 	case sel.Defined && sel.Profile.Mode != profile.ModeServer:
 		return exit(client.NoLocalModeError(sel.Name))
 	case sel.Defined && want != "" && want != sel.Profile.Server:
-		return exit(fmt.Errorf("profile %q uses server %s; -server %s disagrees", sel.Name, sel.Profile.Server, o.Server))
+		return exit(fmt.Errorf("profile %q uses server %s; -server %s disagrees", sel.Name, sel.Profile.Server, profile.RedactURL(o.Server)))
 	case sel.Defined:
 		if err := client.CheckTrustOptions(o, sel.Profile); err != nil {
 			return exit(err)

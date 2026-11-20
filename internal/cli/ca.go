@@ -104,6 +104,18 @@ func caReadPEM(path string, stderr io.Writer) ([]byte, int, bool) {
 	return b, 0, true
 }
 
+// caEmit writes a command's result to standard output. A failed write is exit
+// 1 with the message on standard error and what is already done (the state the
+// root tool committed is not undone: the issued certificate stays in
+// state.json and the hint says how to print it again).
+func caEmit(stdout, stderr io.Writer, b []byte, hint string) int {
+	if _, err := stdout.Write(b); err != nil {
+		_, _ = fmt.Fprintf(stderr, "agentmesh ca: writing the result to standard output failed: %v; %s\n", err, hint)
+		return 1
+	}
+	return 0
+}
+
 func runCAInit(args []string, stdout, stderr io.Writer) int {
 	var dir, name string
 	var days int
@@ -118,8 +130,8 @@ func runCAInit(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return caFail(stderr, err)
 	}
-	_, _ = fmt.Fprintf(stdout, "root %s\nthumbprint %s\n", filepath.Join(dir, "root.pem"), thumb)
-	return 0
+	return caEmit(stdout, stderr, []byte(fmt.Sprintf("root %s\nthumbprint %s\n", filepath.Join(dir, "root.pem"), thumb)),
+		"the root exists in "+dir+" (root.pem holds it) but its thumbprint was not printed; it is the SHA-256 of root.pem's certificate")
 }
 
 func runCASign(args []string, stdout, stderr io.Writer) int {
@@ -149,7 +161,11 @@ func runCASign(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return caFail(stderr, err)
 	}
-	_, _ = stdout.Write(pki.EncodePEM("CERTIFICATE", cert.Raw))
+	if code := caEmit(stdout, stderr, pki.EncodePEM("CERTIFICATE", cert.Raw),
+		"the certificate is recorded in "+filepath.Join(dir, "state.json")+" (thumbprint "+pki.Thumbprint(cert.Raw)+") but was not printed; "+
+			"run the same command again to print a new certificate for the same key (the recorded one stays valid; revoke it with ca revoke if it must not be used)"); code != 0 {
+		return code
+	}
 	_, _ = fmt.Fprintf(stderr, "installation %s\n", cert.Subject.CommonName)
 	return 0
 }
@@ -176,9 +192,9 @@ func runCARevoke(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return caFail(stderr, err)
 	}
-	_, _ = stdout.Write(pki.EncodePEM("X509 CRL", crl))
 	for _, t := range revoked {
 		_, _ = fmt.Fprintf(stderr, "revoked %s\n", t)
 	}
-	return 0
+	return caEmit(stdout, stderr, pki.EncodePEM("X509 CRL", crl),
+		"the revocation is recorded and the CRL is in "+filepath.Join(dir, "root.crl")+" but was not printed; run the same command again to print the current CRL")
 }

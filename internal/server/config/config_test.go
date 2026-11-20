@@ -189,7 +189,7 @@ func TestWarnings(t *testing.T) {
 			}
 			continue
 		}
-		if len(w) != 1 || !strings.Contains(w[0], "issuers: entry 1") || !strings.Contains(w[0], tc.uri) {
+		if len(w) != 1 || !strings.Contains(w[0], "issuers: entry 1") || !strings.Contains(w[0], strings.ToLower(tc.uri)) {
 			t.Errorf("%s: warnings = %q, want one naming entry 1 and the URI", tc.uri, w)
 		}
 	}
@@ -483,5 +483,28 @@ func TestURLErrorsNameSchemeAndHostOnly(t *testing.T) {
 	c.Issuer = "http://x/SECRETPATH?token=" + secret
 	if err := c.Validate(); err == nil || strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "SECRETPATH") {
 		t.Errorf("issuer error: %v", err)
+	}
+}
+
+// A warning that names a jwks_uri never echoes its user info, query or
+// fragment (issue #44).
+func TestWarningsRedactJWKSURI(t *testing.T) {
+	const secret = "s3cretpw"
+	for _, uri := range []string{
+		"http://user:" + secret + "@10.0.0.5/jwks",
+		"http://" + secret + "@10.0.0.5/jwks",
+		"http://10.0.0.5/jwks?token=" + secret,
+	} {
+		c := valid()
+		i := goodIssuer()
+		i.JWKSURI = uri
+		c.Issuers = []Issuer{i}
+		w := c.Warnings()
+		if len(w) != 1 {
+			t.Fatalf("%s: warnings = %q, want one", uri, w)
+		}
+		if strings.Contains(w[0], secret) || !strings.Contains(w[0], "10.0.0.5/jwks") {
+			t.Errorf("%s: warning %q", uri, w[0])
+		}
 	}
 }

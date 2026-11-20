@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -201,5 +202,49 @@ func TestCAInitTwice(t *testing.T) {
 	code, out, errs := runCA(t, "init", "-dir", dir)
 	if code != 2 || out != "" || !strings.Contains(errs, "never overwrites") {
 		t.Fatalf("second init = %d %q %q", code, out, errs)
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+// A standard output write failure is exit 1 with the cause and the way to
+// print the result again on standard error; the root tool's state stays
+// (issue #44).
+func TestCAStdoutWriteFailure(t *testing.T) {
+	run := func(args ...string) (int, string) {
+		var e bytes.Buffer
+		code := RunCA(context.Background(), args, nil, strings.NewReader(""), failWriter{}, &e)
+		return code, e.String()
+	}
+	dir := filepath.Join(t.TempDir(), "root")
+	if code, errs := run("init", "-dir", dir); code != 1 || !strings.Contains(errs, "broken pipe") || !strings.Contains(errs, "thumbprint") {
+		t.Fatalf("init = %d %q", code, errs)
+	}
+	csr := caWrite(t, t.TempDir(), "a.csr", pki.EncodePEM("CERTIFICATE REQUEST", caNewCSR(t, "inst-a")))
+	code, errs := run("sign", "-dir", dir, csr)
+	if code != 1 || !strings.Contains(errs, "broken pipe") || !strings.Contains(errs, "state.json") || !strings.Contains(errs, "run the same command again") {
+		t.Fatalf("sign = %d %q", code, errs)
+	}
+	if strings.Contains(errs, "installation inst-a") {
+		t.Fatalf("sign reported success: %q", errs)
+	}
+	st, err := os.ReadFile(filepath.Join(dir, "state.json"))
+	if err != nil || !strings.Contains(string(st), "inst-a") {
+		t.Fatalf("the issued certificate is not in state.json: %v", err)
+	}
+	// The recorded key signs again with no flag and prints.
+	if code, out, errs := runCA(t, "sign", "-dir", dir, csr); code != 0 || !strings.Contains(out, "BEGIN CERTIFICATE") {
+		t.Fatalf("second sign = %d %q", code, errs)
+	}
+	_, out, _ := runCA(t, "sign", "-dir", dir, csr)
+	certFile := caWrite(t, t.TempDir(), "a.pem", []byte(out))
+	code, errs = run("revoke", "-dir", dir, certFile)
+	if code != 1 || !strings.Contains(errs, "broken pipe") || !strings.Contains(errs, "root.crl") {
+		t.Fatalf("revoke = %d %q", code, errs)
+	}
+	if code, out, _ := runCA(t, "revoke", "-dir", dir, certFile); code != 0 || !strings.Contains(out, "BEGIN X509 CRL") {
+		t.Fatalf("revoke again = %d %q", code, out)
 	}
 }

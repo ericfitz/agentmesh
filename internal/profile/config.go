@@ -67,13 +67,13 @@ type OIDC struct {
 func (o OIDC) Validate() error {
 	u, err := url.Parse(o.Issuer)
 	if err != nil || u.Host == "" || u.Opaque != "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("oidc.issuer %q must be an absolute https URL", o.Issuer)
+		return fmt.Errorf("oidc.issuer %q must be an absolute https URL", RedactURL(o.Issuer))
 	}
 	if u.User != nil {
-		return fmt.Errorf("oidc.issuer %q must not carry credentials", o.Issuer)
+		return fmt.Errorf("oidc.issuer %q must not carry credentials", RedactURL(o.Issuer))
 	}
 	if u.Scheme == "http" && !loopbackHost(u.Hostname()) {
-		return fmt.Errorf("oidc.issuer %q must use https (http is accepted only for 127.0.0.1, ::1 and localhost)", o.Issuer)
+		return fmt.Errorf("oidc.issuer %q must use https (http is accepted only for 127.0.0.1, ::1 and localhost)", RedactURL(o.Issuer))
 	}
 	if o.ClientID == "" {
 		return errors.New("oidc.client_id is required")
@@ -182,23 +182,23 @@ func validServer(p Profile) error {
 	}
 	u, err := url.Parse(s)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Opaque != "" {
-		return fmt.Errorf("server %q must be an absolute http or https URL", s)
+		return fmt.Errorf("server %q must be an absolute http or https URL", RedactURL(s))
 	}
 	if u.User != nil {
-		return fmt.Errorf("server %q must not carry credentials", s)
+		return fmt.Errorf("server %q must not carry credentials", RedactURL(s))
 	}
 	if u.Path != "" && u.Path != "/" {
-		return fmt.Errorf("server %q must have no path", s)
+		return fmt.Errorf("server %q must have no path", RedactURL(s))
 	}
 	if u.RawQuery != "" || u.ForceQuery {
-		return fmt.Errorf("server %q must have no query", s)
+		return fmt.Errorf("server %q must have no query", RedactURL(s))
 	}
 	if u.Fragment != "" || strings.Contains(s, "#") {
-		return fmt.Errorf("server %q must have no fragment", s)
+		return fmt.Errorf("server %q must have no fragment", RedactURL(s))
 	}
 	if u.Scheme == "http" {
 		if !loopbackHost(u.Hostname()) && !p.InsecureHTTP {
-			return fmt.Errorf("server %q must use https (http is accepted for 127.0.0.1, ::1 and localhost, or with insecure_http: true, the flag -insecure-http, for local testing only)", s)
+			return fmt.Errorf("server %q must use https (http is accepted for 127.0.0.1, ::1 and localhost, or with insecure_http: true, the flag -insecure-http, for local testing only)", RedactURL(s))
 		}
 	}
 	return nil
@@ -503,3 +503,37 @@ func SetTUIRailWidth(path string, width int) error {
 // LoopbackHost reports whether host is one of the three names for which http
 // is accepted without insecure_http.
 func LoopbackHost(host string) bool { return loopbackHost(host) }
+
+// RedactURL is s as an error message may show it: the whole user info, the
+// query values and the fragment are gone, because a URL setting can carry a
+// token in any of them (issue #44). A value that does not parse loses what
+// precedes the last "@" of its authority part, or is named only as unparseable
+// when no "://" shows where that part starts.
+func RedactURL(s string) string {
+	if u, err := url.Parse(s); err == nil && (u.Opaque == "" || !strings.Contains(u.Opaque, "@")) {
+		u.User = nil
+		if u.RawQuery != "" || u.ForceQuery {
+			u.RawQuery = "..."
+		}
+		u.Fragment, u.RawFragment = "", ""
+		if strings.Contains(s, "#") {
+			return u.String() + "#..."
+		}
+		return u.String()
+	}
+	i := strings.Index(s, "://")
+	if i < 0 {
+		if strings.Contains(s, "@") {
+			return "(an unparseable value with user info)"
+		}
+		return s
+	}
+	rest := s[i+3:]
+	if j := strings.IndexAny(rest, "?#"); j >= 0 {
+		rest = rest[:j] + "?..."
+	}
+	if at := strings.LastIndex(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	return s[:i+3] + rest
+}

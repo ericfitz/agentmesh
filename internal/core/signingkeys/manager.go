@@ -149,7 +149,7 @@ func New(ctx context.Context, o Options) (*Manager, error) {
 		return nil, fmt.Errorf("signingkeys: the leaf validity is %s, want %s to %s", o.LeafValidity, MinLeafValidity, MaxLeafValidity)
 	}
 	m := &Manager{trust: o.Trust, validity: o.LeafValidity, onChange: o.OnChange, wake: make(chan struct{}, 1)}
-	if err := m.Reload(ctx); err != nil {
+	if err := m.reloadAtStart(ctx); err != nil {
 		return nil, err
 	}
 	if err := m.issue(ctx); err != nil {

@@ -151,6 +151,5 @@ func runConfig(_ context.Context, args []string, environ []string, _ io.Reader, 
 	if err != nil {
 		return fail(stderr, err)
 	}
-	_, _ = fmt.Fprintf(stdout, "%s\n\ncommand line: %s\n", doc, commandLine(runtime.GOOS, exe, snippetArgs))
-	return 0
+	return emit(stdout, stderr, fmt.Sprintf("%s\n\ncommand line: %s\n", doc, commandLine(runtime.GOOS, exe, snippetArgs)))
 }

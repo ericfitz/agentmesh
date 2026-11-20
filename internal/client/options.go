@@ -249,7 +249,7 @@ func serverDisagrees(p profile.Profile, flag string) bool {
 }
 
 func serverDisagreesError(p profile.Profile, flag string) error {
-	return resolveErr(fmt.Errorf("profile %q uses server %s; -server %s disagrees", p.Name, p.Server, flag))
+	return resolveErr(fmt.Errorf("profile %q uses server %s; -server %s disagrees", p.Name, p.Server, profile.RedactURL(flag)))
 }
 
 // ErrCredentialProcessConflict matches (errors.Is) the resolution error for

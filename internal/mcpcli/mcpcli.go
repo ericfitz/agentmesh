@@ -55,8 +55,7 @@ func Main(ctx context.Context, args []string, environ []string, stdin io.Reader,
 			_, _ = fmt.Fprintf(stderr, "%s %s: unexpected argument %q\n%s\n", Binary, args[0], args[1], usageLine)
 			return 2
 		}
-		_, _ = fmt.Fprintln(stdout, version.Version)
-		return 0
+		return emit(stdout, stderr, version.Version+"\n")
 	}
 	run, ok := commands[args[0]]
 	if !ok {
@@ -86,7 +85,17 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "%s help: unknown topic %q; topics: %s\n", Binary, topic, strings.Join(topics, ", "))
 		return 2
 	}
-	_, _ = fmt.Fprint(stdout, text)
+	return emit(stdout, stderr, text)
+}
+
+// emit writes a command's result to standard output: a failed write is exit 1
+// with the cause on standard error (a result that never arrived is not a
+// success).
+func emit(stdout, stderr io.Writer, text string) int {
+	if _, err := io.WriteString(stdout, text); err != nil {
+		_, _ = fmt.Fprintf(stderr, "%s: writing the result to standard output failed: %v\n", Binary, err)
+		return 1
+	}
 	return 0
 }
 

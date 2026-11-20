@@ -88,8 +88,9 @@ func schemeList() string {
 
 // KeyName is the part of an external key URI that is safe to print: what
 // follows "://" without any user info, query or fragment ("" when the URI has
-// no "://"). A URI may carry credentials or a token, so logs and messages name
-// the key with this and never print the URI.
+// no "://"; "?" and "#" in the user info must be percent-encoded). A URI may
+// carry credentials or a token, so logs and messages name the key with this and
+// never print the URI.
 func KeyName(uri string) string {
 	_, rest, ok := strings.Cut(uri, "://")
 	if !ok {
@@ -98,9 +99,14 @@ func KeyName(uri string) string {
 	if i := strings.IndexAny(rest, "?#"); i >= 0 {
 		rest = rest[:i]
 	}
-	authority, _, _ := strings.Cut(rest, "/")
-	if i := strings.LastIndex(authority, "@"); i >= 0 {
-		rest = rest[i+1:]
+	// The user info ends at the last "@" before the query: a password may hold
+	// "/" or "@", so the authority is not cut at the first "/". An empty
+	// authority ("scheme:///path") has none. A key name that holds "@" loses
+	// what precedes it, which errs on the side of printing less.
+	if !strings.HasPrefix(rest, "/") {
+		if i := strings.LastIndex(rest, "@"); i >= 0 {
+			rest = rest[i+1:]
+		}
 	}
 	return rest
 }

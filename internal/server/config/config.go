@@ -13,6 +13,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/core"
 	"github.com/ericfitz/agentmesh/internal/keyprovider"
 	"github.com/ericfitz/agentmesh/internal/pki"
+	"github.com/ericfitz/agentmesh/internal/profile"
 	"github.com/ericfitz/agentmesh/internal/store"
 )
 
@@ -353,7 +354,7 @@ func (c Config) Warnings() []string {
 		if err != nil || !strings.EqualFold(u.Scheme, "http") || loopbackHost(u.Hostname()) {
 			continue
 		}
-		w = append(w, fmt.Sprintf("issuers: entry %d: jwks_uri %q is plain http on a non-loopback host; anyone on the path can substitute the key set (use https)", i, is.JWKSURI))
+		w = append(w, fmt.Sprintf("issuers: entry %d: jwks_uri %q is plain http on a non-loopback host; anyone on the path can substitute the key set (use https)", i, profile.RedactURL(is.JWKSURI)))
 	}
 	return w
 }

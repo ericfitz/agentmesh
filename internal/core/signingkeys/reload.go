@@ -60,6 +60,31 @@ func (m *Manager) Reload(ctx context.Context) error {
 	return nil
 }
 
+// reloadAtStart is Reload for New. When the start rules refuse what Pick found
+// (no intermediate installed, expired, revoked, the root expired) it returns
+// that error before any reaction runs, so the log carries no "no longer
+// issues" line for a process that never issued: the caller's error names the
+// cause. Otherwise it behaves as Reload.
+func (m *Manager) reloadAtStart(ctx context.Context) error {
+	m.mu.Lock()
+	l, err := m.loadLocked(ctx)
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	p, perr := m.trust.Pick(ctx, l.mat)
+	if perr == nil {
+		if err := m.trust.check(p, l.mat); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	r := m.reactLocked(l, p, perr)
+	m.mu.Unlock()
+	m.finishReload(ctx, r)
+	return nil
+}
+
 // stopReason is why a manager over p and mat may not issue at now, or "". The
 // manager writes no matching rule of its own: p is what Trust.Pick found.
 func (m *Manager) stopReason(p Picked, mat Material) string {
@@ -199,6 +224,11 @@ func (m *Manager) writeBack(ctx context.Context, held []store.TrustCRL) (written
 		if written > 0 {
 			t.Log.Warn("trust material rollback written back", "crls", written)
 			// The write raised the trust number: the snapshot must not lag it.
+			// reloadLocked skips the reactions and stopReason on purpose: only
+			// CRL rows older than the held ones were written, so no Pick input
+			// changed; at worst a stop that a later reload decides is 30 s late.
+			// publishLocked follows the refresh (the order is the point;
+			// TestSnapshotPublishedAfterPick).
 			m.mu.Lock()
 			_, rerr := m.reloadLocked(ctx)
 			m.publishLocked()

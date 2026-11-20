@@ -99,6 +99,12 @@ func TestKeyNameDropsCredentialsAndQuery(t *testing.T) {
 		{"hashivault://transit-key?address=https://v:8200&token=s3cret", "transit-key"},
 		{"hashivault://user:pw@vault.example/key#frag", "vault.example/key"},
 		{"azurekms://v.vault.azure.net/k?x=1", "v.vault.azure.net/k"},
+		// A "/" in the password must not end the userinfo early (issue #44).
+		{"hashivault://user:pa/ss@vault.example/key", "vault.example/key"},
+		{"hashivault://user:pa/ss/word@vault.example/key", "vault.example/key"},
+		{"hashivault://user:p@ss@vault.example/key", "vault.example/key"},
+		{"hashivault://token@vault.example/key", "vault.example/key"},
+		{"hashivault://user:pa/ss@vault.example/key?x=a@b", "vault.example/key"},
 		{"not-a-uri", ""},
 		{"", ""},
 	} {
