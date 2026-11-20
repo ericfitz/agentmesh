@@ -1,4 +1,4 @@
-.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run cats-selftest pen-check pen-selftest windows-test windows-test-selftest verify-linux verify-linux-selftest
+.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run cats-selftest pen-check pen-selftest windows-test windows-test-selftest verify-linux verify-linux-selftest hooks-check pre-push-selftest
 export CGO_ENABLED=0
 PKGS_UNIT = $$(go list ./... | grep -v '^github.com/ericfitz/agentmesh/internal/conformance')
 
@@ -38,8 +38,8 @@ test-conformance:  ## Store and Bus conformance suites on SQLite and Postgres; -
 	AGENTMESH_BUS_TRANSPORT=inproc go test -count=1 -p 1 ./internal/conformance/bus/
 check-gates:  ## Prove the negative halves: an unreachable Postgres fails the suites, unit tests exclude the suites, nothing skips, the generator reacts to the schema, the suites fail with no Docker and no variable (needs Docker for the busybox run)
 	bash scripts/check-gates.sh
-check-gates-selftest:  ## Prove the gate scripts fire: one mutation per check in a throwaway worktree of HEAD (minutes; a dispatch-only ci.yml job, not part of verify)
-	bash scripts/check-gates-selftest.sh
+check-gates-selftest:  ## Prove the gate scripts fire: one mutation per check in a throwaway worktree of COMMIT (default HEAD; minutes; a dispatch-only ci.yml job, not part of verify)
+	bash scripts/check-gates-selftest.sh $(COMMIT)
 docker-image: ## Build the agentmesh:local Docker image (not part of verify)
 	docker build -t agentmesh:local .
 docker-smoke: ## Build the image and smoke-test it with Docker (not part of verify; a dispatch-only ci.yml job)
@@ -64,11 +64,12 @@ release-check: ## Not part of verify (a dispatch-only ci.yml job). Release tooli
 release-lint: ## actionlint over the workflows and shellcheck over release/, scripts/ and install.sh (not part of verify; a dispatch-only ci.yml job)
 	@for t in actionlint shellcheck; do command -v $$t >/dev/null || { echo "release-lint: $$t is not installed"; exit 1; }; done
 	actionlint .github/workflows/*.yml
-	shellcheck -x release/*.sh scripts/*.sh scripts/lib/*.sh scripts/testdata/cats-fake/cats scripts/testdata/windows-test/vmrun scripts/testdata/windows-test/security scripts/testdata/verify-linux/docker .githooks/pre-commit
+	shellcheck -x release/*.sh scripts/*.sh scripts/lib/*.sh scripts/testdata/cats-fake/cats scripts/testdata/windows-test/vmrun scripts/testdata/windows-test/security scripts/testdata/verify-linux/docker .githooks/pre-commit .githooks/pre-push
 	shellcheck -s sh install.sh
 release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; a dispatch-only ci.yml job)
 	bash release/test-install.sh $(RELEASE_INSTALL_ARGS)
-verify:      ## Done gate (CLAUDE.md): build, the m4, m5, m6, m7, m8 and m10 dependency rules, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, conformance suites on both engines, gate checks, the enterprise number
+verify:      ## Done gate (CLAUDE.md): the hooks path, build, the m4, m5, m6, m7, m8 and m10 dependency rules, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, conformance suites on both engines, gate checks, the enterprise number
+	$(MAKE) hooks-check
 	$(MAKE) build
 	$(MAKE) build-all
 	$(MAKE) build-mcponly
@@ -109,3 +110,7 @@ verify-linux: ## make test and the conformance suites of COMMIT (default HEAD) i
 	bash scripts/verify-linux.sh $(COMMIT)
 verify-linux-selftest: ## scripts/verify-linux.sh against a fake docker
 	bash scripts/verify-linux-selftest.sh
+hooks-check: ## Refuse a clone whose core.hooksPath is not .githooks (first step of verify; passes under GITHUB_ACTIONS=true)
+	bash scripts/pre-push.sh --hooks-check
+pre-push-selftest: ## scripts/pre-push.sh: the path-rule table and the hook on stdin with fake runners
+	bash scripts/pre-push-selftest.sh

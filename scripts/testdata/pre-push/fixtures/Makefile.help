@@ -1,0 +1,14 @@
+.PHONY: verify test help tidy-check other
+CGO = 0
+verify:  ## The done gate, reworded
+	$(MAKE) test
+	$(MAKE) tidy-check
+test:  ## Unit tests
+	go test ./...
+tidy-check:
+	go mod tidy
+# a comment between rules
+other:
+	@echo other
+help:
+	@echo help

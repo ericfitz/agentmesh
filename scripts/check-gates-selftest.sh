@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Self-test of the gate harness (Definition of Done C): one real mutation per
-# check, applied in a throwaway worktree of HEAD, with the exact expected
+# check-gates-selftest.sh [COMMIT]: self-test of the gate harness (Definition of Done C): one
+# real mutation per check, applied in a throwaway worktree of COMMIT (default HEAD), with the exact expected
 # FAIL/ok vector asserted for scripts/check-gates.sh, plus proofs that
 # scripts/ci-gate-negative.sh and scripts/ci-sim.sh fire.
 #
-# It tests HEAD, not the working tree: commit changes to scripts/, the Makefile
+# It tests COMMIT, not the working tree: commit changes to scripts/, the Makefile
 # or internal/dbtest before running it. The main tree is never written. Every
 # block runs even after a failure so one run reports every broken check.
 # Overlapping runs are unsupported (fixed container name and port in block 6);
@@ -13,6 +13,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[ $# -le 1 ] || { echo "usage: check-gates-selftest.sh [COMMIT]" >&2; exit 2; }
+COMMIT=${1:-HEAD}
+git -C "$ROOT" rev-parse --verify "$COMMIT^{commit}" >/dev/null 2>&1 || { echo "check-gates-selftest: '$COMMIT' is not a commit" >&2; exit 2; }
 SIM_NAME=agentmesh-ci-sim-selftest
 SIM_PORT=5434
 BAD_DSN='postgres://agentmesh:agentmesh@127.0.0.1:1/agentmesh?sslmode=disable&connect_timeout=2'
@@ -28,7 +31,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-git -C "$ROOT" worktree add --detach "$wt" HEAD >/dev/null
+git -C "$ROOT" worktree add --detach "$wt" "$COMMIT" >/dev/null
 
 bad=0
 block_ok=1
