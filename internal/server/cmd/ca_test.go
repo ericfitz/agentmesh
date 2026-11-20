@@ -656,7 +656,7 @@ func leafUnder(t *testing.T, inter *x509.Certificate, key *ecdsa.PrivateKey, now
 // sibRevoke returns a root CRL dated at that revokes the sibling's key only.
 func sibRevoke(t *testing.T, f, sib *trusttest.Fixture, at time.Time) *x509.RevocationList {
 	t.Helper()
-	der, _, err := rootca.Revoke(f.Dir, sib.Intermediate, at)
+	der, _, err := rootca.Revoke(f.Dir, sib.Intermediate, at, trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}

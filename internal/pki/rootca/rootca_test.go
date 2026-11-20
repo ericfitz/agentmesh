@@ -24,7 +24,7 @@ var t0 = time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
 func newDir(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "root")
-	if _, err := Init(dir, "test root", 0, t0); err != nil {
+	if _, err := Init(dir, "test root", 0, t0, noRestrict); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -63,7 +63,7 @@ func read(t *testing.T, path string) []byte {
 
 func TestInit(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "root")
-	thumb, err := Init(dir, "test root", 100, t0)
+	thumb, err := Init(dir, "test root", 100, t0, noRestrict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestInitDefaultDays(t *testing.T) {
 func TestInitRefusesExistingRoot(t *testing.T) {
 	dir := newDir(t)
 	before := read(t, filepath.Join(dir, "root.key"))
-	_, err := Init(dir, "again", 0, t0)
+	_, err := Init(dir, "again", 0, t0, noRestrict)
 	if !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v, want ErrRefused", err)
 	}
@@ -114,14 +114,14 @@ func TestInitAfterDeadRun(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "root.key"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Init(dir, "r", 0, t0)
+	_, err := Init(dir, "r", 0, t0, noRestrict)
 	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "root.key") {
 		t.Fatalf("err = %v, want ErrRefused naming root.key", err)
 	}
 }
 
 func TestInitRejectsNegativeDays(t *testing.T) {
-	if _, err := Init(filepath.Join(t.TempDir(), "r"), "r", -1, t0); !errors.Is(err, ErrRefused) {
+	if _, err := Init(filepath.Join(t.TempDir(), "r"), "r", -1, t0, noRestrict); !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v, want ErrRefused", err)
 	}
 }
@@ -129,7 +129,7 @@ func TestInitRejectsNegativeDays(t *testing.T) {
 func TestSign(t *testing.T) {
 	dir := newDir(t)
 	root, _ := Root(dir)
-	cert, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0)
+	cert, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestSignRefusals(t *testing.T) {
 	}
 	before := read(t, filepath.Join(dir, "state.json"))
 	for name, csr := range cases {
-		if _, err := Sign(dir, csr, 0, false, t0); !errors.Is(err, ErrRefused) {
+		if _, err := Sign(dir, csr, 0, false, t0, noCheck); !errors.Is(err, ErrRefused) {
 			t.Errorf("%s: err = %v, want ErrRefused", name, err)
 		}
 	}
@@ -191,10 +191,10 @@ func TestSignRefusals(t *testing.T) {
 
 func TestSignDaysPastRoot(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "r")
-	if _, err := Init(dir, "r", 10, t0); err != nil {
+	if _, err := Init(dir, "r", 10, t0, noRestrict); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Sign(dir, csrFor(t, newKey(t), "a"), 11, false, t0); !errors.Is(err, ErrRefused) {
+	if _, err := Sign(dir, csrFor(t, newKey(t), "a"), 11, false, t0, noCheck); !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v, want ErrRefused", err)
 	}
 }
@@ -202,11 +202,11 @@ func TestSignDaysPastRoot(t *testing.T) {
 func TestSignTwice(t *testing.T) {
 	dir := newDir(t)
 	csr := csrFor(t, newKey(t), "inst-a")
-	a, err := Sign(dir, csr, 0, false, t0)
+	a, err := Sign(dir, csr, 0, false, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Sign(dir, csr, 0, false, t0)
+	b, err := Sign(dir, csr, 0, false, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,31 +221,31 @@ func TestSignTwice(t *testing.T) {
 func TestSignNameTaken(t *testing.T) {
 	dir := newDir(t)
 	k1, k2 := newKey(t), newKey(t)
-	if _, err := Sign(dir, csrFor(t, k1, "inst-a"), 0, false, t0); err != nil {
+	if _, err := Sign(dir, csrFor(t, k1, "inst-a"), 0, false, t0, noCheck); err != nil {
 		t.Fatal(err)
 	}
 	ski, _ := pki.SubjectKeyID(k1.Public())
 	statePath := filepath.Join(dir, "state.json")
 	before := read(t, statePath)
-	_, err := Sign(dir, csrFor(t, k2, "inst-a"), 0, false, t0)
+	_, err := Sign(dir, csrFor(t, k2, "inst-a"), 0, false, t0, noCheck)
 	if !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "-same-installation") || !strings.Contains(err.Error(), pki.KeyID(ski)) {
 		t.Fatalf("err = %v", err)
 	}
 	if string(read(t, statePath)) != string(before) {
 		t.Error("state.json changed")
 	}
-	if _, err := Sign(dir, csrFor(t, k2, "inst-a"), 0, true, t0); err != nil {
+	if _, err := Sign(dir, csrFor(t, k2, "inst-a"), 0, true, t0, noCheck); err != nil {
 		t.Errorf("with the flag: %v", err)
 	}
 	// The flag changes nothing for a new name or the recorded key.
-	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-b"), 0, true, t0); err != nil {
+	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-b"), 0, true, t0, noCheck); err != nil {
 		t.Errorf("flag, new name: %v", err)
 	}
-	if _, err := Sign(dir, csrFor(t, k1, "inst-a"), 0, true, t0); err != nil {
+	if _, err := Sign(dir, csrFor(t, k1, "inst-a"), 0, true, t0, noCheck); err != nil {
 		t.Errorf("flag, recorded key: %v", err)
 	}
 	// Both keys are recorded now: either renews without the flag.
-	if _, err := Sign(dir, csrFor(t, k1, "inst-a"), 0, false, t0); err != nil {
+	if _, err := Sign(dir, csrFor(t, k1, "inst-a"), 0, false, t0, noCheck); err != nil {
 		t.Errorf("renewal of the first key: %v", err)
 	}
 }
@@ -253,15 +253,15 @@ func TestSignNameTaken(t *testing.T) {
 func TestSignNameStaysTakenWhenRevokedOrExpired(t *testing.T) {
 	dir := newDir(t)
 	k1 := newKey(t)
-	cert, err := Sign(dir, csrFor(t, k1, "inst-a"), 1, false, t0)
+	cert, err := Sign(dir, csrFor(t, k1, "inst-a"), 1, false, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Revoke(dir, cert, t0); err != nil {
+	if _, _, err := Revoke(dir, cert, t0, noCheck); err != nil {
 		t.Fatal(err)
 	}
 	later := t0.Add(400 * 24 * time.Hour)
-	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, later); !errors.Is(err, ErrRefused) {
+	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, later, noCheck); !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v, want ErrRefused", err)
 	}
 }
@@ -270,11 +270,11 @@ func TestRevoke(t *testing.T) {
 	dir := newDir(t)
 	root, _ := Root(dir)
 	kK, kL := newKey(t), newKey(t)
-	k1, _ := Sign(dir, csrFor(t, kK, "inst-a"), 0, false, t0)
-	k2, _ := Sign(dir, csrFor(t, kK, "inst-a"), 0, false, t0)
-	l1, _ := Sign(dir, csrFor(t, kL, "inst-b"), 0, false, t0)
+	k1, _ := Sign(dir, csrFor(t, kK, "inst-a"), 0, false, t0, noCheck)
+	k2, _ := Sign(dir, csrFor(t, kK, "inst-a"), 0, false, t0, noCheck)
+	l1, _ := Sign(dir, csrFor(t, kL, "inst-b"), 0, false, t0, noCheck)
 	now := t0.Add(time.Hour)
-	der, revoked, err := Revoke(dir, k1, now)
+	der, revoked, err := Revoke(dir, k1, now, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,12 +306,12 @@ func TestRevoke(t *testing.T) {
 
 func TestRevokeTwice(t *testing.T) {
 	dir := newDir(t)
-	cert, _ := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0)
-	first, _, err := Revoke(dir, cert, t0)
+	cert, _ := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
+	first, _, err := Revoke(dir, cert, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, revoked, err := Revoke(dir, cert, t0.Add(time.Hour))
+	second, revoked, err := Revoke(dir, cert, t0.Add(time.Hour), noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,8 +322,8 @@ func TestRevokeTwice(t *testing.T) {
 
 func TestRevokeCompletesAfterFailedRun(t *testing.T) {
 	dir := newDir(t)
-	cert, _ := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0)
-	first, _, err := Revoke(dir, cert, t0)
+	cert, _ := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
+	first, _, err := Revoke(dir, cert, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestRevokeCompletesAfterFailedRun(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "root.crl")); err != nil {
 		t.Fatal(err)
 	}
-	der, revoked, err := Revoke(dir, cert, t0.Add(time.Hour))
+	der, revoked, err := Revoke(dir, cert, t0.Add(time.Hour), noCheck)
 	if err != nil || len(revoked) != 0 {
 		t.Fatalf("revoked = %v, err = %v", revoked, err)
 	}
@@ -347,13 +347,13 @@ func TestRevokeCompletesAfterFailedRun(t *testing.T) {
 
 func TestRevokeClockBack(t *testing.T) {
 	dir := newDir(t)
-	a, _ := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0)
-	b, _ := Sign(dir, csrFor(t, newKey(t), "inst-b"), 0, false, t0)
-	d1, _, err := Revoke(dir, a, t0)
+	a, _ := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
+	b, _ := Sign(dir, csrFor(t, newKey(t), "inst-b"), 0, false, t0, noCheck)
+	d1, _, err := Revoke(dir, a, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
-	d2, _, err := Revoke(dir, b, t0.Add(-time.Hour))
+	d2, _, err := Revoke(dir, b, t0.Add(-time.Hour), noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,15 +367,15 @@ func TestRevokeClockBack(t *testing.T) {
 func TestRevokeUnknown(t *testing.T) {
 	dir := newDir(t)
 	other := filepath.Join(t.TempDir(), "other")
-	if _, err := Init(other, "other", 0, t0); err != nil {
+	if _, err := Init(other, "other", 0, t0, noRestrict); err != nil {
 		t.Fatal(err)
 	}
-	stranger, err := Sign(other, csrFor(t, newKey(t), "inst-a"), 0, false, t0)
+	stranger, err := Sign(other, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := read(t, filepath.Join(dir, "state.json"))
-	if _, _, err := Revoke(dir, stranger, t0); !errors.Is(err, ErrRefused) {
+	if _, _, err := Revoke(dir, stranger, t0, noCheck); !errors.Is(err, ErrRefused) {
 		t.Fatalf("err = %v, want ErrRefused", err)
 	}
 	if string(read(t, filepath.Join(dir, "state.json"))) != string(before) {
@@ -392,14 +392,14 @@ func TestLock(t *testing.T) {
 	if err := os.WriteFile(lock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0)
+	_, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
 	if err == nil || errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), lock) {
 		t.Fatalf("err = %v, want a failure naming %s", err, lock)
 	}
 	if err := os.Remove(lock); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0); err != nil {
+	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
@@ -416,7 +416,7 @@ func TestConcurrentSign(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := Sign(dir, csr, 0, false, t0)
+			_, err := Sign(dir, csr, 0, false, t0, noCheck)
 			errs <- err
 		}()
 	}
@@ -437,3 +437,136 @@ func TestConcurrentSign(t *testing.T) {
 }
 
 func pkixName(cn string) pkix.Name { return pkix.Name{CommonName: cn} }
+
+func noRestrict(string) error { return nil }
+func noCheck(string) error    { return nil }
+
+// The injected hooks (ADR 0019 rule pki-leaf: this package may not import
+// internal/fileacl). A nil hook is refused, never defaulted.
+func TestInitNilRestrictRefused(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r")
+	if _, err := Init(dir, "r", 0, t0, nil); err == nil || !strings.Contains(err.Error(), "restrict is nil") {
+		t.Fatalf("nil restrict: %v", err)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("a refused Init created the directory")
+	}
+}
+
+// restrict runs on the temporary file before any key byte is written, and the
+// access list it sets is what root.key ends up with (a hard link).
+func TestInitRestrictsBeforeWrite(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r")
+	calls := 0
+	_, err := Init(dir, "r", 0, t0, func(p string) error {
+		calls++
+		fi, err := os.Stat(p)
+		if err != nil {
+			return err
+		}
+		if fi.Size() != 0 {
+			t.Errorf("restrict saw %d bytes already written", fi.Size())
+		}
+		if filepath.Dir(p) != dir || filepath.Base(p) == "root.key" {
+			t.Errorf("restrict got %s, want a temporary file in %s", p, dir)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Errorf("restrict called %d times, want 1", calls)
+	}
+	if b := read(t, filepath.Join(dir, "root.key")); len(b) == 0 {
+		t.Error("root.key is empty")
+	}
+	assertNoTemp(t, dir)
+}
+
+func TestInitRestrictFailureWritesNoKey(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r")
+	_, err := Init(dir, "r", 0, t0, func(string) error { return errors.New("acl boom") })
+	if err == nil || !strings.Contains(err.Error(), "acl boom") {
+		t.Fatalf("restrict failure: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "root.key")); err == nil {
+		t.Error("root.key exists after a failed restrict")
+	}
+	assertNoTemp(t, dir)
+}
+
+// A root.key already there is refused (exit 2) with the key untouched.
+func TestInitExistingKeyKept(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "r")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(dir, "root.key")
+	if err := os.WriteFile(keyPath, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Init(dir, "r", 0, t0, noRestrict); !errors.Is(err, ErrRefused) {
+		t.Fatalf("existing root.key: %v", err)
+	}
+	if string(read(t, keyPath)) != "keep" {
+		t.Error("an existing root.key was replaced")
+	}
+	assertNoTemp(t, dir)
+}
+
+func assertNoTemp(t *testing.T, dir string) {
+	t.Helper()
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), ".root.key-") {
+			t.Errorf("temporary file %s left behind", e.Name())
+		}
+	}
+}
+
+func TestNilCheckRefused(t *testing.T) {
+	dir := newDir(t)
+	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, nil); err == nil || !strings.Contains(err.Error(), "check is nil") {
+		t.Fatalf("Sign nil check: %v", err)
+	}
+	cert, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Revoke(dir, cert, t0, nil); err == nil || !strings.Contains(err.Error(), "check is nil") {
+		t.Fatalf("Revoke nil check: %v", err)
+	}
+}
+
+// A key file the check refuses is never read, and a refused Revoke records
+// nothing (state.json is unchanged), so the rerun after the fix is a first run.
+func TestKeyFailingCheckRefused(t *testing.T) {
+	dir := newDir(t)
+	cert, err := Sign(dir, csrFor(t, newKey(t), "inst-a"), 0, false, t0, noCheck)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	deny := func(p string) error { seen = append(seen, p); return errors.New("exposed to others") }
+	before := read(t, filepath.Join(dir, "state.json"))
+	if _, err := Sign(dir, csrFor(t, newKey(t), "inst-b"), 0, false, t0, deny); err == nil || !strings.Contains(err.Error(), "exposed to others") {
+		t.Fatalf("Sign with a failing check: %v", err)
+	}
+	if _, _, err := Revoke(dir, cert, t0, deny); err == nil || !strings.Contains(err.Error(), "exposed to others") {
+		t.Fatalf("Revoke with a failing check: %v", err)
+	}
+	want := filepath.Join(dir, "root.key")
+	if len(seen) != 2 || seen[0] != want || seen[1] != want {
+		t.Errorf("check saw %v, want root.key twice", seen)
+	}
+	if string(read(t, filepath.Join(dir, "state.json"))) != string(before) {
+		t.Error("a refused Sign or Revoke changed state.json")
+	}
+	if _, _, err := Revoke(dir, cert, t0, noCheck); err != nil {
+		t.Fatalf("Revoke after the fix: %v", err)
+	}
+}

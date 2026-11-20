@@ -26,6 +26,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
 	"github.com/ericfitz/agentmesh/internal/store"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 type wireTrust struct {
@@ -126,11 +127,11 @@ func addIntermediates(t *testing.T, e *env) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revoked, err := rootca.Sign(e.fx.Dir, csr, 30, true, e.clock.Now().Add(-time.Hour))
+	revoked, err := rootca.Sign(e.fx.Dir, csr, 30, true, e.clock.Now().Add(-time.Hour), trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
-	crlDER, _, err := rootca.Revoke(e.fx.Dir, revoked, e.clock.Now())
+	crlDER, _, err := rootca.Revoke(e.fx.Dir, revoked, e.clock.Now(), trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}

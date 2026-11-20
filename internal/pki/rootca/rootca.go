@@ -38,8 +38,15 @@ func refuse(format string, args ...any) error {
 // Init makes the root key (ECDSA P-256), the self-signed root certificate and
 // an empty state.json in dir, and returns the root's thumbprint. It never
 // overwrites: root.key is created exclusively, and a directory that already
-// holds any of the files is refused with the file named.
-func Init(dir, name string, days int, now time.Time) (thumbprint string, err error) {
+// holds any of the files is refused with the file named. restrict is required
+// (nil is refused): it makes the temporary file that becomes root.key
+// owner-only before any key byte is written (the caller passes
+// fileacl.OwnerOnly; this package may not import it, ADR 0019), and the access
+// list travels with the hard link.
+func Init(dir, name string, days int, now time.Time, restrict func(path string) error) (thumbprint string, err error) {
+	if restrict == nil {
+		return "", errors.New("rootca: init: restrict is nil")
+	}
 	if days < 0 {
 		return "", refuse("days is %d, want 0 or more", days)
 	}
@@ -66,19 +73,8 @@ func Init(dir, name string, days int, now time.Time) (thumbprint string, err err
 		return "", fmt.Errorf("rootca: %w", err)
 	}
 	keyPath := filepath.Join(dir, "root.key")
-	f, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return "", refuse("%s exists; if no root.pem was made, remove it and run again", keyPath)
-	}
-	if err != nil {
-		return "", fmt.Errorf("rootca: %w", err)
-	}
-	_, werr := f.Write(pki.EncodePEM("PRIVATE KEY", keyDER))
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		return "", fmt.Errorf("rootca: write %s: %w", keyPath, werr)
+	if err := createKeyFile(keyPath, pki.EncodePEM("PRIVATE KEY", keyDER), restrict); err != nil {
+		return "", err
 	}
 	root, err := pki.NewRoot(key, name, now, now.Add(time.Duration(days)*day))
 	if err != nil {
@@ -106,8 +102,53 @@ func Root(dir string) (*x509.Certificate, error) {
 	return c, nil
 }
 
-func rootKey(dir string) (crypto.Signer, error) {
-	b, err := os.ReadFile(filepath.Join(dir, "root.key"))
+// createKeyFile writes data at path exclusively: a temporary file in the same
+// directory at mode 0600, restricted, then written, then os.Link to path, so
+// an existing file is never replaced.
+func createKeyFile(path string, data []byte, restrict func(path string) error) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".root.key-*")
+	if err != nil {
+		return fmt.Errorf("rootca: %w", err)
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	if err := tmp.Chmod(0o600); err != nil && !errors.Is(err, errors.ErrUnsupported) {
+		_ = tmp.Close()
+		return fmt.Errorf("rootca: %w", err)
+	}
+	if err := restrict(name); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("rootca: restrict %s: %w", path, err)
+	}
+	_, werr := tmp.Write(data)
+	if werr == nil {
+		werr = tmp.Sync()
+	}
+	if cerr := tmp.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return fmt.Errorf("rootca: write %s: %w", path, werr)
+	}
+	if err := os.Link(name, path); errors.Is(err, os.ErrExist) {
+		return refuse("%s exists; if no root.pem was made, remove it and run again", path)
+	} else if err != nil {
+		return fmt.Errorf("rootca: %w", err)
+	}
+	return nil
+}
+
+// rootKey reads root.key after check accepts it (the caller passes the
+// owner-only check: Unix mode or fileacl.CheckOwnerOnly). check is required.
+func rootKey(dir string, check func(path string) error) (crypto.Signer, error) {
+	if check == nil {
+		return nil, errors.New("rootca: check is nil")
+	}
+	keyPath := filepath.Join(dir, "root.key")
+	if err := check(keyPath); err != nil {
+		return nil, fmt.Errorf("rootca: %w", err)
+	}
+	b, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("rootca: %w", err)
 	}
@@ -130,7 +171,7 @@ func rootKey(dir string) (crypto.Signer, error) {
 // records it in state.json before returning it. A name already recorded for
 // another key is refused unless sameInstallation is set (Decision 37, Ruling
 // 43); a renewal (the recorded key) and a new name need no flag.
-func Sign(dir string, csr *x509.CertificateRequest, days int, sameInstallation bool, now time.Time) (*x509.Certificate, error) {
+func Sign(dir string, csr *x509.CertificateRequest, days int, sameInstallation bool, now time.Time, check func(path string) error) (*x509.Certificate, error) {
 	if days < 0 {
 		return nil, refuse("days is %d, want 0 or more", days)
 	}
@@ -160,7 +201,7 @@ func Sign(dir string, csr *x509.CertificateRequest, days int, sameInstallation b
 	if err != nil {
 		return nil, err
 	}
-	key, err := rootKey(dir)
+	key, err := rootKey(dir, check)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +254,7 @@ func Sign(dir string, csr *x509.CertificateRequest, days int, sameInstallation b
 // call newly revoked (empty on a repeat, which returns the current CRL with
 // its number unchanged). state.json is replaced before root.crl, so a rerun
 // after a failure completes the CRL.
-func Revoke(dir string, cert *x509.Certificate, now time.Time) (crlDER []byte, revoked []string, err error) {
+func Revoke(dir string, cert *x509.Certificate, now time.Time, check func(path string) error) (crlDER []byte, revoked []string, err error) {
 	thumb := pki.Thumbprint(cert.Raw)
 	ski, err := pki.SubjectKeyID(cert.PublicKey)
 	if err != nil {
@@ -252,6 +293,7 @@ func Revoke(dir string, cert *x509.Certificate, now time.Time) (crlDER []byte, r
 		}
 	}
 	crlPath := filepath.Join(dir, "root.crl")
+	var key crypto.Signer
 	if len(revoked) == 0 {
 		if der, ok := currentCRL(crlPath, st); ok {
 			return der, nil, nil
@@ -259,14 +301,20 @@ func Revoke(dir string, cert *x509.Certificate, now time.Time) (crlDER []byte, r
 		// A run died after state.json and before root.crl: complete it
 		// with the number the state already holds.
 	} else {
+		// The key is read (and checked) before state.json changes, so a
+		// refused key leaves nothing recorded.
+		if key, err = rootKey(dir, check); err != nil {
+			return nil, nil, err
+		}
 		st.CRLNumber = pki.NextNumber(now, st.CRLNumber)
 		if err := saveState(dir, st); err != nil {
 			return nil, nil, err
 		}
 	}
-	key, err := rootKey(dir)
-	if err != nil {
-		return nil, nil, err
+	if key == nil {
+		if key, err = rootKey(dir, check); err != nil {
+			return nil, nil, err
+		}
 	}
 	var serials []*big.Int
 	for _, e := range st.Issued {

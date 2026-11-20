@@ -63,7 +63,7 @@ func New(t testing.TB, now time.Time) *Fixture {
 		now = time.Now()
 	}
 	dir := t.TempDir()
-	if _, err := rootca.Init(dir, "test root", rootDays, now.Add(-time.Hour)); err != nil {
+	if _, err := rootca.Init(dir, "test root", rootDays, now.Add(-time.Hour), NoRestrict); err != nil {
 		t.Fatalf("trusttest: root init: %v", err)
 	}
 	root, err := rootca.Root(dir)
@@ -125,7 +125,7 @@ func (f *Fixture) issue(t testing.TB, base, installation string) {
 
 func (f *Fixture) sign(t testing.TB, at time.Time, days int) *x509.Certificate {
 	t.Helper()
-	cert, err := rootca.Sign(f.Dir, f.csr, days, false, at)
+	cert, err := rootca.Sign(f.Dir, f.csr, days, false, at, NoCheck)
 	if err != nil {
 		t.Fatalf("trusttest: sign: %v", err)
 	}
@@ -235,7 +235,7 @@ func (f *Fixture) RevokeIntermediate(t testing.TB, at time.Time) *x509.Revocatio
 	if at.IsZero() {
 		at = f.Now
 	}
-	der, _, err := rootca.Revoke(f.Dir, f.Intermediate, at)
+	der, _, err := rootca.Revoke(f.Dir, f.Intermediate, at, NoCheck)
 	if err != nil {
 		t.Fatalf("trusttest: revoke: %v", err)
 	}
@@ -324,3 +324,11 @@ func LeafBearer(t testing.TB, priv ed25519.PrivateKey, leaf *x509.Certificate, i
 	}
 	return raw
 }
+
+// NoRestrict and NoCheck are the no-op root key hooks rootca.Init, Sign and
+// Revoke require: tests do not exercise the owner-only rule (rootca's own tests
+// and internal/cli's do).
+func NoRestrict(string) error { return nil }
+
+// NoCheck is the no-op counterpart of NoRestrict for reading root.key.
+func NoCheck(string) error { return nil }

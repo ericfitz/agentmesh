@@ -23,6 +23,7 @@ import (
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
 	"github.com/ericfitz/agentmesh/internal/store"
+	"github.com/ericfitz/agentmesh/internal/trusttest"
 )
 
 // keyServiceEnv is an env whose intermediate key sits behind a kmsfake alias: the
@@ -306,10 +307,10 @@ func TestKeyChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rootca.Sign(e.f.Dir, csr, 365, false, now.Add(-time.Hour)); err == nil {
+	if _, err := rootca.Sign(e.f.Dir, csr, 365, false, now.Add(-time.Hour), trusttest.NoCheck); err == nil {
 		t.Fatal("a second key for a taken name was signed without sameInstallation")
 	}
-	second, err := rootca.Sign(e.f.Dir, csr, 365, true, now.Add(-time.Hour))
+	second, err := rootca.Sign(e.f.Dir, csr, 365, true, now.Add(-time.Hour), trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +363,7 @@ func TestKeyChange(t *testing.T) {
 
 	// Revoke the old key with the root tool and install the root CRL: its leaves
 	// are cut off, the new key's stay.
-	crlDER, _, err := rootca.Revoke(e.f.Dir, e.f.Intermediate, now)
+	crlDER, _, err := rootca.Revoke(e.f.Dir, e.f.Intermediate, now, trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}

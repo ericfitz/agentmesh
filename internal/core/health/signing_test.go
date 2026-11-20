@@ -156,11 +156,11 @@ func (e *signingEnv) otherRootCRL(t *testing.T) *x509.RevocationList {
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := rootca.Sign(e.fx.Dir, csr, 30, false, e.now.Add(-time.Hour))
+	other, err := rootca.Sign(e.fx.Dir, csr, 30, false, e.now.Add(-time.Hour), trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}
-	crlDER, _, err := rootca.Revoke(e.fx.Dir, other, *e.now)
+	crlDER, _, err := rootca.Revoke(e.fx.Dir, other, *e.now, trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}

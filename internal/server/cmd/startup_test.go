@@ -96,7 +96,7 @@ func installExternal(t *testing.T, e *startEnv, uri string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := rootca.Sign(e.f.Dir, csr, 365, true, time.Now().Add(-time.Hour))
+	cert, err := rootca.Sign(e.f.Dir, csr, 365, true, time.Now().Add(-time.Hour), trusttest.NoCheck)
 	if err != nil {
 		t.Fatal(err)
 	}

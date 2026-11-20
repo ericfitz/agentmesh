@@ -10,8 +10,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
+	"github.com/ericfitz/agentmesh/internal/fileacl"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/pki/rootca"
 )
@@ -116,6 +118,41 @@ func caEmit(stdout, stderr io.Writer, b []byte, hint string) int {
 	return 0
 }
 
+// caRestrict and caCheck are the root key hooks rootca requires (it may not
+// import internal/fileacl: ADR 0019, rule pki-leaf). Variables so a test can
+// observe them.
+var (
+	caRestrict = fileacl.OwnerOnly
+	caCheck    = checkOwnerOnlyKey
+)
+
+// checkOwnerOnlyKey accepts root.key only when no other account can read or
+// write it: Unix mode 0600 or narrower, fileacl.CheckOwnerOnly on Windows
+// (where a mode means nothing). A symlink is followed and the target checked.
+// The message names the fix.
+func checkOwnerOnlyKey(path string) error {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	if runtime.GOOS == "windows" {
+		if err := fileacl.CheckOwnerOnly(path); err != nil {
+			if errors.Is(err, fileacl.ErrExposed) {
+				return fmt.Errorf("%s: %w; restrict it with: %s", path, err, fileacl.WindowsFix(path))
+			}
+			return fmt.Errorf("check %s: %w", path, err)
+		}
+		return nil
+	}
+	if perm := fi.Mode().Perm(); perm&^0o600 != 0 {
+		return fmt.Errorf("%s has mode %#o, which other accounts can read or write, and holds the root private key; chmod 600 %s", path, perm, path)
+	}
+	return nil
+}
+
 func runCAInit(args []string, stdout, stderr io.Writer) int {
 	var dir, name string
 	var days int
@@ -126,7 +163,7 @@ func runCAInit(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return code
 	}
-	thumb, err := rootca.Init(dir, name, days, time.Now())
+	thumb, err := rootca.Init(dir, name, days, time.Now(), caRestrict)
 	if err != nil {
 		return caFail(stderr, err)
 	}
@@ -157,7 +194,7 @@ func runCASign(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "agentmesh ca: %s: %v\n", rest[0], err)
 		return 2
 	}
-	cert, err := rootca.Sign(dir, csr, days, same, time.Now())
+	cert, err := rootca.Sign(dir, csr, days, same, time.Now(), caCheck)
 	if err != nil {
 		return caFail(stderr, err)
 	}
@@ -188,7 +225,7 @@ func runCARevoke(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "agentmesh ca: %s: %v\n", rest[0], err)
 		return 2
 	}
-	crl, revoked, err := rootca.Revoke(dir, cert, time.Now())
+	crl, revoked, err := rootca.Revoke(dir, cert, time.Now(), caCheck)
 	if err != nil {
 		return caFail(stderr, err)
 	}
