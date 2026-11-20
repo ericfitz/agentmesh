@@ -179,10 +179,6 @@ GUESTPW=$(fetch_secret guest-test "the guest account $GUEST_USER password")
 STATE=$(devstate_dir)
 LOCKFILE=$STATE/windows-test.lock
 MUTEX_PATH=$STATE/windows-test.lock.d
-LOGDIR=$(devstate_logdir "$CHECK" "$SHA")
-# A fresh run: no stale results or earlier pass for this commit survive it.
-find "$LOGDIR" -mindepth 1 -delete
-rm -f "$STATE/passes/$CHECK/$SHA"
 
 # ---- 2. lock and the already-running check, serialized by the mutex ----
 n=0
@@ -227,6 +223,12 @@ mv "$LOCKFILE.tmp.$$" "$LOCKFILE"
 LOCKED=1
 rmdir "$MUTEX_PATH"
 MUTEX=""
+
+# Only now, owning the lock, may this run touch the commit's logs and pass record:
+# a refused run (exit 2 above) must leave a live run's files and a recorded pass alone.
+LOGDIR=$(devstate_logdir "$CHECK" "$SHA")
+find "$LOGDIR" -mindepth 1 -delete
+rm -f "$STATE/passes/$CHECK/$SHA"
 
 # ---- 3. archive, revert, start, wait for Tools ----
 git -C "$ROOT" archive --format=zip -o "$LOGDIR/src.zip" "$SHA" || die 2 "git archive of $SHA failed"

@@ -174,6 +174,7 @@ case_tools_timeout() {
 
 case_already_running() {
   setup_case already-running
+  plant_files
   run_script
   expect_rc 2
   expect_msg "$VMX"
@@ -181,6 +182,7 @@ case_already_running() {
   expect_not_called revertToSnapshot
   expect_not_called start
   expect_no_lock
+  expect_planted
   finish_case
 }
 
@@ -195,24 +197,40 @@ case_stale_lock() {
   finish_case
 }
 
+# plant_files: a recorded pass and a log file for the commit, as a live run or an
+# earlier pass would hold them; a refused run must leave both intact.
+plant_files() {
+  mkdir -p "$STATE/passes/windows-test" "$STATE/logs/windows-test/$SHA"
+  : >"$STATE/passes/windows-test/$SHA"
+  echo live >"$STATE/logs/windows-test/$SHA/src.zip"
+}
+expect_planted() {
+  [ -f "$STATE/passes/windows-test/$SHA" ] || fail "a refused run deleted the recorded pass"
+  [ "$(cat "$STATE/logs/windows-test/$SHA/src.zip" 2>/dev/null)" = live ] || fail "a refused run wiped the live run's log files"
+}
+
 case_live_lock() {
   setup_case live-lock
+  plant_files
   echo "$$ $(date +%s)" >"$STATE/windows-test.lock"
   run_script
   expect_rc 2
   expect_msg "$$"
   expect_not_called revertToSnapshot
   [ -f "$STATE/windows-test.lock" ] || fail "the live run's lock was removed"
+  expect_planted
   finish_case
 }
 
 case_bad_lock() {
   setup_case bad-lock
+  plant_files
   echo "not a lock" >"$STATE/windows-test.lock"
   run_script
   expect_rc 2
   expect_msg "windows-test.lock"
   expect_not_called revertToSnapshot
+  expect_planted
   finish_case
 }
 
