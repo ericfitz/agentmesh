@@ -1,6 +1,14 @@
 package signingkeys
 
-import "context"
+import (
+	"context"
+
+	"github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/pki"
+)
+
+// BusLeaf is busLeaf.
+func BusLeaf(v pki.Verified, state string) bus.SigningKey { return busLeaf(v, state) }
 
 // SetChainCheckHook sets the function Load calls before each pki.CheckChain
 // (nil clears it): the tests count chain verifications through it.

@@ -343,7 +343,12 @@ func (m *Manager) issue(ctx context.Context) error {
 	return m.issueLocked(ctx)
 }
 
-// issueLocked is issue for a caller that holds issueMu.
+// issueLocked is issue for a caller that holds issueMu. A leaf it inserts while
+// another process runs a rotation or revocation is not on the leaf CRL that
+// process builds (the CRL lists the unexpired leaf rows it read, and the row
+// lands after), and stays unrevoked: this is the spec's behavior (section 4.8
+// step 5 lists the rows present when the CRL is built), and the leaf is the
+// issuer's own, made after the revocation was decided (issue #44, M5).
 func (m *Manager) issueLocked(ctx context.Context) error {
 	m.mu.Lock()
 	mat := m.mat

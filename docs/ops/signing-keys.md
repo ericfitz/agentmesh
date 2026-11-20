@@ -261,7 +261,7 @@ installation example-prod
 
 A forced renewal issues a new leaf and puts every other unexpired leaf of the installation's intermediate key on the leaf CRL. It always revokes and is never refused for being too soon.
 
-- API: an administrator runs `agentmesh signing-keys rotate [-key K]` (`POST /v1/admin/signing-keys/rotate`, which honors `Idempotency-Key`: a retry with the same key returns the first answer, counts included, and changes nothing). The answer is `current` (the new leaf), `revoked` (one entry per leaf revoked: `thumbprint` and `human_messages`) and `trust_number`. `agentmesh signing-keys list` (`GET /v1/admin/signing-keys`) shows the unexpired leaves, this process's current leaf first, each with `state` `current`, `previous`, `other` or `revoked`. A forced renewal that finds the `trust` lock held by another process answers a retryable `unavailable`.
+- API: an administrator runs `agentmesh signing-keys rotate [-key K]` (`POST /v1/admin/signing-keys/rotate`, which honors `Idempotency-Key`: a retry with the same key returns the first answer, counts included, and changes nothing). The answer is `current` (the new leaf), `revoked` (one entry per leaf revoked: `thumbprint` and `human_messages`) and `trust_number`. `agentmesh signing-keys list` (`GET /v1/admin/signing-keys`) shows the unexpired leaves, this process's current leaf first, each with `state` `current`, `previous`, `other` or `revoked`. A key's `not_before` and `not_after` are its chain's validity period (the leaf's, cut to the intermediate's and the root's), which equals the certificate's own unless an issuer's period is narrower. A forced renewal that finds the `trust` lock held by another process answers a retryable `unavailable`.
 - Host: `agentmesh server admin ... signing-key rotate` does the lock, the reload and the CRL without issuing a leaf: it revokes every unexpired leaf under the configured key, and the running processes issue new ones. `signing-key list` prints one line per unexpired leaf. Both are run with the three trust settings:
 
 ```
@@ -276,6 +276,8 @@ trust-number 1794806572985
 ```
 
 The cost: whatever a revoked leaf signed stops verifying (Decision 5; Decision 16). Today that is bearers, so the caller exchanges again; the report's `human_messages` count is always 0 until human messages are signed (ADR 0019 spec 2). Nothing else is signed. Expiry alone never invalidates anything signed earlier; only revocation does. There is no re-sign path. A bearer a leaf signed is refused by the replica that revoked it at once, and by the others once they reload the trust material: at most 30 seconds (`token.ReloadInterval`), or sooner on a Postgres notification. The two commands only cut off leaves under the configured key; a leaf of another key is reported on standard error as `not-covered <thumbprint>` (see "Renewing the intermediate certificate, and changing its key").
+
+A leaf another process issues while a rotation or revocation runs is not revoked by it: the leaf CRL lists the unexpired leaf rows present when it is built (spec section 4.8, step 5), and a row that lands afterwards is that process's own fresh leaf. The next rotation or a `signing-key revoke` covers it.
 
 ## Revoking one leaf
 

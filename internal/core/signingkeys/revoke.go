@@ -383,7 +383,12 @@ func signingKeyList(now time.Time, mat Material, current, previous string) bus.S
 	return out
 }
 
-// busLeaf is the Bus form of a verified leaf: public facts only.
+// busLeaf is the Bus form of a verified leaf: public facts only. NotBefore and
+// NotAfter are the chain's validity period (the leaf's cut to the
+// intermediate's and the root's, pki.Verified), which is what the leaf can sign
+// within; they equal the certificate's own unless an issuer's period is
+// narrower (issue #44, M6: spec 4.2 treats the chain period as the leaf's
+// validity, so the field is not changed).
 func busLeaf(v pki.Verified, state string) bus.SigningKey {
 	return bus.SigningKey{
 		Thumbprint:       pki.Thumbprint(v.Leaf.Raw),

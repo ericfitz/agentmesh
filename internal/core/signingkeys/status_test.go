@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
+	"github.com/ericfitz/agentmesh/internal/core/signingkeys"
 	"github.com/ericfitz/agentmesh/internal/pki"
 )
 
@@ -57,5 +59,20 @@ func TestBundleReplacedByReload(t *testing.T) {
 	}
 	if got := m.Bundle(); got.TrustNumber != after.TrustNumber {
 		t.Fatalf("closed Store: number %d", got.TrustNumber)
+	}
+}
+
+// SigningKey.not_before and not_after are the chain's validity period, not the
+// leaf certificate's own, when an issuer's period is narrower (issue #44, M6).
+func TestSigningKeyPeriodIsTheChains(t *testing.T) {
+	e := newEnv(t)
+	leaf := e.f.Intermediate // any certificate: only its raw bytes and serial are read
+	v := pki.Verified{
+		Leaf: leaf, Intermediate: e.f.Intermediate,
+		NotBefore: leaf.NotBefore.Add(time.Hour), NotAfter: leaf.NotAfter.Add(-time.Hour),
+	}
+	k := signingkeys.BusLeaf(v, "current")
+	if k.NotBefore != v.NotBefore.UnixMilli() || k.NotAfter != v.NotAfter.UnixMilli() {
+		t.Fatalf("period %d..%d, want the chain's %d..%d", k.NotBefore, k.NotAfter, v.NotBefore.UnixMilli(), v.NotAfter.UnixMilli())
 	}
 }
