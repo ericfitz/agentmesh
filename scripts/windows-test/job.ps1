@@ -65,7 +65,18 @@ function Invoke-Step([string]$Name, [scriptblock]$Body) {
 }
 
 function Invoke-GoTest {
-    $pkgs = @(go list ./... | Where-Object { $_ -notmatch '/internal/conformance' })
+    $listed = @(go list ./...)
+    if ($LASTEXITCODE -ne 0 -or $listed.Count -eq 0) {
+        Write-Output "go list ./... failed or returned no packages (exit $LASTEXITCODE)"
+        $global:LASTEXITCODE = 1
+        return
+    }
+    $pkgs = @($listed | Where-Object { $_ -notmatch '/internal/conformance' })
+    if ($pkgs.Count -eq 0) {
+        Write-Output 'no packages left after excluding internal/conformance'
+        $global:LASTEXITCODE = 1
+        return
+    }
     $raw = go test -json @pkgs 2>&1
     $code = $LASTEXITCODE
     $failed = @()

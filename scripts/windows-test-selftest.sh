@@ -340,9 +340,20 @@ case_revert_retry() {
   finish_case
 }
 
+case_revert_fails() {
+  setup_case revert-fails
+  run_script
+  expect_rc 3
+  expect_stop_hard
+  expect_no_lock
+  expect_no_pass
+  expect_not_called start
+  finish_case
+}
+
 for c in happy test_fails stale_pass_cleared tools_timeout already_running stale_lock live_lock bad_lock \
   no_keychain source_vm copy_back_fails sigint run_timeout stale_baseline bad_vm_password \
-  bad_guest_password revert_retry; do
+  bad_guest_password revert_retry revert_fails; do
   "case_$c"
 done
 

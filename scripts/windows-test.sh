@@ -14,7 +14,7 @@
 # <state dir>/logs/windows-test/<sha>/.
 #
 # Seams: AGENTMESH_VMRUN (default: Fusion's vmrun), AGENTMESH_SECURITY (security),
-# AGENTMESH_WINDOWS_TEST_VMX (the clone's .vmx), AGENTMESH_DEV_STATE (state dir),
+# AGENTMESH_WINDOWS_TEST_VMX (the test VM's .vmx), AGENTMESH_DEV_STATE (state dir),
 # AGENTMESH_WINDOWS_TEST_TOOLS_TIMEOUT (300 s), AGENTMESH_WINDOWS_TEST_RUN_TIMEOUT
 # (2700 s), AGENTMESH_WINDOWS_TEST_CALL_TIMEOUT (120 s, any other vmrun call),
 # AGENTMESH_WINDOWS_TEST_POLL_SECONDS (5, the checkToolsState interval).
@@ -160,11 +160,11 @@ src_norm=$(norm "$SOURCE_VM_DIR/x")
 src_norm=${src_norm%/x}
 vmx_norm=$(norm "$VMX")
 case "$vmx_norm/" in
-  "$src_norm"/*) die 2 "AGENTMESH_WINDOWS_TEST_VMX is Eric's general-use source VM ($SOURCE_VM_DIR); refusing. Point it at the test clone." ;;
+  "$src_norm"/*) die 2 "AGENTMESH_WINDOWS_TEST_VMX is Eric's general-use source VM ($SOURCE_VM_DIR); refusing. Point it at the test VM." ;;
 esac
 
 [ -x "$VMRUN" ] || die 2 "vmrun not found or not executable: $VMRUN (install VMware Fusion or set AGENTMESH_VMRUN)"
-[ -f "$VMX" ] || die 2 "the test VM does not exist: $VMX (clone it per docs/windows-test.md or set AGENTMESH_WINDOWS_TEST_VMX)"
+[ -f "$VMX" ] || die 2 "the test VM does not exist: $VMX (set it up per docs/windows-test.md or set AGENTMESH_WINDOWS_TEST_VMX)"
 for t in git perl iconv unzip; do command -v "$t" >/dev/null || die 2 "$t is not installed"; done
 
 fetch_secret() { # ACCOUNT WHAT -> stdout
@@ -235,6 +235,7 @@ git -C "$ROOT" archive --format=zip -o "$LOGDIR/src.zip" "$SHA" || die 2 "git ar
 
 revert_out=$WORK/revert.out
 rc=0
+STARTED=1 # a revert that fails after the VM resumed must still be stopped by the trap
 vm 120 "$revert_out" host revertToSnapshot "$VMX" "$SNAPSHOT" || rc=$?
 vm_check "$revert_out"
 if [ "$rc" -ne 0 ] && grep -qF 'Cannot read the virtual machine configuration file' "$revert_out"; then
@@ -245,7 +246,6 @@ if [ "$rc" -ne 0 ] && grep -qF 'Cannot read the virtual machine configuration fi
 fi
 if [ "$rc" -ne 0 ]; then die 3 "revertToSnapshot $SNAPSHOT failed (exit $rc): $(head -c 300 "$revert_out" | tr '\n' ' ')"; fi
 
-STARTED=1
 vm_step "start" 180 host start "$VMX" nogui
 
 deadline=$((SECONDS + TOOLS_TIMEOUT))
