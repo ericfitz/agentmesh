@@ -313,3 +313,48 @@ func TestConcurrentReadWrite(t *testing.T) {
 		t.Fatalf("trust number %d", got)
 	}
 }
+
+// A leaf CRL held from before an intermediate's renewal still counts: the new
+// certificate has the same key and another validity period, and the number rule
+// is per issuer key (spec 4.10 step 4; issue #44, M4).
+func TestApplyLeafCRLNumberAcrossRenewal(t *testing.T) {
+	c := newCA(t, "root-a")
+	s := pinned(t, c, "inst")
+	k := newKey(t)
+	der, err := pki.NewRequest(k, "inst")
+	if err != nil {
+		t.Fatal(err)
+	}
+	csr, err := pki.ParseRequest(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	issue := func(nb, na time.Time) testInter {
+		cert, err := pki.IssueIntermediate(c.root, c.rootKey, csr, nb, na)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return testInter{cert, k}
+	}
+	old := issue(now.Add(-3*time.Hour), now.Add(-time.Hour))
+	renewed := issue(now.Add(-30*time.Minute), now.Add(time.Hour))
+	leafCRL := func(in testInter, number int64, at time.Time) []byte {
+		d, err := pki.CreateCRL(in.cert, in.key, number, at, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	if _, err := s.Apply(Bundle{TrustNumber: 2, Intermediates: [][]byte{old.cert.Raw}, LeafCRLs: [][]byte{leafCRL(old, 100, now.Add(-2*time.Hour))}}); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := s.Apply(Bundle{TrustNumber: 3, Intermediates: [][]byte{old.cert.Raw, renewed.cert.Raw}, LeafCRLs: [][]byte{leafCRL(renewed, 50, now)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []RefusedCRL{{IssuerKey: old.keyID(), Held: 100, Got: 50}}
+	if !reflect.DeepEqual(rep.Refused, want) {
+		t.Fatalf("Refused = %+v, want %+v", rep.Refused, want)
+	}
+}

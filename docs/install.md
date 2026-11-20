@@ -145,7 +145,7 @@ $ AGENTMESH_SERVER=https://bus.example.com AGENTMESH_ROOT_THUMBPRINT=tJ0rOgluRTK
 
 ```
 $ agentmesh login -profile p6 -identity alice
-agentmesh: profile "p6": trust: the server's root is tJ0rOgluRTK5IdmIFB25WtptAf5eOjaIXvnxKYBNOVA, the pinned root is tXJMdxPaeHHH9302uvmEHxan1W6vP6yL5GnYEL8ZwJ8; nothing was changed (to trust the new one, rerun the command with -accept-new-root)
+agentmesh: profile "p6": trust: the server's root is tJ0rOgluRTK5IdmIFB25WtptAf5eOjaIXvnxKYBNOVA, the pinned root is tXJMdxPaeHHH9302uvmEHxan1W6vP6yL5GnYEL8ZwJ8; nothing was changed (to trust the new one, run register or login with -accept-new-root; agentmesh-mcponly: register or check)
 ```
 
 The same happens when the profile's `server` URL differs from the one the pin was made for. `-accept-new-root` on `register` or `login` (on `agentmesh-mcponly`, `register` or `check`) replaces the pin, the stored chain, the stored CRLs and the kept revocations, rebinds the pin to the changed server URL, and prints the old and the new:

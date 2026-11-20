@@ -280,3 +280,18 @@ func TestAcceptServerChanged(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The hint names the commands that take -accept-new-root, not "the command"
+// (issue #44, M3).
+func TestMismatchHintNamesCommands(t *testing.T) {
+	for _, e := range []error{
+		&MismatchError{What: "root", Held: "a", Got: "b"},
+		&MismatchError{What: "server", Held: "a", Got: "b"},
+		&incompleteError{dir: "d", why: "w"},
+	} {
+		msg := e.Error()
+		if !strings.Contains(msg, "register or login") || strings.Contains(msg, "rerun the command") {
+			t.Errorf("%T: %q", e, msg)
+		}
+	}
+}

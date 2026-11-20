@@ -74,7 +74,7 @@ func (s Store) Apply(b Bundle) (Report, error) {
 				if revoked[key] || pki.CheckCRL(crl, c) != nil {
 					continue
 				}
-				held, has, err := s.heldCRLNumber(leafCRLName(key), c)
+				held, has, err := s.heldLeafCRLNumber(key, kept)
 				if err != nil {
 					return err
 				}

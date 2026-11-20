@@ -261,4 +261,21 @@ func (s Store) heldCRLNumber(name string, issuer *x509.Certificate) (n int64, ok
 	return pki.CRLNumber(crl), true, nil
 }
 
+// heldLeafCRLNumber is the number of the stored leaf CRL of issuer key `key`,
+// checked against every kept certificate of that key: after a renewal the file
+// was signed under an earlier certificate (same key, another validity period),
+// and the number rule is per issuer key (spec 4.10 step 4).
+func (s Store) heldLeafCRLNumber(key string, kept []*x509.Certificate) (n int64, ok bool, err error) {
+	for _, c := range kept {
+		if pki.KeyID(c.SubjectKeyId) != key {
+			continue
+		}
+		n, ok, err = s.heldCRLNumber(leafCRLName(key), c)
+		if err != nil || ok {
+			return n, ok, err
+		}
+	}
+	return 0, false, nil
+}
+
 func leafCRLName(issuerKey string) string { return leafCRLPrefix + issuerKey + crlSuffix }
