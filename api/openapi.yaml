@@ -5507,7 +5507,7 @@ components:
         not_before: 1794096000000
         not_after: 1794700800000
         state: current
-      description: "One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity and its state."
+      description: "One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity period and its state. The period is the chain's: the leaf's own period cut to its issuers'."
       type: object
       required: [thumbprint, serial, issuer_thumbprint, not_before, not_after, state]
       properties:
@@ -5525,13 +5525,13 @@ components:
           format: int64
           minimum: 0
           maximum: 9007199254740992
-          description: "When the leaf becomes valid, in Unix milliseconds."
+          description: "When the leaf becomes valid, in Unix milliseconds: the start of the chain's validity period (the leaf's own, or a later start of an issuer's)."
         not_after:
           type: integer
           format: int64
           minimum: 0
           maximum: 9007199254740992
-          description: "When the leaf expires, in Unix milliseconds."
+          description: "When the leaf expires, in Unix milliseconds: the end of the chain's validity period (the leaf's own, or an earlier end of an issuer's)."
         state:
           type: string
           enum: [current, previous, other, revoked]

@@ -1561,15 +1561,15 @@ type SetAgentStatusRequest struct {
 // SetAgentStatusRequestTag The agent's state, one of idle, planning, implementing, reviewing, waiting, blocked, needs-human. offline is set by the server and refused here; the tag is compared exactly, never trimmed.
 type SetAgentStatusRequestTag string
 
-// SigningKey One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity and its state.
+// SigningKey One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity period and its state. The period is the chain's: the leaf's own period cut to its issuers'.
 type SigningKey struct {
 	// IssuerThumbprint The thumbprint of the intermediate certificate that issued the leaf. Empty while the server still answers from its old key set.
 	IssuerThumbprint string `json:"issuer_thumbprint"`
 
-	// NotAfter When the leaf expires, in Unix milliseconds.
+	// NotAfter When the leaf expires, in Unix milliseconds: the end of the chain's validity period (the leaf's own, or an earlier end of an issuer's).
 	NotAfter int64 `json:"not_after"`
 
-	// NotBefore When the leaf becomes valid, in Unix milliseconds.
+	// NotBefore When the leaf becomes valid, in Unix milliseconds: the start of the chain's validity period (the leaf's own, or a later start of an issuer's).
 	NotBefore int64 `json:"not_before"`
 
 	// Serial The leaf certificate's serial number, lowercase hex without leading zeros. Empty while the server still answers from its old key set.
@@ -1596,7 +1596,7 @@ type SigningKeyList struct {
 
 // SigningKeyRotation The result of a rotation: the new current leaf, the leaves it revoked and the trust number.
 type SigningKeyRotation struct {
-	// Current One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity and its state.
+	// Current One leaf certificate that signs bearers: its thumbprint, serial, the thumbprint of the intermediate that issued it, its validity period and its state. The period is the chain's: the leaf's own period cut to its issuers'.
 	Current SigningKey `json:"current"`
 
 	// Revoked The leaves the rotation revoked, one entry each; empty when the set had none.
