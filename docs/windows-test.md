@@ -5,7 +5,7 @@
 no Fusion window, no copying, no shutdown by hand. Decisions and rationale:
 `docs/superpowers/specs/2026-11-15-local-ci-design.md`, section 3.
 
-It is not part of `make verify`. The pre-push hook and `release/release.sh` will run it (later tasks of `docs/superpowers/plans/2026-11-15-local-ci.md`).
+It is not part of `make verify`. The pre-push hook (`.githooks/pre-push`, when a push touches the Windows path set) and `release/release.sh`'s preflight run it. It has not yet passed a real run: that waits on the VM encryption password in the Keychain, so `.github/workflows/windows.yml` stays as the dispatch-only fallback.
 
 ## What it does
 
@@ -27,8 +27,9 @@ It is not part of `make verify`. The pre-push hook and `release/release.sh` will
 
 ## One-time setup
 
-The VM is a full clone of the general-use VM, dedicated to testing: everything in
-it is eligible for deletion. The script refuses any `.vmx` inside
+The VM is a fresh Windows 11 arm64 install (Eric's decision of 2026-11-15; it is
+not a clone of his general-use VM), dedicated to testing: everything in it is
+eligible for deletion. The script refuses any `.vmx` inside
 `~/Virtual Machines.localized/Windows 11 64-bit Arm.vmwarevm` (the source VM).
 Default path:
 `~/Virtual Machines.localized/Windows 11 Test VM.vmwarevm/Windows 11 Test VM.vmx`
@@ -66,20 +67,21 @@ module cache) still passes, only slower, and its summary says
 
 Refresh `baseline`:
 
-1. Start the VM and log in as `test` (`vmrun -T fusion -vp ... start <vmx>`; with
+1. Start the VM and log in as `test` (`"$VMRUN" -T fusion -vp ... start <vmx>`, with `VMRUN` as in step 4; with
    the Fusion window if you prefer).
 2. In the guest, as `test`, from a current checkout: `go mod download`, then warm
    the build cache: `go vet ./...`, the same with
    `-tags awskms,gcpkms,azurekms,hashivault`, and `go test -run XXX ./...`, each
    for `GOARCH` arm64 and amd64.
-3. Power the VM off (`vmrun stop <vmx> soft`).
+3. Power the VM off (`"$VMRUN" stop <vmx> soft`, plus `-vp`).
 4. On the Mac:
 
    ```
+   VMRUN="/Applications/VMware Fusion.app/Contents/Library/vmrun"
    VMX="$HOME/Virtual Machines.localized/Windows 11 Test VM.vmwarevm/Windows 11 Test VM.vmx"
    VMPW=$(security find-generic-password -s agentmesh-windows-test -a vm-encryption -w)
-   vmrun -T fusion -vp "$VMPW" deleteSnapshot "$VMX" baseline
-   vmrun -T fusion -vp "$VMPW" snapshot "$VMX" baseline
+   "$VMRUN" -T fusion -vp "$VMPW" deleteSnapshot "$VMX" baseline
+   "$VMRUN" -T fusion -vp "$VMPW" snapshot "$VMX" baseline
    ```
 
 `snapshot` and `revertToSnapshot` can fail once with "Cannot read the virtual
