@@ -647,6 +647,56 @@ submit_winget() {
     fi
 }
 
+# run_preflight_step NAME CMD...: run one preflight command with its output in
+# $PREFLIGHT_LOGDIR/NAME.log. The tests shadow this function.
+run_preflight_step() {
+    local name="$1"; shift
+    "$@" >"$PREFLIGHT_LOGDIR/$name.log" 2>&1
+}
+
+# preflight runs every local check against the tag's commit in $SRC before
+# anything is published (local CI spec section 6). A pass is recorded per
+# commit (devstate check release-preflight), so a rerun of the same commit
+# skips it. The first failing command stops the run; there is no skip flag.
+preflight() {
+    local commit step_name
+    commit="$(git -C "$SRC" rev-parse HEAD)"
+    # shellcheck source=scripts/lib/devstate.sh
+    source "$REPO_ROOT/scripts/lib/devstate.sh"
+    if devstate_passed release-preflight "$commit"; then
+        echo "preflight: already passed for $commit"
+        return 0
+    fi
+    PREFLIGHT_LOGDIR="$(devstate_logdir release-preflight "$commit")" || fail "preflight: cannot create the log directory"
+    local steps=(
+        "verify|make -C $SRC verify"
+        "verify-linux|make -C $SRC verify-linux COMMIT=$commit"
+        "windows-test|make -C $SRC windows-test COMMIT=$commit"
+        "release-check|make -C $SRC release-check"
+        "release-lint|make -C $SRC release-lint"
+        "release-install-check|make -C $SRC release-install-check"
+        "vet-tags|make -C $SRC vet-tags"
+        "tagged-tests|go -C $SRC test -tags awskms,gcpkms,azurekms,hashivault ./internal/server/cmd/ ./internal/keyprovider/..."
+        "pen-check|make -C $SRC pen-check"
+        "docker-smoke|make -C $SRC docker-smoke"
+        "m9-exit-checks|bash $SRC/scripts/m9-exit-checks.sh"
+    )
+    local entry cmd
+    for entry in "${steps[@]}"; do
+        step_name="${entry%%|*}"
+        cmd="${entry#*|}"
+        echo "preflight: $step_name"
+        : >"$PREFLIGHT_LOGDIR/$step_name.log"
+        # cmd is built from fixed words and paths without spaces or glob characters.
+        # shellcheck disable=SC2086
+        run_preflight_step "$step_name" $cmd || {
+            [[ -s "$PREFLIGHT_LOGDIR/$step_name.log" ]] && tail -n 20 "$PREFLIGHT_LOGDIR/$step_name.log" >&2
+            fail "preflight: $cmd failed; log $PREFLIGHT_LOGDIR/$step_name.log"
+        }
+    done
+    devstate_record_pass release-preflight "$commit"
+}
+
 main() {
     parse_args "$@"
     require_tools
@@ -658,6 +708,7 @@ main() {
     check_signing_vars
     check_installers_embedded
     checkout_tag
+    preflight
     render_notes
     build_macos
     ensure_draft

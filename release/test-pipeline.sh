@@ -329,6 +329,8 @@ if ! command -v lipo >/dev/null 2>&1; then
     }
 fi
 EOF
+        # preflight runs the repository's own gates (make verify and more): the dry run replaces it.
+        printf '%s\n' 'preflight() { echo "preflight: stubbed in the dry run"; }'
     } >"$WORK/stubs.sh"
 }
 

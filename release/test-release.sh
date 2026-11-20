@@ -213,7 +213,8 @@ mkdir -p "$WORK/pins-empty"
 check pins-empty-dir 1 "no workflow files" -- "$HERE/check-pins.sh" "$WORK/pins-empty"
 
 # --- Actions release flow ----------------------------------------------------
-check no-docker-in-release-sh 1 "" -- grep -qi docker "$HERE/release.sh"
+# (the preflight step docker-smoke is the one allowed mention: it runs the image smoke test, nothing is pushed)
+check no-docker-in-release-sh 1 "" -- bash -c "grep -vi docker-smoke '$HERE/release.sh' | grep -qi docker"
 check args-no-publish-before 0 "" -- bash -c "source '$HERE/release.sh'; parse_args --no-publish v1.2.3 --windows-signing=off && [[ \$NO_PUBLISH == 1 && \$TAG == v1.2.3 ]]"
 check args-no-publish-after 0 "" -- bash -c "source '$HERE/release.sh'; parse_args v1.2.3 --no-publish --windows-signing=off && [[ \$NO_PUBLISH == 1 ]]"
 check args-default-publish 0 "" -- bash -c "source '$HERE/release.sh'; parse_args v1.2.3 --windows-signing=off && [[ \$NO_PUBLISH == 0 ]]"
@@ -471,8 +472,8 @@ check build-macos-notarization-rejected 1 "notarization of agentmesh not accepte
 # main runs the steps in the order the spec pins; every step is replaced by a
 # recorder so nothing builds, dispatches or publishes.
 check main-order 0 "" -- bash -c "source '$HERE/release.sh'; : > '$WORK/steps'
-for f in require_tools check_signing_key check_tag_exists check_tag_pushed check_gh check_workflow_at_tag check_signing_vars check_installers_embedded checkout_tag render_notes build_macos ensure_draft dispatch_build watch_run download_archives verify_attestations copy_scripts write_sums sign_sums upload_assets publish_release; do eval \"\$f() { echo \$f >> '$WORK/steps'; }\"; done
-main v1.2.3 --windows-signing=off --no-publish && diff '$WORK/steps' <(printf '%s\n' require_tools check_signing_key check_tag_exists check_tag_pushed check_gh check_workflow_at_tag check_signing_vars check_installers_embedded checkout_tag render_notes build_macos ensure_draft dispatch_build watch_run download_archives verify_attestations copy_scripts write_sums sign_sums upload_assets publish_release)"
+for f in require_tools check_signing_key check_tag_exists check_tag_pushed check_gh check_workflow_at_tag check_signing_vars check_installers_embedded checkout_tag preflight render_notes build_macos ensure_draft dispatch_build watch_run download_archives verify_attestations copy_scripts write_sums sign_sums upload_assets publish_release; do eval \"\$f() { echo \$f >> '$WORK/steps'; }\"; done
+main v1.2.3 --windows-signing=off --no-publish && diff '$WORK/steps' <(printf '%s\n' require_tools check_signing_key check_tag_exists check_tag_pushed check_gh check_workflow_at_tag check_signing_vars check_installers_embedded checkout_tag preflight render_notes build_macos ensure_draft dispatch_build watch_run download_archives verify_attestations copy_scripts write_sums sign_sums upload_assets publish_release)"
 
 # --- require_tools: a missing tool is named; --no-publish needs no komac -----
 mkdir -p "$WORK/rt/bin"
@@ -542,6 +543,27 @@ check checkout-tag-prunes-stale-registration 0 "" -- bash -c "source '$HERE/rele
 # A killed run's partial dist/ is replaced, not reused.
 mkdir -p "$WORK/co-dist2" && : > "$WORK/co-dist2/leftover"
 check checkout-tag-replaces-dist 0 "" -- bash -c "source '$HERE/release.sh'; REPO_ROOT='$WORK/repo'; DIST='$WORK/co-dist2'; TAG=v0.0.92; checkout_tag && [[ -d '$WORK/co-dist2' && ! -e '$WORK/co-dist2/leftover' ]]"
+
+# preflight: every local check against the tag's commit, in order, first failure
+# stops; a recorded pass skips it. run_preflight_step is shadowed: nothing runs.
+pf() { # pf <state-dir> <fail-step|-> <body>
+    AGENTMESH_DEV_STATE="$1" bash -c "source '$HERE/release.sh'; REPO_ROOT='$HERE/..'; SRC='$WORK/repo'; TAG=v0.0.92
+        run_preflight_step() { echo \"\$1\" >>'$1/steps.log'; [[ \"\$1\" != '$2' ]]; }
+        $3"
+}
+pf_names="verify verify-linux windows-test release-check release-lint release-install-check vet-tags tagged-tests pen-check docker-smoke m9-exit-checks"
+pfsha="$(git -C "$WORK/repo" rev-parse HEAD)"
+mkdir -p "$WORK/pf1" "$WORK/pf2" "$WORK/pf3"
+check preflight-all-pass 0 "" -- pf "$WORK/pf1" - preflight
+check preflight-all-pass-order 0 "" -- bash -c "[[ \"\$(tr '\n' ' ' <'$WORK/pf1/steps.log')\" == '$pf_names ' ]]"
+check preflight-all-pass-records 0 "" -- test -f "$WORK/pf1/passes/release-preflight/$pfsha"
+check preflight-recorded-skips 0 "already passed for $pfsha" -- pf "$WORK/pf1" - "preflight; : >'$WORK/pf1/steps.log'; preflight"
+check preflight-recorded-runs-nothing 0 "" -- bash -c "pf() { :; }; [[ ! -s '$WORK/pf1/steps.log' ]]"
+check preflight-step3-fails 1 "error: preflight: make -C $WORK/repo windows-test COMMIT=$pfsha failed; log $WORK/pf2/logs/release-preflight/$pfsha/windows-test.log" -- pf "$WORK/pf2" windows-test preflight
+check preflight-step3-stops 0 "" -- bash -c "[[ \"\$(tr '\n' ' ' <'$WORK/pf2/steps.log')\" == 'verify verify-linux windows-test ' ]]"
+check preflight-step3-no-record 0 "" -- test ! -e "$WORK/pf2/passes/release-preflight/$pfsha"
+check preflight-failure-log-exists 0 "" -- test -f "$WORK/pf2/logs/release-preflight/$pfsha/windows-test.log"
+check preflight-rerun-after-fail-runs-again 1 "" -- pf "$WORK/pf2" verify preflight
 
 echo "test-release: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
