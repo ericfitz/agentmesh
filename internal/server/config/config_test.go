@@ -189,7 +189,7 @@ func TestWarnings(t *testing.T) {
 			}
 			continue
 		}
-		if len(w) != 1 || !strings.Contains(w[0], "issuers: entry 1") || !strings.Contains(w[0], strings.ToLower(tc.uri)) {
+		if len(w) != 1 || !strings.Contains(w[0], "issuers: entry 1") || !strings.Contains(w[0], safeURL(tc.uri)) {
 			t.Errorf("%s: warnings = %q, want one naming entry 1 and the URI", tc.uri, w)
 		}
 	}
@@ -503,7 +503,7 @@ func TestWarningsRedactJWKSURI(t *testing.T) {
 		if len(w) != 1 {
 			t.Fatalf("%s: warnings = %q, want one", uri, w)
 		}
-		if strings.Contains(w[0], secret) || !strings.Contains(w[0], "10.0.0.5/jwks") {
+		if strings.Contains(w[0], secret) || !strings.Contains(w[0], `"http://10.0.0.5"`) {
 			t.Errorf("%s: warning %q", uri, w[0])
 		}
 	}

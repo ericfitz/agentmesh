@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"slices"
 	"strings"
 	"time"
 
@@ -132,7 +133,8 @@ func RunAdmin(ctx context.Context, args []string, environ []string, stdout, stde
 	for _, is := range cfg.Issuers {
 		env.Issuers = append(env.Issuers, is.Name)
 	}
-	if err := run(ctx, env, stdout); err != nil {
+	out := &stickyWriter{w: stdout}
+	if err := run(ctx, env, out); err != nil {
 		_, _ = fmt.Fprintf(stderr, "agentmesh server admin %s: %v\n", sub, err)
 		var ce *configError
 		if errors.As(err, &ce) {
@@ -140,7 +142,41 @@ func RunAdmin(ctx context.Context, args []string, environ []string, stdout, stde
 		}
 		return 1
 	}
+	if out.err != nil {
+		_, _ = fmt.Fprintf(stderr, "agentmesh server admin %s: writing the result to standard output failed: %v; %s\n", sub, out.err, committedHint(sub, subArgs))
+		return 1
+	}
 	return 0
+}
+
+// stickyWriter remembers the first write error, so a host command whose result
+// could not be written exits 1 after its state change was committed (issue
+// #44). Writes after the first failure are dropped.
+type stickyWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (s *stickyWriter) Write(b []byte) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	n, err := s.w.Write(b)
+	if err != nil {
+		s.err = err
+	}
+	return n, err
+}
+
+// committedHint says what the command already committed and how to recover.
+func committedHint(sub string, args []string) string {
+	switch {
+	case sub == "enrollment" && len(args) > 0 && args[0] == "create":
+		return "the enrollment token WAS created and its value is lost (it is shown once): run `enrollment list` to find it, `enrollment revoke ID` to revoke it, then create it again"
+	case sub == "create-identity" && slices.Contains(args, "-scope"):
+		return "the identity may have been created and its enrollment token, shown once, is lost: run `enrollment list`, revoke the unused token for the identity, then `enrollment create -identity NAME`"
+	}
+	return "any change the command makes was committed; run its list or status form to see the state"
 }
 
 // referenceCommand parses `users|admins add|remove|list`.

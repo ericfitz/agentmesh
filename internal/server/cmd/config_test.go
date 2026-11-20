@@ -313,13 +313,13 @@ func genBearer(token string) gen.ClientOption {
 }
 
 // TestRunWarnsOnPlainHTTPJWKS: a plain-http jwks_uri on a non-loopback host
-// starts the server with a warning on stderr naming the entry and the URI.
+// starts the server with a warning on stderr naming the entry and the URL's scheme and host.
 func TestRunWarnsOnPlainHTTPJWKS(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "ab2.db")
 	uri := "http://idp.example/jwks"
 	issuers := `[{"name":"corp","issuer":"https://idp.example","jwks_uri":"` + uri + `","audience":"a"}]`
 	r := runServer(t, "-listen", "127.0.0.1:0", "-sqlite", db, "-set", "issuers="+issuers)
-	if got := r.stderr.String(); !strings.Contains(got, "level=WARN") || !strings.Contains(got, "issuers: entry 0") || !strings.Contains(got, uri) {
+	if got := r.stderr.String(); !strings.Contains(got, "level=WARN") || !strings.Contains(got, "issuers: entry 0") || !strings.Contains(got, `jwks_uri \"http://idp.example\" is plain http`) {
 		t.Fatalf("stderr lacks the jwks_uri warning: %q", got)
 	}
 }

@@ -61,11 +61,9 @@ func Main(ctx context.Context, args []string, environ []string, stdin io.Reader,
 	}
 	switch args[0] {
 	case "help", "-h", "--help":
-		_, _ = fmt.Fprintln(stdout, Usage)
-		return 0
+		return emit(stdout, stderr, Usage+"\n")
 	case "version", "-v", "--version":
-		_, _ = fmt.Fprintln(stdout, version.Version)
-		return 0
+		return emit(stdout, stderr, version.Version+"\n")
 	}
 	run, ok := commands[args[0]]
 	if !ok {
@@ -113,4 +111,14 @@ func mcpIdentityGuard(o client.Options) error {
 func isOSLogin(identity string) bool {
 	login := osUserName()
 	return login != "" && identity == login
+}
+
+// emit writes a command's result to standard output: a failed write is exit 1
+// with the cause on standard error (issue #44).
+func emit(stdout, stderr io.Writer, text string) int {
+	if _, err := io.WriteString(stdout, text); err != nil {
+		_, _ = fmt.Fprintf(stderr, "agentmesh: writing the result to standard output failed: %v\n", err)
+		return 1
+	}
+	return 0
 }

@@ -248,3 +248,13 @@ func TestCAStdoutWriteFailure(t *testing.T) {
 		t.Fatalf("revoke again = %d %q", code, out)
 	}
 }
+
+// help and version that cannot be written are exit 1 (issue #44).
+func TestHelpVersionStdoutFailure(t *testing.T) {
+	for _, a := range []string{"help", "version", "-h", "--version"} {
+		var e bytes.Buffer
+		if code := Main(context.Background(), []string{a}, nil, strings.NewReader(""), failWriter{}, &e); code != 1 || !strings.Contains(e.String(), "broken pipe") {
+			t.Errorf("%s: code %d, stderr %q", a, code, e.String())
+		}
+	}
+}
