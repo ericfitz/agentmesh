@@ -48,9 +48,13 @@ func ensureTrust(ctx context.Context, o Options, r Resolved, plain *gen.ClientWi
 		}
 		pinned = false // -accept-new-root completes an incomplete pin
 	}
+	var refused error // a Check failure only a successful discover under -accept-new-root can replace
 	if pinned {
-		if err := st.Check(exp); err != nil && !replacesExpected(o, err) {
-			return st, resolveErr(fmt.Errorf("profile %q: %w", p.Name, err))
+		if err := st.Check(exp); err != nil {
+			if !replacesExpected(o, err) {
+				return st, resolveErr(fmt.Errorf("profile %q: %w", p.Name, err))
+			}
+			refused = err
 		}
 	}
 	if o.NoDiscover {
@@ -62,6 +66,10 @@ func ensureTrust(ctx context.Context, o Options, r Resolved, plain *gen.ClientWi
 		var nt *noTrustError
 		if errors.As(err, &nt) {
 			return st, resolveErr(err)
+		}
+		if refused != nil {
+			// The held pin was refused and nothing could replace it: do not go on with it.
+			return st, resolveErr(fmt.Errorf("profile %q: %w (discover at %s failed: %v)", p.Name, refused, p.Server, err))
 		}
 		if pinned {
 			say("profile %s: discover at %s failed (%v); going on with the trust held for it", p.Name, p.Server, err)
@@ -327,7 +335,8 @@ func (b *trustBus) Watch(ctx context.Context, in bus.WatchInput) (bus.WatchResul
 }
 
 // refresh is the discover half of a trust wake for the server number num; it
-// reports whether the bundle was stored. A failure is a notice and a trust.log
+// reports whether the bundle stored is the one the wake was for (a bundle of
+// another number is stored all the same, but counts as a failure). A failure is a notice and a trust.log
 // line once per server number, never an error: the wake itself must reach the
 // caller.
 func (b *trustBus) refresh(ctx context.Context, num int64) bool {
@@ -358,5 +367,12 @@ func (b *trustBus) refresh(ctx context.Context, num int64) bool {
 	}
 	b.clearWake()
 	reportRefused(b.o, b.r, rep)
+	if bundle.TrustNumber != num {
+		// Two replicas answer different numbers: discover came from one that
+		// is behind (or ahead of) the one that woke the watch. The bundle is
+		// stored, but sending its number would wake the watch again at once,
+		// so the wake's number is remembered as after a failed refresh.
+		return fail("the discover answer carries trust number %d, not the wake's %d (replicas disagree)", bundle.TrustNumber, num)
+	}
 	return true
 }

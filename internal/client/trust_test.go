@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ericfitz/agentmesh/internal/bus"
+	"github.com/ericfitz/agentmesh/internal/gen"
 	"github.com/ericfitz/agentmesh/internal/pki"
 	"github.com/ericfitz/agentmesh/internal/profile"
 	"github.com/ericfitz/agentmesh/internal/testkit"
@@ -550,8 +551,13 @@ func (b *numberBus) Watch(_ context.Context, in bus.WatchInput) (bus.WatchResult
 // (the discover bundle applied at trust number 1).
 func pinnedLayer(t *testing.T, root testRoot, n *notices) (*trustBus, *numberBus, *testkit.ProfileEnv) {
 	t.Helper()
+	return pinnedLayerAt(t, root, n, "http://127.0.0.1:1")
+}
+
+func pinnedLayerAt(t *testing.T, root testRoot, n *notices, server string) (*trustBus, *numberBus, *testkit.ProfileEnv) {
+	t.Helper()
 	e := testkit.NewProfileEnv(t)
-	r := Resolved{Profile: profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: "http://127.0.0.1:1"}, ConfigDir: e.Config, DataDir: e.Data}
+	r := Resolved{Profile: profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: server}, ConfigDir: e.Config, DataDir: e.Data}
 	st := trust.Store{Dir: trust.Dir(e.Config, "lab")}
 	b := trust.Bundle{TrustNumber: 1, Root: root.cert.Raw, Installation: "inst-one"}
 	if _, err := st.Accept(b, trust.Expect{Server: r.Profile.Server}, false); err != nil {
@@ -779,6 +785,167 @@ func TestAcceptNewRootNeedsDiscover(t *testing.T) {
 	e.Save(t, profile.Profile{Name: "default", Mode: profile.ModeLocal}, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: b.URL})
 	_, err := openLab(e, &n, func(o *Options) { o.AcceptNewRoot = true; o.NoDiscover = true })
 	if err == nil || !isResolveError(err) || !strings.Contains(err.Error(), "-accept-new-root") {
+		t.Fatalf("Open: %v", err)
+	}
+	if !sameSnapshot(before, snapshot(t, trustStore(e).Dir)) {
+		t.Fatal("the trust directory changed")
+	}
+}
+
+// wakeLayer is pinnedLayer with a plain client that answers discover from f
+// (issue #44, Important 2).
+func wakeLayer(t *testing.T, f *fakeDiscover, root testRoot, n *notices) (*trustBus, *numberBus) {
+	t.Helper()
+	l, nb, _ := pinnedLayerAt(t, root, n, f.URL)
+	plain, err := gen.NewClientWithResponses(f.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.plain = plain
+	return l, nb
+}
+
+func (b *trustBus) wake() *int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.wakeNumber
+}
+
+func setServer(nb *numberBus, n int64) {
+	nb.mu.Lock()
+	nb.server = n
+	nb.mu.Unlock()
+}
+
+// Discover answers a stale number while the watch is woken for a newer one:
+// the refresh stores the stale bundle, and the next Watch must not be woken
+// again at once (replicas disagreeing used to loop).
+func TestTrustWakeWithStaleDiscoverDoesNotLoop(t *testing.T) {
+	ctx := context.Background()
+	var n notices
+	root := newTestRoot(t, "root")
+	f := newFakeDiscover(t, root, "inst-one")
+	l, nb := wakeLayer(t, f, root, &n)
+	f.set(func(f *fakeDiscover) { f.number = 1 }) // the stale replica
+	setServer(nb, 2)                              // the replica holding the watch
+	for i := 0; i < 3; i++ {
+		_, err := l.Watch(ctx, bus.WatchInput{Session: "s1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := f.count("/v1/discover"); got != 1 {
+		t.Fatalf("%d discover calls for three watches, want 1 (sent %q)", got, nb.sent)
+	}
+	if w := l.wake(); w == nil || *w != 2 {
+		t.Fatalf("wakeNumber %v, want 2", w)
+	}
+	if strings.Join(nb.sent, ",") != "watch 1,watch 2,watch 2" {
+		t.Fatalf("numbers sent %q", nb.sent)
+	}
+	if lines := n.all(); len(lines) != 1 || !strings.Contains(lines[0], "replicas disagree") {
+		t.Fatalf("notices %q, want one disagreement line", lines)
+	}
+	// The server moves on to 3: a new wake, and the number-3 bundle takes over.
+	setServer(nb, 3)
+	f.set(func(f *fakeDiscover) { f.number = 3 })
+	if r, err := l.Watch(ctx, bus.WatchInput{Session: "s1"}); err != nil || !r.Woke {
+		t.Fatalf("watch for number 3: %+v %v", r, err)
+	}
+	if w := l.wake(); w != nil {
+		t.Fatalf("wakeNumber %d after a matching bundle", *w)
+	}
+	if got, _, _ := l.store.TrustNumber(); got != 3 {
+		t.Fatalf("held %d, want 3", got)
+	}
+	if r, err := l.Watch(ctx, bus.WatchInput{Session: "s1"}); err != nil || r.Woke {
+		t.Fatalf("watch after 3: %+v %v", r, err)
+	}
+}
+
+// Open, Receive and a successful refresh each clear the in-memory wake number.
+func TestWakeNumberCleared(t *testing.T) {
+	ctx := context.Background()
+	root := newTestRoot(t, "root")
+	f := newFakeDiscover(t, root, "inst-one")
+	for _, tc := range []string{"open", "receive", "refresh"} {
+		t.Run(tc, func(t *testing.T) {
+			var n notices
+			l, nb := wakeLayer(t, f, root, &n)
+			f.set(func(f *fakeDiscover) { f.noTrust = true }) // discover fails: a noTrust answer
+			setServer(nb, 2)
+			if _, err := l.Watch(ctx, bus.WatchInput{Session: "s1"}); err != nil {
+				t.Fatal(err)
+			}
+			if w := l.wake(); w == nil || *w != 2 {
+				t.Fatalf("wakeNumber %v after the failed refresh, want 2", w)
+			}
+			f.set(func(f *fakeDiscover) { f.noTrust, f.number = false, 2 })
+			var err error
+			switch tc {
+			case "open":
+				_, err = l.Open(ctx, bus.OpenSessionInput{})
+			case "receive":
+				_, err = l.Receive(ctx, bus.ReceiveInput{Session: "s1"})
+			case "refresh":
+				setServer(nb, 3)
+				f.set(func(f *fakeDiscover) { f.number = 3 })
+				_, err = l.Watch(ctx, bus.WatchInput{Session: "s1"})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w := l.wake(); w != nil {
+				t.Fatalf("wakeNumber %d after %s", *w, tc)
+			}
+		})
+	}
+}
+
+// A remembered wake number older than the server's now: the watch is woken for
+// the newer number, which replaces it; each failed number is said once.
+func TestOlderWakeNumberRace(t *testing.T) {
+	ctx := context.Background()
+	var n notices
+	root := newTestRoot(t, "root")
+	f := newFakeDiscover(t, root, "inst-one")
+	l, nb := wakeLayer(t, f, root, &n)
+	f.set(func(f *fakeDiscover) { f.noTrust = true })
+	setServer(nb, 2)
+	for i := 0; i < 2; i++ {
+		if _, err := l.Watch(ctx, bus.WatchInput{Session: "s1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setServer(nb, 3) // the server moves on while wakeNumber is 2
+	if r, err := l.Watch(ctx, bus.WatchInput{Session: "s1"}); err != nil || !r.Woke {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if w := l.wake(); w == nil || *w != 3 {
+		t.Fatalf("wakeNumber %v, want 3", w)
+	}
+	if strings.Join(nb.sent, ",") != "watch 1,watch 2,watch 2" {
+		t.Fatalf("numbers sent %q", nb.sent)
+	}
+	if lines := n.all(); len(lines) != 2 {
+		t.Fatalf("notices %q, want one per number", lines)
+	}
+}
+
+// -accept-new-root with a discover that fails must not go on with the pin the
+// check refused (issue #44, M2).
+func TestAcceptNewRootUnreachableDiscoverStops(t *testing.T) {
+	root := newTestRoot(t, "root")
+	a := newFakeDiscover(t, root, "inst-one")
+	b := newFakeDiscover(t, root, "inst-one")
+	e := trustEnv(t, a.URL, nil)
+	var n notices
+	mustOpen(t, e, &n, nil)
+	before := snapshot(t, trustStore(e).Dir)
+	e.Save(t, profile.Profile{Name: "default", Mode: profile.ModeLocal}, profile.Profile{Name: "lab", Mode: profile.ModeServer, Server: b.URL})
+	b.Close()
+	_, err := openLab(e, &n, func(o *Options) { o.AcceptNewRoot = true })
+	if err == nil || !isResolveError(err) || !strings.Contains(err.Error(), "discover") {
 		t.Fatalf("Open: %v", err)
 	}
 	if !sameSnapshot(before, snapshot(t, trustStore(e).Dir)) {
