@@ -104,7 +104,7 @@ build_line() {
 # select_checks BASE TIP: print "<check> <reason>" lines.
 select_checks() {
   local base=$1 tip=$2 files f bl hit_g="" hit_w="" hit_l="" mk=""
-  files=$(git diff --name-only "$base" "$tip")
+  files=$(git diff --no-renames --name-only "$base" "$tip")
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     case "$f" in
@@ -162,13 +162,13 @@ run_check() {
   logdir=$(devstate_logdir "$check" "$tip")
   if [ "$check" = gates-selftest ]; then
     if [ -n "${AGENTMESH_PREPUSH_RUNNERS:-}" ]; then
-      bash "$runner" "$tip" >"$logdir/run.log" 2>&1 || rc=$?
+      bash "$runner" "$tip" </dev/null >"$logdir/run.log" 2>&1 || rc=$?
     else
-      perl -e 'alarm shift; exec @ARGV' "$GATES_TIMEOUT" bash "$runner" "$tip" >"$logdir/run.log" 2>&1 || rc=$?
+      perl -e 'alarm shift; exec @ARGV' "$GATES_TIMEOUT" bash "$runner" "$tip" </dev/null >"$logdir/run.log" 2>&1 || rc=$?
     fi
     tail -n 5 "$logdir/run.log"
   else
-    bash "$runner" "$tip" || rc=$?
+    bash "$runner" "$tip" </dev/null || rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     err "FAILED: $check at $tip (exit $rc); logs: $logdir"

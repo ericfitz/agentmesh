@@ -104,6 +104,21 @@ got=$(cd "$repo" && bash "$SCRIPT" --select "$base" HEAD | awk '{print $1}' | pa
 [ "$got" = windows-test ] || fail "selected '$got', want windows-test"
 finish
 
+# A file moved out of a Windows-relevant directory still selects (no rename detection).
+for mv in internal/procs/x.go release/r.sh internal/credential/c.go; do
+  begin "row rename-out-of-$(dirname "$mv")"
+  repo=$TMP/row-rename-$(dirname "$mv" | tr / -)
+  new_repo "$repo"
+  commit_files "$repo" "$mv"
+  base=$(git -C "$repo" rev-parse HEAD)
+  mkdir -p "$repo/docs"
+  git -C "$repo" mv "$mv" docs/moved.txt
+  git -C "$repo" commit -q -m move
+  got=$(cd "$repo" && bash "$SCRIPT" --select "$base" HEAD | awk '{print $1}' | paste -sd, -)
+  [ "$got" = windows-test ] || fail "selected '$got', want windows-test"
+  finish
+done
+
 # ---- part 2: the hook on stdin
 RUNNERS=$TMP/runners
 mkdir -p "$RUNNERS"
@@ -111,6 +126,7 @@ for c in windows-test verify-linux gates-selftest; do
   cat >"$RUNNERS/$c" <<'FAKE'
 #!/usr/bin/env bash
 c=$(basename "$0")
+cat >/dev/null
 echo "$c $1" >>"$PP_CALLS"
 rcvar=PP_RC_${c//-/_}
 exit "${!rcvar:-0}"
@@ -239,6 +255,13 @@ run_hook PP_RC_gates_selftest=1 <<<"refs/heads/feat $TIPG refs/heads/feat $TIPB"
 expect_rc 1
 expect_out "$STATE/logs/gates-selftest/$TIPG"
 [ ! -f "$STATE/passes/gates-selftest/$TIPG" ] || fail "a pass was recorded for a failure"
+finish
+
+setup_hook zero-stdin-lines
+run_hook </dev/null
+expect_rc 0
+expect_no_calls
+expect_out "no check selected"
 finish
 
 setup_hook nothing-selected
