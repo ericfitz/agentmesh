@@ -1749,7 +1749,7 @@ block_trust_gates_fire() {
 		'if leaf.NotAfter.Sub(leaf.NotBefore) > MaxLeafLifetime {' 'if false {' \
 		./internal/pki/ '^TestVerifyChain$' TestVerifyChain/leaf-lifetime-over
 	mutate_unit_block revocation-by-certificate internal/pki/revocations.go \
-		'if r.RevokedKeys(intermediates)[issuer] {' 'if false {' \
+		'revoked := r.RevokedKeys(intermediates)' 'revoked := map[string]bool{}' \
 		./internal/pki/ '^TestRevocationByKey$' TestRevocationByKey
 	mutate_unit_block bundle-only-when-lower internal/core/trust.go \
 		'*client != b.TrustNumber {' '*client < b.TrustNumber {' \
