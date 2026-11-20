@@ -71,7 +71,7 @@ macOS: `brew install ericfitz/tap/agentmesh`. Linux: `curl -fsSL https://github.
 
 Requirements: Go 1.27, Docker, golangci-lint v2.14.0, vacuum 0.36.2 (`go install github.com/daveshanley/vacuum@v0.36.2`). `make verify` needs Docker even when `AGENTMESH_TEST_POSTGRES_DSN` is set: the variable only replaces testcontainers as the suites' Postgres.
 
-- `make verify`: the done gate (build, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, both conformance suites on SQLite and Postgres, gate checks).
+- `make verify`: the done gate (`hooks-check`, which needs `git config core.hooksPath .githooks` once per clone; build, vet, gofmt, lint, spec lint, tidy go.mod, generated-code freshness, unit tests, both conformance suites on SQLite and Postgres, gate checks).
 - The database holds no private key. The server signs bearers with a leaf certificate that each process makes in memory, under an intermediate key that lives in a file or a key service and a root that stays outside the server (`docs/ops/signing-keys.md`), so read access to the database does not let anyone mint a token. Write access to it is still equivalent to the admin flag.
 - The Postgres database must use a UTF-8 ctype (text-search normalization relies on `[[:alnum:]]` matching non-ASCII letters).
 - `make generate`: regenerate `internal/gen` from `api/openapi.yaml`.

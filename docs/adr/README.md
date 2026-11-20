@@ -31,6 +31,7 @@ NNNN" to keep the two series apart.
 | [0017](0017-rename-to-agentmesh.md) | Rename agentbus2 to agentmesh | Accepted (Eric, 2026-11-03) |
 | [0018](0018-api-fuzzing-with-cats.md) | API fuzzing with CATS | Accepted (Eric, 2026-11-06; decisions 1 to 3) |
 | [0019](0019-certificate-hierarchy-and-signed-messages.md) | Certificate hierarchy and signed messages | Accepted (Eric, 2026-11-11 and 2026-11-12; decisions 1 to 50, seven of them superseded by decision 40, which reduces signed messages to human messages); plan rulings are not his; no open question; the extended key usage number is assigned (decision 50: 67669); spec 1 built and merged into `main` (2026-11-16), spec 2 designed, not built |
+| [0020](0020-local-ci.md) | Local CI | Accepted (Eric, 2026-11-15; decisions 1 to 7 and the fresh-VM deviation); the builder's calls were ratified by him on 2026-11-19; `windows.yml` is kept as the dispatch-only fallback until `make windows-test` passes a real run |
 
 Decisions 60 (TUI in a later milestone), 61 (release tooling in the
 final milestone) and 87 (Scoop and winget in that tooling) are scheduling
