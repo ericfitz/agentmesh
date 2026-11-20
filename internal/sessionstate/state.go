@@ -18,8 +18,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ericfitz/agentmesh/internal/filelock"
 	"github.com/ericfitz/agentmesh/internal/procs"
@@ -157,7 +159,22 @@ func writeAtomic(path string, data []byte) (err error) {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(name, path)
+	return renameOver(name, path)
+}
+
+// renameOver renames from over to. Windows refuses to replace a file while
+// another handle holds it open (Go opens files without FILE_SHARE_DELETE), and
+// Read takes no lock, so a concurrent reader (a hook, wait, another process's
+// Read) can make the rename fail for a moment: on Windows it is retried five
+// times, 150 ms in all, which stays inside the hooks' 500 ms budget. Elsewhere
+// the first error is final.
+func renameOver(from, to string) error {
+	err := os.Rename(from, to)
+	for i := 0; err != nil && runtime.GOOS == "windows" && i < 5; i++ {
+		time.Sleep(time.Duration(i+1) * 10 * time.Millisecond)
+		err = os.Rename(from, to)
+	}
+	return err
 }
 
 func decode(b []byte) (File, error) {
