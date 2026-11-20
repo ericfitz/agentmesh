@@ -38,6 +38,7 @@ type Memory struct {
 	crls    map[string]memCRL
 	revoked pki.Revocations
 	chains  map[chainKey]chainResult
+	issuers map[string][]string // leaf thumbprint -> keys that verified its signature (pki.LeafIssuerKeys)
 	logged  map[string]bool
 }
 
@@ -228,6 +229,7 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 	m.Revoked.Merge(mem.revoked)
 	m.RevokedKeys = m.Revoked.RevokedKeys(m.Intermediates)
 
+	issuersSeen := map[string][]string{}
 	for _, row := range leafRows {
 		leaf, err := parseCertificate(row.Thumbprint, row.DER)
 		var best pki.Verified
@@ -265,9 +267,19 @@ func (t Trust) Load(ctx context.Context, mem *Memory) (Material, error) {
 			t.ignore(mem, store.TrustLeaf, row.Thumbprint, err)
 			continue
 		}
-		m.Leaves = append(m.Leaves, Leaf{ID: row.ID, Verified: best, Revoked: m.Revoked.LeafRevoked(leaf, m.Intermediates)})
+		// The signature check is kept per leaf (the signature never changes);
+		// a leaf with no verifying key is tried again, as intermediates may arrive.
+		keys, ok := mem.issuers[row.Thumbprint]
+		if !ok {
+			keys = pki.LeafIssuerKeys(leaf, m.Intermediates)
+		}
+		if len(keys) > 0 {
+			issuersSeen[row.Thumbprint] = keys
+		}
+		m.Leaves = append(m.Leaves, Leaf{ID: row.ID, Verified: best, Revoked: m.Revoked.LeafRevokedBy(leaf.SerialNumber, keys, m.Intermediates)})
 	}
 	mem.chains = chainsSeen
+	mem.issuers = issuersSeen
 	return m, nil
 }
 

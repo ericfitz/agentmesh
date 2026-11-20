@@ -85,15 +85,41 @@ func (r Revocations) RevokedKeys(intermediates []*x509.Certificate) map[string]b
 // revoked or the leaf's serial number is kept for that key. A leaf no listed
 // intermediate verifies counts as revoked (fail closed).
 func (r Revocations) LeafRevoked(leaf *x509.Certificate, intermediates []*x509.Certificate) bool {
-	text := SerialText(leaf.SerialNumber)
-	verified := false
+	return r.LeafRevokedBy(leaf.SerialNumber, LeafIssuerKeys(leaf, intermediates), intermediates)
+}
+
+// LeafIssuerKeys is the KeyID of each distinct key among intermediates that
+// verifies the leaf's signature, in order of first appearance: the expensive
+// half of LeafRevoked, which a caller may keep for a leaf it has seen (a leaf's
+// signature never changes; a key that verifies it keeps verifying it). Several
+// certificates of one key (a renewal) are checked once, and the first verifying
+// one speaks for the key.
+func LeafIssuerKeys(leaf *x509.Certificate, intermediates []*x509.Certificate) []string {
+	var out []string
+	tried := map[string]bool{}
 	for _, c := range intermediates {
-		if leaf.CheckSignatureFrom(c) != nil {
+		key := KeyID(c.SubjectKeyId)
+		if tried[key] {
 			continue
 		}
-		verified = true
-		issuer := KeyID(c.SubjectKeyId)
-		if r.RevokedKeys(intermediates)[issuer] {
+		if leaf.CheckSignatureFrom(c) == nil {
+			tried[key] = true
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+// LeafRevokedBy is LeafRevoked given the keys that verified the leaf's
+// signature (LeafIssuerKeys): none is revoked (fail closed).
+func (r Revocations) LeafRevokedBy(serial *big.Int, issuers []string, intermediates []*x509.Certificate) bool {
+	if len(issuers) == 0 {
+		return true
+	}
+	text := SerialText(serial)
+	revoked := r.RevokedKeys(intermediates)
+	for _, issuer := range issuers {
+		if revoked[issuer] {
 			return true
 		}
 		for _, s := range r.Leaves[issuer] {
@@ -102,7 +128,7 @@ func (r Revocations) LeafRevoked(leaf *x509.Certificate, intermediates []*x509.C
 			}
 		}
 	}
-	return !verified
+	return false
 }
 
 // LeafSerials is the revoked leaf serial numbers kept for an issuer key, in

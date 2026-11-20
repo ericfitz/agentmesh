@@ -24,7 +24,10 @@ import (
 // loadFixture is a worst case for one Trust.Load: three certificates for the
 // installation's intermediate key, a root CRL and a leaf CRL of ten entries
 // each, and 50 leaf rows, in a SQLite file.
-func loadFixture(b *testing.B) signingkeys.Trust {
+func loadFixture(b *testing.B) signingkeys.Trust { return loadFixtureN(b, 50) }
+
+// loadFixtureN is loadFixture with n leaf rows (the first ten are on the CRL).
+func loadFixtureN(b *testing.B, n int) signingkeys.Trust {
 	b.Helper()
 	ctx := context.Background()
 	now := time.UnixMilli(startMs)
@@ -60,7 +63,7 @@ func loadFixture(b *testing.B) signingkeys.Trust {
 	key := parsed.(*ecdsa.PrivateKey)
 	var serials []*big.Int
 	err = st.Tx(ctx, func(ctx context.Context, tx store.Tx) error {
-		for i := range 50 {
+		for i := range n {
 			pub, _, err := ed25519.GenerateKey(rand.Reader)
 			if err != nil {
 				return err
@@ -110,6 +113,36 @@ func BenchmarkLoad(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		if _, err := tr.Load(ctx, mem); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkLoad2000 is BenchmarkLoad at the size of the issue #44 review
+// (2,000 leaf rows): the warm Load pays LeafRevoked's per-leaf signature check
+// on every call, which the chain Memory does not cache (Important 3).
+func BenchmarkLoad2000(b *testing.B) {
+	ctx := context.Background()
+	tr := loadFixtureN(b, 2000)
+	mem := &signingkeys.Memory{}
+	if m, err := tr.Load(ctx, mem); err != nil || len(m.Leaves) != 2000 {
+		b.Fatalf("leaves = %d, %v", len(m.Leaves), err)
+	}
+	b.ResetTimer()
+	for range b.N {
+		if _, err := tr.Load(ctx, mem); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkLoadCold2000 is the first Load of a process at 2,000 leaf rows.
+func BenchmarkLoadCold2000(b *testing.B) {
+	ctx := context.Background()
+	tr := loadFixtureN(b, 2000)
+	b.ResetTimer()
+	for range b.N {
+		if _, err := tr.Load(ctx, &signingkeys.Memory{}); err != nil {
 			b.Fatal(err)
 		}
 	}

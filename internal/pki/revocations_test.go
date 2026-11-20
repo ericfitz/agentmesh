@@ -188,3 +188,24 @@ func TestLeafRevokedFailsClosed(t *testing.T) {
 		t.Error("a leaf with no intermediates is not revoked")
 	}
 }
+
+// Certificates of one key are checked once, and a key that did not sign the
+// leaf is not listed (issue #44, Important 3).
+func TestLeafIssuerKeysOncePerKey(t *testing.T) {
+	key := newP256(t)
+	a := buildChain(t, chainOpts{interKey: key})
+	b := buildChain(t, chainOpts{interKey: key}) // a renewal
+	other := buildChain(t, chainOpts{})
+	got := LeafIssuerKeys(b.leaf, []*x509.Certificate{other.inter, a.inter, b.inter})
+	want := []string{KeyID(a.inter.SubjectKeyId)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("LeafIssuerKeys = %v, want %v", got, want)
+	}
+	var r Revocations
+	if r.LeafRevokedBy(b.leaf.SerialNumber, got, []*x509.Certificate{a.inter, b.inter}) {
+		t.Error("revoked with nothing listed")
+	}
+	if !r.LeafRevokedBy(b.leaf.SerialNumber, nil, nil) {
+		t.Error("a leaf no key verifies is not revoked")
+	}
+}
