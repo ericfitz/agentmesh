@@ -90,7 +90,7 @@ function Invoke-GoTest {
     $global:LASTEXITCODE = $code
 }
 
-# The parse check of every tracked .ps1 (what windows.yml runs under both hosts).
+# The parse check of every tracked .ps1 (under both hosts).
 $parseScript = Join-Path $Out 'parse-check.ps1'
 @'
 $bad = 0

@@ -668,7 +668,7 @@ install_check() {
 # and Test-Hash run over a copy of the release files, so its embedded key and
 # its SHA256SUMS parser are proven to agree with sign_sums and write_sums; a
 # tampered SHA256SUMS must be refused. The install itself needs Windows
-# (registry, user PATH, running the .exe): windows.yml and Task 10 cover it.
+# (registry, user PATH, running the .exe): make windows-test and Task 10 cover it.
 # Without pwsh it prints a note line and counts nothing.
 install_ps1_check() {
     local dist="$1" d="$WORK/ps1check" out rc=0

@@ -1,6 +1,6 @@
 # ADR 0020: Local CI
 
-Status: Accepted (Eric, 2026-11-15; decisions 1 to 7 and the fresh-VM deviation). The builder's calls below are plan rulings that Eric ratified on 2026-11-19, which makes them his. `windows.yml` stays as the dispatch-only fallback until `make windows-test` passes a real run.
+Status: Accepted (Eric, 2026-11-15; decisions 1 to 7 and the fresh-VM deviation). The builder's calls below are plan rulings that Eric ratified on 2026-11-19, which makes them his. `make windows-test` passed its first real run on 2026-11-20 (77e9947), and `windows.yml` was deleted then.
 
 Design: `docs/superpowers/specs/2026-11-15-local-ci-design.md`. Plan: `docs/superpowers/plans/2026-11-15-local-ci.md`. Operator guide for the Windows run: `docs/windows-test.md`.
 
@@ -32,7 +32,7 @@ The test VM is a fresh Windows 11 arm64 install named `Windows 11 Test VM`, not 
 
 ## Consequences
 
-- `ci.yml` and `windows.yml` are dispatch-only. `windows.yml` is deleted only after `make windows-test` passes a real run (blocked on the VM Keychain item); until then it is the fallback.
+- `ci.yml` is dispatch-only. `windows.yml` was deleted on 2026-11-20, after `make windows-test` passed a real run (77e9947).
 - The done rule stays "`make verify` passes locally on the final commit" until that run; its final wording (adding the pre-push checks) waits for it.
 - `release/release.sh` runs the preflight (`verify`, `verify-linux`, `windows-test`, the release checks and `m9-exit-checks.sh`) against the tag's commit before publishing.
 - The three harness selftests (`windows-test-selftest`, `verify-linux-selftest`, `pre-push-selftest`) are not in any gate; the whole-branch review of 2026-11-19 raised this (Finding 3) and the path set is Eric's call.

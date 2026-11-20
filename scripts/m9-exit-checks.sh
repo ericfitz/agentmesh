@@ -285,7 +285,7 @@ check_no_v1_names() {
 		fi
 	done
 	for f in install.sh install.ps1 release/*.sh release/*.tmpl release/windows-zip-README.txt release/windows-zip-README-mcponly.txt \
-		.github/workflows/release-build.yml .github/workflows/windows.yml .github/workflows/publish-image.yml; do
+		.github/workflows/release-build.yml .github/workflows/publish-image.yml; do
 		if [ -e "$ROOT/$f" ]; then files+=("$ROOT/$f"); fi
 	done
 	# grep alone (CI runners have no rg): 0 is a match, 1 none, anything else

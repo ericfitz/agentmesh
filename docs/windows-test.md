@@ -5,7 +5,7 @@
 no Fusion window, no copying, no shutdown by hand. Decisions and rationale:
 `docs/superpowers/specs/2026-11-15-local-ci-design.md`, section 3.
 
-It is not part of `make verify`. The pre-push hook (`.githooks/pre-push`, when a push touches the Windows path set) and `release/release.sh`'s preflight run it. It has not yet passed a real run: that waits on the VM encryption password in the Keychain, so `.github/workflows/windows.yml` stays as the dispatch-only fallback.
+It is not part of `make verify`. The pre-push hook (`.githooks/pre-push`, when a push touches the Windows path set) and `release/release.sh`'s preflight run it.
 
 ## What it does
 
