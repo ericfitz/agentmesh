@@ -12,7 +12,7 @@ It is not part of `make verify`. The pre-push hook (`.githooks/pre-push`, when a
 1. Resolves `COMMIT` to a full SHA, refuses the source VM, takes the lock (below),
    reads both passwords from the login Keychain.
 2. `vmrun revertToSnapshot baseline`, then `start nogui`, then polls
-   `checkToolsState` until VMware Tools report `running` (bound: 300 s).
+   `checkToolsState` until VMware Tools report `running` (bound: 600 s; a run on 2026-11-20 took over 300 s).
 3. Packs `git archive COMMIT` into a zip, copies it and
    `scripts/windows-test/job.ps1` to `C:\amt` in the guest.
 4. Runs `job.ps1` as the unelevated guest user `test`. Its 11 steps all run even
@@ -119,7 +119,7 @@ which directory to remove.
   vmrun call timed out, the results are incomplete or malformed. The VM is
   powered off and no pass is recorded.
 
-Environment: `AGENTMESH_WINDOWS_TEST_TOOLS_TIMEOUT` (300 s),
+Environment: `AGENTMESH_WINDOWS_TEST_TOOLS_TIMEOUT` (600 s),
 `AGENTMESH_WINDOWS_TEST_RUN_TIMEOUT` (2700 s), `AGENTMESH_WINDOWS_TEST_CALL_TIMEOUT`
 (120 s), `AGENTMESH_WINDOWS_TEST_POLL_SECONDS` (5), `AGENTMESH_VMRUN`,
 `AGENTMESH_SECURITY`, `AGENTMESH_WINDOWS_TEST_VMX`, `AGENTMESH_DEV_STATE`.
