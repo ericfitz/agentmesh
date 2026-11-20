@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -84,6 +86,9 @@ func open(ctx context.Context, db *sqlx.DB, d Dialect, opts Options) (*Store, er
 	if err != nil {
 		return nil, err
 	}
+	if err := checkTables(ctx, db, d, opts.Migrations[:cur]); err != nil {
+		return nil, err
+	}
 	for v := cur; v < latest; v++ {
 		if err := runStep(ctx, db, d, v, opts.Migrations[v]); err != nil {
 			return nil, fmt.Errorf("migrate schema version %d to %d: %w", v, v+1, err)
@@ -144,6 +149,50 @@ func readMeta(ctx context.Context, db *sqlx.DB, d Dialect, latest int) (int, err
 		return 0, fmt.Errorf("%w (database has version %d, this binary %d)", store.ErrUpgradeNeeded, version, latest)
 	}
 	return int(version), nil
+}
+
+var createTableRE = regexp.MustCompile(`(?im)^\s*CREATE\s+(?:VIRTUAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// CreatedTables lists the tables a schema file creates, in order, so an
+// engine derives Migration.Tables from the embedded file itself.
+func CreatedTables(schemaSQL string) []string {
+	var names []string
+	for _, m := range createTableRE.FindAllStringSubmatch(schemaSQL, -1) {
+		names = append(names, m[1])
+	}
+	return names
+}
+
+// checkTables refuses a database whose recorded version includes steps whose
+// tables are not all present: an earlier pre-release build created it, and
+// before the first release such a database is recreated, never converted
+// (issue #42; ADR 0004 addendum). One catalog query.
+func checkTables(ctx context.Context, db *sqlx.DB, d Dialect, applied []Migration) error {
+	var want []string
+	for _, m := range applied {
+		want = append(want, m.Tables...)
+	}
+	if len(want) == 0 {
+		return nil
+	}
+	have, err := d.Tables(ctx, db)
+	if err != nil {
+		return err
+	}
+	present := make(map[string]bool, len(have))
+	for _, n := range have {
+		present[n] = true
+	}
+	var missing []string
+	for _, n := range want {
+		if !present[n] {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("%w (database is at version %d but lacks tables of the current schema: %s)", store.ErrUpgradeNeeded, len(applied), strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // runStep moves schema_version from v to v+1 in one transaction: lock,

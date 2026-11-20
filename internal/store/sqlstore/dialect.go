@@ -27,6 +27,9 @@ type Dialect interface {
 	// "schema_meta" before selecting from it, so ErrNotAgentmesh never
 	// depends on classifying an engine's error.
 	TableExists(ctx context.Context, db *sqlx.DB, name string) (bool, error)
+	// Tables lists the names of the user tables in the database (SQLite: the
+	// main schema; Postgres: the current schema) in one catalog query.
+	Tables(ctx context.Context, db *sqlx.DB) ([]string, error)
 	Stamp(ctx context.Context, db *sqlx.DB) error          // SQLite: PRAGMA application_id; Postgres: no-op
 	CheckStamp(ctx context.Context, db *sqlx.DB) error     // SQLite: ErrNotAgentmesh on mismatch; Postgres: no-op
 	LockMigrations(ctx context.Context, tx *sqlx.Tx) error // SQLite: no-op (immediate tx); Postgres: advisory lock
@@ -58,7 +61,11 @@ type Backoffer interface {
 // Migration is one schema step; Version is the version reached by running Up.
 type Migration struct {
 	Version int
-	Up      func(ctx context.Context, tx *sqlx.Tx) error
+	// Tables names the tables the step creates (CreatedTables of its SQL).
+	// Open refuses a database at or past this version that lacks one of them
+	// (issue #42); a step with no Tables is not checked.
+	Tables []string
+	Up     func(ctx context.Context, tx *sqlx.Tx) error
 }
 
 // Options configures Open.

@@ -20,7 +20,7 @@ var schemaFS embed.FS
 // the files must not contain BEGIN or COMMIT.
 func Migrations() []sqlstore.Migration {
 	return []sqlstore.Migration{
-		{Version: 1, Up: runFile("schema/0001_initial.sql")},
+		{Version: 1, Up: runFile("schema/0001_initial.sql"), Tables: schemaTables("schema/0001_initial.sql")},
 	}
 }
 
@@ -35,4 +35,13 @@ func runFile(name string) func(context.Context, *sqlx.Tx) error {
 		}
 		return nil
 	}
+}
+
+// schemaTables derives a step's table list from its embedded file (issue #42).
+func schemaTables(name string) []string {
+	b, err := schemaFS.ReadFile(name)
+	if err != nil {
+		panic(err) // the file is embedded: a missing one is a build error
+	}
+	return sqlstore.CreatedTables(string(b))
 }

@@ -212,6 +212,14 @@ func (dialect) IsEmpty(ctx context.Context, db *sqlx.DB) (bool, error) {
 	return n == 0, nil
 }
 
+func (dialect) Tables(ctx context.Context, db *sqlx.DB) ([]string, error) {
+	var names []string
+	if err := db.SelectContext(ctx, &names, "SELECT name FROM sqlite_master WHERE type = 'table'"); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
 func (dialect) TableExists(ctx context.Context, db *sqlx.DB, name string) (bool, error) {
 	var n int
 	if err := db.GetContext(ctx, &n, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", name); err != nil {

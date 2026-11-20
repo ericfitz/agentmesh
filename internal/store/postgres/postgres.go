@@ -203,6 +203,14 @@ func (dialect) IsEmpty(ctx context.Context, db *sqlx.DB) (bool, error) {
 	return n == 0, nil
 }
 
+func (dialect) Tables(ctx context.Context, db *sqlx.DB) ([]string, error) {
+	var names []string
+	if err := db.SelectContext(ctx, &names, "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
 func (dialect) TableExists(ctx context.Context, db *sqlx.DB, name string) (bool, error) {
 	var n int
 	if err := db.GetContext(ctx, &n, "SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1", name); err != nil {

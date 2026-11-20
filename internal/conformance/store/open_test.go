@@ -383,3 +383,64 @@ func TestRealStepFailureRollsBack(t *testing.T) {
 		}
 	})
 }
+
+// TestOpenRefusesVersionOneMissingTables is issue #42: a database an earlier
+// pre-release build created reports version 1 but lacks tables of the current
+// schema. Open refuses it with ErrUpgradeNeeded naming every missing table,
+// changes nothing, and a database with the full schema still opens.
+func TestOpenRefusesVersionOneMissingTables(t *testing.T) {
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		s, reopen, rawDSN := openStore(t, e, sqlstore.Options{})
+		_ = s.Close()
+		db := rawDB(t, e, rawDSN)
+
+		execAll(t, db, "DROP TABLE trust_material", "DROP TABLE agent_statuses")
+		for run := 1; run <= 2; run++ { // a refused open leaves the database as it was
+			_, err := reopen(sqlstore.Options{})
+			if !errors.Is(err, ab2store.ErrUpgradeNeeded) {
+				t.Fatalf("run %d: err = %v, want ErrUpgradeNeeded", run, err)
+			}
+			for _, want := range []string{"trust_material", "agent_statuses", "recreate"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("run %d: err %q lacks %q", run, err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "channels") {
+				t.Fatalf("run %d: err %q names a table that exists", run, err)
+			}
+		}
+		if got := scalar[int](t, db, "SELECT schema_version FROM schema_meta"); got != len(migrationsFor(e)) {
+			t.Fatalf("schema_version = %d after refusals", got)
+		}
+	})
+}
+
+// TestMigrationTablesCoverSchemaFile: Migration.Tables, derived from the
+// embedded file, lists every CREATE TABLE of it and each exists after a fresh
+// open (so the table check in Open cannot refuse a database Open just made).
+func TestMigrationTablesCoverSchemaFile(t *testing.T) {
+	dbtest.ForEachEngine(t, func(t *testing.T, e dbtest.Engine) {
+		s, _, rawDSN := openStore(t, e, sqlstore.Options{})
+		_ = s.Close()
+		db := rawDB(t, e, rawDSN)
+		ms := migrationsFor(e)
+		total := 0
+		for _, m := range ms {
+			total += len(m.Tables)
+			for _, name := range m.Tables {
+				if got := tableCount(t, e, db, name); got != 1 {
+					t.Errorf("table %s: count %d, want 1", name, got)
+				}
+			}
+		}
+		// 30 CREATE TABLE statements in each engine's 0001_initial.sql, plus
+		// SQLite's CREATE VIRTUAL TABLE messages_fts.
+		want := 30
+		if e.Name == "sqlite" {
+			want = 31
+		}
+		if total != want {
+			t.Errorf("Tables lists %d tables, want %d", total, want)
+		}
+	})
+}
