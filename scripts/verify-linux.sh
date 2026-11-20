@@ -19,7 +19,7 @@
 #
 # State (Definition of Done D): a second run clears the commit's logs and recorded
 # pass first and reruns (the record is for the hook, not for this script). Runs
-# overlap safely: names carry the PID, and the Go module and build caches are the
+# overlap safely (same commit: the second is refused, exit 2, naming the first's PID; a dead holder's lock is cleared): names carry the PID, and the Go module and build caches are the
 # named volumes agentmesh-verify-linux-gomod and -gocache (kept between runs; Go's
 # caches tolerate concurrent use). A killed run (SIGKILL) leaves its two containers
 # and network; they are named agentmesh-verify-linux-*-<pid> and are removed by hand.
@@ -42,7 +42,7 @@ NET=agentmesh-verify-linux-$$
 PG=agentmesh-verify-linux-pg-$$
 TESTC=agentmesh-verify-linux-test-$$
 START_EPOCH=$(date +%s)
-WORK="" NET_MADE=0
+WORK="" NET_MADE=0 LOCKED=0 LOCKFILE="" MUTEX=""
 
 say() { printf '%s\n' "verify-linux: $*" >&2; }
 die() { # die CODE MESSAGE...
@@ -66,6 +66,8 @@ cleanup() {
     "$DOCKER" rm -f "$TESTC" "$PG" >/dev/null 2>&1 || true
     "$DOCKER" network rm "$NET" >/dev/null 2>&1 || true
   fi
+  if [ "$LOCKED" = 1 ] && [ "$(cut -d' ' -f1 "$LOCKFILE" 2>/dev/null)" = "$$" ]; then rm -f "$LOCKFILE"; fi
+  [ -z "$MUTEX" ] || rmdir "$MUTEX" 2>/dev/null || true
   [ -z "$WORK" ] || rm -rf "$WORK"
   exit "$rc"
 }
@@ -80,6 +82,36 @@ command -v "$DOCKER" >/dev/null || die 2 "docker not found: $DOCKER (install Doc
 "$DOCKER" info >/dev/null 2>&1 || die 2 "Docker is not running or not reachable ('$DOCKER info' failed); start Docker Desktop"
 
 STATE=$(devstate_dir)
+# A per-commit lock, taken before the log wipe and the pass removal, so an overlapping
+# run of the same commit cannot delete the first's log. Short mutex directory (mkdir is
+# atomic) guards the lock file's check-and-write; a dead holder's lock is cleared.
+LOCKFILE=$STATE/verify-linux-$SHA.lock
+MUTEX_PATH=$STATE/verify-linux-$SHA.lock.d
+n=0
+until mkdir "$MUTEX_PATH" 2>/dev/null; do
+  n=$((n + 1))
+  [ "$n" -le 50 ] || die 2 "cannot take $MUTEX_PATH (another run is starting, or a killed run left it: remove the directory if no run is active)"
+  sleep 0.1
+done
+MUTEX=$MUTEX_PATH
+if [ -e "$LOCKFILE" ]; then
+  read -r lock_pid lock_start extra <"$LOCKFILE" || true
+  case "${lock_pid:-}${lock_start:-}" in '' | *[!0-9]*) lock_bad=1 ;; *) lock_bad=0 ;; esac
+  if [ "$lock_bad" = 1 ] || [ -z "${lock_pid:-}" ] || [ -z "${lock_start:-}" ] || [ -n "${extra:-}" ]; then
+    die 2 "$LOCKFILE is not a lock this script wrote (want 'pid start_epoch'); remove it if no run is active"
+  fi
+  if kill -0 "$lock_pid" 2>/dev/null; then
+    die 2 "another verify-linux run of $SHA is active: PID $lock_pid; wait for it"
+  fi
+  say "clearing the stale lock of dead PID $lock_pid"
+  rm -f "$LOCKFILE"
+fi
+printf '%s %s\n' "$$" "$START_EPOCH" >"$LOCKFILE.tmp.$$"
+mv "$LOCKFILE.tmp.$$" "$LOCKFILE"
+LOCKED=1
+rmdir "$MUTEX_PATH"
+MUTEX=""
+
 LOGDIR=$(devstate_logdir "$CHECK" "$SHA")
 find "$LOGDIR" -mindepth 1 -delete
 rm -f "$STATE/passes/$CHECK/$SHA"
