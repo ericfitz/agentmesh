@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fake security for scripts/windows-test-selftest.sh: find-generic-password only.
+# keychain.exit.<account> in the case directory makes that account fail with its
+# content as the exit code (44 is "item not found").
+set -euo pipefail
+: "${WT_CASE_DIR:?}" "${WT_CALLS:?}"
+echo "security | $*" >>"$WT_CALLS"
+[ "${1:-}" = find-generic-password ] && [ "${2:-}" = -s ] && [ "${3:-}" = agentmesh-windows-test ] \
+  && [ "${4:-}" = -a ] && [ "${6:-}" = -w ] || { echo "fake security: unexpected args" >&2; exit 2; }
+account=$5
+if [ -e "$WT_CASE_DIR/keychain.exit.$account" ]; then
+  echo "security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain." >&2
+  exit "$(cat "$WT_CASE_DIR/keychain.exit.$account")"
+fi
+case "$account" in
+  vm-encryption) echo FAKE-VM-PASS-7f3a ;;
+  guest-test) echo FAKE-GUEST-PASS-91bc ;;
+  *) exit 44 ;;
+esac

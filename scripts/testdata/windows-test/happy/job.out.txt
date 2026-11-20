@@ -1,0 +1,2 @@
+step output recorded from a guest run
+ok  	github.com/example/pkg	0.1s

@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Fake vmrun for scripts/windows-test-selftest.sh. Records its argv, redacted, to
+# $WT_CALLS and replays fixtures: a file in $WT_CASE_DIR wins over the same file
+# in $WT_BASE_DIR (the happy case). Fixture files, by name:
+#   list.out, checkToolsState.out   stdout of those commands (@VMX@ is the VMX path)
+#   exit.<command>                  exit code of every call of <command> (stderr gets a line)
+#   once.<command>.out              output of the first call, which then exits 255
+#   sleep.job                       seconds the job's runProgramInGuest sleeps
+#   badvp, badgp                    reject the VM or the guest password
+#   results.txt, job.out.txt, logs/ what CopyFileFromGuestToHost copies back
+set -euo pipefail
+: "${WT_CASE_DIR:?}" "${WT_BASE_DIR:?}" "${WT_CALLS:?}" "${WT_VMX:?}"
+VM_PW=FAKE-VM-PASS-7f3a
+GUEST_PW=FAKE-GUEST-PASS-91bc
+
+fx() { # fixture path or empty
+  if [ -e "$WT_CASE_DIR/$1" ]; then printf '%s\n' "$WT_CASE_DIR/$1"
+  elif [ -e "$WT_BASE_DIR/$1" ]; then printf '%s\n' "$WT_BASE_DIR/$1"; fi
+}
+
+vp="" gp="" red="" cmd="" argc=$#
+while [ "$argc" -gt 0 ]; do
+  case "$1" in
+    -T | -gu) red="$red $1 $2"; shift 2; argc=$# ;;
+    -vp) vp=$2; red="$red -vp REDACTED"; shift 2; argc=$# ;;
+    -gp) gp=$2; red="$red -gp REDACTED"; shift 2; argc=$# ;;
+    *) cmd=$1; shift; break ;;
+  esac
+done
+printf '%s |%s %s %s\n' "$cmd" "$red" "$cmd" "$*" >>"$WT_CALLS"
+
+[ -n "$cmd" ] || { echo "fake vmrun: no command" >&2; exit 2; }
+if [ "$cmd" != list ]; then
+  if [ -z "$vp" ] || [ "$vp" != "$VM_PW" ] || [ -n "$(fx badvp)" ]; then
+    echo "Error: Cannot open VM: $WT_VMX, Incorrect password"
+    exit 255
+  fi
+fi
+case "$cmd" in
+  CopyFileFromHostToGuest | CopyFileFromGuestToHost | runProgramInGuest | createDirectoryInGuest)
+    if [ "$gp" != "$GUEST_PW" ] || [ -n "$(fx badgp)" ]; then
+      echo "Error: Invalid user name or password for the guest OS"
+      exit 255
+    fi
+    ;;
+esac
+if f=$(fx "once.$cmd.out") && [ -n "$f" ] && [ ! -e "$WT_CALLS.once.$cmd" ]; then
+  : >"$WT_CALLS.once.$cmd"
+  cat "$f"
+  exit 255
+fi
+if f=$(fx "exit.$cmd") && [ -n "$f" ]; then
+  echo "Error: fake $cmd failed" >&2
+  exit "$(cat "$f")"
+fi
+
+case "$cmd" in
+  list | checkToolsState)
+    sed "s|@VMX@|$WT_VMX|g" "$(fx "$cmd.out")"
+    ;;
+  CopyFileFromHostToGuest)
+    [ -f "$2" ] || { echo "fake: no host file $2" >&2; exit 255; }
+    ;;
+  CopyFileFromGuestToHost)
+    guest=$2 host=$3
+    case "${guest##*\\}" in
+      results.txt) cp "$(fx results.txt)" "$host" ;;
+      job.out) iconv -f UTF-8 -t UTF-16 <"$(fx job.out.txt)" >"$host" ;;
+      logs.zip)
+        d=$(fx logs)
+        (cd "$d" && zip -q "$host" ./*)
+        ;;
+      *) echo "fake: unknown guest file $guest" >&2; exit 255 ;;
+    esac
+    ;;
+  runProgramInGuest)
+    case "$*" in
+      *job.ps1*)
+        if f=$(fx sleep.job) && [ -n "$f" ]; then exec sleep "$(cat "$f")"; fi
+        ;;
+    esac
+    ;;
+  revertToSnapshot | start | stop) ;;
+  *) echo "fake vmrun: unexpected command $cmd" >&2; exit 2 ;;
+esac

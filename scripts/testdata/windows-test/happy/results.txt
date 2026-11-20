@@ -1,0 +1,11 @@
+STEP vet-arm64 PASS
+STEP vet-tags-arm64 PASS
+STEP go-test-arm64 PASS
+STEP vet-amd64 PASS
+STEP vet-tags-amd64 PASS
+STEP go-test-amd64 PASS
+STEP ps1-parse-5 PASS
+STEP ps1-parse-7 PASS
+STEP install-selftest-5 PASS
+STEP install-5 PASS
+STEP install-7 PASS
