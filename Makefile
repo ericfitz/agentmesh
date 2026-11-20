@@ -1,4 +1,4 @@
-.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run cats-selftest pen-check pen-selftest windows-test windows-test-selftest
+.PHONY: build build-mcponly build-all vet fmt-check lint test test-conformance test-race tidy-check generate generate-check check-gates check-gates-selftest verify docker-image docker-smoke vet-cross release-check release-lint release-install-check vet-tags spec-lint cats-run cats-selftest pen-check pen-selftest windows-test windows-test-selftest verify-linux verify-linux-selftest
 export CGO_ENABLED=0
 PKGS_UNIT = $$(go list ./... | grep -v '^github.com/ericfitz/agentmesh/internal/conformance')
 
@@ -64,7 +64,7 @@ release-check: ## Not part of verify (a dispatch-only ci.yml job). Release tooli
 release-lint: ## actionlint over the workflows and shellcheck over release/, scripts/ and install.sh (not part of verify; a dispatch-only ci.yml job)
 	@for t in actionlint shellcheck; do command -v $$t >/dev/null || { echo "release-lint: $$t is not installed"; exit 1; }; done
 	actionlint .github/workflows/*.yml
-	shellcheck -x release/*.sh scripts/*.sh scripts/lib/*.sh scripts/testdata/cats-fake/cats scripts/testdata/windows-test/vmrun scripts/testdata/windows-test/security .githooks/pre-commit
+	shellcheck -x release/*.sh scripts/*.sh scripts/lib/*.sh scripts/testdata/cats-fake/cats scripts/testdata/windows-test/vmrun scripts/testdata/windows-test/security scripts/testdata/verify-linux/docker .githooks/pre-commit
 	shellcheck -s sh install.sh
 release-install-check: ## The installer matrix in Docker (RELEASE_INSTALL_ARGS=--quick for one image; not part of verify; a dispatch-only ci.yml job)
 	bash release/test-install.sh $(RELEASE_INSTALL_ARGS)
@@ -105,3 +105,7 @@ windows-test: ## The Windows checks of COMMIT (default HEAD) in the test VM thro
 	bash scripts/windows-test.sh $(COMMIT)
 windows-test-selftest: ## scripts/windows-test.sh against a fake vmrun and security (no VM, no Keychain)
 	bash scripts/windows-test-selftest.sh
+verify-linux: ## make test and the conformance suites of COMMIT (default HEAD) in a linux/arm64 container with a sibling Postgres (not part of verify)
+	bash scripts/verify-linux.sh $(COMMIT)
+verify-linux-selftest: ## scripts/verify-linux.sh against a fake docker
+	bash scripts/verify-linux-selftest.sh

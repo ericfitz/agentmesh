@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Fake docker for scripts/verify-linux-selftest.sh. Records every call's argv to
+# $VL_CALLS and answers from the VL_* variables:
+#   VL_INFO_FAIL=1     `docker info` fails
+#   VL_PG_NEVER_READY=1  `docker exec ... pg_isready` fails
+#   VL_TEST_RC=N       exit status of the test container (default 0)
+#   VL_TEST_LOG=TEXT   what the test container prints (default: ok)
+set -u
+printf '%s\n' "$*" >>"${VL_CALLS:?}"
+case "${1:-}" in
+  info) [ "${VL_INFO_FAIL:-0}" != 1 ] || { echo "Cannot connect to the Docker daemon" >&2; exit 1; } ;;
+  exec) [ "${VL_PG_NEVER_READY:-0}" != 1 ] || exit 2 ;;
+  run)
+    case " $* " in
+      *" -d "*) echo fakecontainerid ;;
+      *)
+        printf '%s\n' "${VL_TEST_LOG:-ok}"
+        exit "${VL_TEST_RC:-0}"
+        ;;
+    esac
+    ;;
+esac
+exit 0
