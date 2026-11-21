@@ -2,14 +2,14 @@
 # windows-test.sh [COMMIT]: run the Windows checks of COMMIT (default HEAD) in the
 # dedicated Windows 11 test VM, driven by VMware Fusion's vmrun (local CI spec
 # section 3; guide: docs/windows-test.md). Fully unattended: revert to the
-# `baseline` snapshot, start headless, wait for VMware Tools, copy a `git archive`
+# `baseline` snapshot, start headless, wait for guest operations, copy a `git archive`
 # of COMMIT in, run scripts/windows-test/job.ps1, copy the results back, power off.
 #
 # Runner contract (docs/superpowers/plans/2026-11-15-local-ci.md):
 #   exit 0  every step passed
 #   exit 1  a step failed (names of failed steps and tests are in the summary)
 #   exit 2  usage or a precondition failed (tool, Keychain item, VM already running)
-#   exit 3  infrastructure failure (Tools timeout, guest copy failed, run timed out)
+#   exit 3  infrastructure failure (guest operations never ready, guest copy failed, run timed out)
 # stdout carries only the summary; messages go to stderr; full logs are under
 # <state dir>/logs/windows-test/<sha>/.
 #
@@ -17,7 +17,7 @@
 # AGENTMESH_WINDOWS_TEST_VMX (the test VM's .vmx), AGENTMESH_DEV_STATE (state dir),
 # AGENTMESH_WINDOWS_TEST_TOOLS_TIMEOUT (600 s), AGENTMESH_WINDOWS_TEST_RUN_TIMEOUT
 # (2700 s), AGENTMESH_WINDOWS_TEST_CALL_TIMEOUT (120 s, any other vmrun call),
-# AGENTMESH_WINDOWS_TEST_POLL_SECONDS (5, the checkToolsState interval).
+# AGENTMESH_WINDOWS_TEST_POLL_SECONDS (5, the readiness probe interval).
 #
 # State (Definition of Done D): a second run reverts to the snapshot, so it starts
 # clean. Two runs overlap only as far as the lock: the second is refused, naming the
@@ -230,7 +230,7 @@ LOGDIR=$(devstate_logdir "$CHECK" "$SHA")
 find "$LOGDIR" -mindepth 1 -delete
 rm -f "$STATE/passes/$CHECK/$SHA"
 
-# ---- 3. archive, revert, start, wait for Tools ----
+# ---- 3. archive, revert, start, wait for guest operations ----
 git -C "$ROOT" archive --format=zip -o "$LOGDIR/src.zip" "$SHA" || die 2 "git archive of $SHA failed"
 
 revert_out=$WORK/revert.out
@@ -248,14 +248,17 @@ if [ "$rc" -ne 0 ]; then die 3 "revertToSnapshot $SNAPSHOT failed (exit $rc): $(
 
 vm_step "start" 180 host start "$VMX" nogui
 
+# Readiness is a guest operation that succeeds, not checkToolsState: in the test VM
+# the status stays 'installed' after boot (the Tools power-on state change returns
+# status 1) while guest operations already work (2026-11-20).
 deadline=$((SECONDS + TOOLS_TIMEOUT))
 while :; do
   rc=0
-  vm "$CALL_TIMEOUT" "$WORK/tools.out" host checkToolsState "$VMX" || rc=$?
+  vm "$CALL_TIMEOUT" "$WORK/tools.out" guest fileExistsInGuest "$VMX" "$GUEST_PS" || rc=$?
   vm_check "$WORK/tools.out"
-  if [ "$rc" = 0 ] && [ "$(tr -d '[:space:]' <"$WORK/tools.out")" = running ]; then break; fi
+  if [ "$rc" = 0 ]; then break; fi
   if [ "$SECONDS" -ge "$deadline" ]; then
-    die 3 "VMware Tools did not reach 'running' within ${TOOLS_TIMEOUT}s (last: $(head -c 100 "$WORK/tools.out" | tr '\n' ' '))"
+    die 3 "guest operations were not ready within ${TOOLS_TIMEOUT}s (last: $(head -c 100 "$WORK/tools.out" | tr '\n' ' '))"
   fi
   sleep "$POLL_SECONDS"
 done

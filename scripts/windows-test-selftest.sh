@@ -112,7 +112,7 @@ dead_pid() { # a PID that is not running
   echo "$p"
 }
 
-HAPPY_SEQ="list revertToSnapshot start checkToolsState runProgramInGuest CopyFileFromHostToGuest runProgramInGuest CopyFileFromGuestToHost stop"
+HAPPY_SEQ="list revertToSnapshot start fileExistsInGuest runProgramInGuest CopyFileFromHostToGuest runProgramInGuest CopyFileFromGuestToHost stop"
 
 case_happy() {
   setup_case happy

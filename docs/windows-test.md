@@ -12,7 +12,9 @@ It is not part of `make verify`. The pre-push hook (`.githooks/pre-push`, when a
 1. Resolves `COMMIT` to a full SHA, refuses the source VM, takes the lock (below),
    reads both passwords from the login Keychain.
 2. `vmrun revertToSnapshot baseline`, then `start nogui`, then polls
-   `checkToolsState` until VMware Tools report `running` (bound: 600 s; a run on 2026-11-20 took over 300 s).
+   `fileExistsInGuest` on the guest's PowerShell until a guest operation succeeds
+   (bound: 600 s). It does not use `checkToolsState`: in the test VM that status
+   stays `installed` after boot while guest operations already work (2026-11-20).
 3. Packs `git archive COMMIT` into a zip, copies it and
    `scripts/windows-test/job.ps1` to `C:\amt` in the guest.
 4. Runs `job.ps1` as the unelevated guest user `test`. Its 11 steps all run even
@@ -115,7 +117,7 @@ which directory to remove.
 - 1: a step failed; the summary names the failed steps and tests.
 - 2: usage or a precondition failed: no vmrun, no VM, missing or wrong Keychain
   item or password, source VM path, VM already running, live lock, malformed lock.
-- 3: infrastructure failure: Tools never ready, a guest copy failed, the job or a
+- 3: infrastructure failure: guest operations never ready, a guest copy failed, the job or a
   vmrun call timed out, the results are incomplete or malformed. The VM is
   powered off and no pass is recorded.
 
