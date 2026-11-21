@@ -20,7 +20,7 @@ One person works on agentmesh from one machine. Cloud CI repeated on GitHub's pa
 
 ## Deviation (Eric, 2026-11-15, human-made; supersedes Decision 6's clone)
 
-The test VM is a fresh Windows 11 arm64 install named `Windows 11 Test VM`, not a clone of Eric's VM: guest account `test`, encrypted, snapshot `baseline` (powered off). The clone and strip steps of the spec are void. `scripts/windows-test.sh` refuses any `.vmx` inside Eric's general-use VM.
+The test VM is a fresh Windows 11 arm64 install named `Windows 11 Test VM`, not a clone of Eric's VM: guest account `test`, encrypted, snapshot `Baseline` (powered off). The clone and strip steps of the spec are void. `scripts/windows-test.sh` refuses any `.vmx` inside Eric's general-use VM.
 
 ## Builder's calls (plan rulings, ratified by Eric 2026-11-19)
 

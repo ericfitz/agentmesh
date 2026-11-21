@@ -11,7 +11,7 @@ It is not part of `make verify`. The pre-push hook (`.githooks/pre-push`, when a
 
 1. Resolves `COMMIT` to a full SHA, refuses the source VM, takes the lock (below),
    reads both passwords from the login Keychain.
-2. `vmrun revertToSnapshot baseline`, then `start nogui`, then polls
+2. `vmrun revertToSnapshot Baseline`, then `start nogui`, then polls
    `fileExistsInGuest` on the guest's PowerShell until a guest operation succeeds
    (bound: 600 s). It does not use `checkToolsState`: in the test VM that status
    stays `installed` after boot while guest operations already work (2026-11-20).
@@ -61,13 +61,13 @@ or logs them.
 
 ## The snapshot
 
-`baseline` is the snapshot every run reverts to. Take it with the VM powered off,
+`Baseline` is the snapshot every run reverts to. Take it with the VM powered off,
 after the guest holds a warm Go module cache and build cache. A run whose results
 carry `GOMODCACHE-MISS` (the first module `go.sum` names is not in the guest's
 module cache) still passes, only slower, and its summary says
-`baseline stale: refresh it (docs/windows-test.md)`.
+`Baseline stale: refresh it (docs/windows-test.md)`.
 
-Refresh `baseline`:
+Refresh `Baseline`:
 
 1. Start the VM and log in as `test` (`"$VMRUN" -T fusion -vp ... start <vmx>`, with `VMRUN` as in step 4; with
    the Fusion window if you prefer).
@@ -82,8 +82,8 @@ Refresh `baseline`:
    VMRUN="/Applications/VMware Fusion.app/Contents/Library/vmrun"
    VMX="$HOME/Virtual Machines.localized/Windows 11 Test VM.vmwarevm/Windows 11 Test VM.vmx"
    VMPW=$(security find-generic-password -s agentmesh-windows-test -a vm-encryption -w)
-   "$VMRUN" -T fusion -vp "$VMPW" deleteSnapshot "$VMX" baseline
-   "$VMRUN" -T fusion -vp "$VMPW" snapshot "$VMX" baseline
+   "$VMRUN" -T fusion -vp "$VMPW" deleteSnapshot "$VMX" Baseline
+   "$VMRUN" -T fusion -vp "$VMPW" snapshot "$VMX" Baseline
    ```
 
 `snapshot` and `revertToSnapshot` can fail once with "Cannot read the virtual

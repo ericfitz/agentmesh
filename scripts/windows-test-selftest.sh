@@ -121,7 +121,7 @@ case_happy() {
   expect_out "steps: 11 passed: 11 failed: 0"
   expect_out "$STATE/logs/windows-test/$SHA"
   [ "$(vmrun_seq)" = "$HAPPY_SEQ" ] || fail "call sequence: $(vmrun_seq)"
-  grep -E '^revertToSnapshot ' "$CALLS" | grep -q ' baseline$' || fail "revert is not to baseline"
+  grep -E '^revertToSnapshot ' "$CALLS" | grep -q ' Baseline$' || fail "revert is not to Baseline"
   grep -E '^start ' "$CALLS" | grep -q ' nogui$' || fail "start is not nogui"
   [ "$(grep -c '^CopyFileFromHostToGuest ' "$CALLS")" = 2 ] || fail "want 2 host-to-guest copies (zip and job.ps1)"
   expect_pass
@@ -305,7 +305,7 @@ case_stale_baseline() {
   setup_case stale-baseline
   run_script
   expect_rc 0
-  expect_out "baseline stale: refresh it (docs/windows-test.md)"
+  expect_out "Baseline stale: refresh it (docs/windows-test.md)"
   expect_pass
   finish_case
 }

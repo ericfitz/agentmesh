@@ -2,7 +2,7 @@
 # windows-test.sh [COMMIT]: run the Windows checks of COMMIT (default HEAD) in the
 # dedicated Windows 11 test VM, driven by VMware Fusion's vmrun (local CI spec
 # section 3; guide: docs/windows-test.md). Fully unattended: revert to the
-# `baseline` snapshot, start headless, wait for guest operations, copy a `git archive`
+# `Baseline` snapshot, start headless, wait for guest operations, copy a `git archive`
 # of COMMIT in, run scripts/windows-test/job.ps1, copy the results back, power off.
 #
 # Runner contract (docs/superpowers/plans/2026-11-15-local-ci.md):
@@ -32,7 +32,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 . "$ROOT/scripts/lib/devstate.sh"
 
 CHECK=windows-test
-SNAPSHOT=baseline
+SNAPSHOT=Baseline
 KEYCHAIN_SERVICE=agentmesh-windows-test
 GUEST_USER='test'
 GUEST_DIR='C:\amt'
@@ -312,7 +312,7 @@ summary() {
     [ -z "$tests" ] || echo "failed tests: $tests"
   fi
   if grep -qx 'GOMODCACHE-MISS' "$WORK/results.clean"; then
-    echo "baseline stale: refresh it (docs/windows-test.md)"
+    echo "Baseline stale: refresh it (docs/windows-test.md)"
   fi
   echo "elapsed: $(($(date +%s) - START_EPOCH))s"
   echo "logs: $LOGDIR"
